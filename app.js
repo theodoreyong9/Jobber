@@ -57,7 +57,7 @@ async function ensureEngine(modelId) {
   if (engine && currentModelId === modelId) return engine;
 
   setStatus('Chargement du modèle (1er lancement : téléchargement, plusieurs minutes)…');
-  const webllm = await import('https://esm.sh/@mlc-ai/web-llm?bundle&target=es2022');
+  const webllm = await import('https://esm.run/@mlc-ai/web-llm');
   engine = await webllm.CreateMLCEngine(modelId, {
     initProgressCallback: (p) => {
       const pct = Math.round((p.progress || 0) * 100);
@@ -101,7 +101,7 @@ function extractJson(text) {
 
 // ==== 4. Génération du nouveau .docx (librairie "docx", 100% client) ====
 async function buildDocx(data) {
-  const docx = await import('https://esm.sh/docx@9.5.1?bundle&target=es2022');
+  const docx = await import('https://cdn.jsdelivr.net/npm/docx@9.5.1/build/index.mjs');
   const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
 
   const children = [];
