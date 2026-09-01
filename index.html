@@ -64,6 +64,20 @@
       </section>
     </main>
 
+    <section class="card diagnostic-card">
+      <h2>🔬 Testeur WebLLM isolé (diagnostic)</h2>
+      <p class="hint">
+        Rien à voir avec le CV : ce bouton charge le modèle choisi ci-dessus et lui
+        envoie juste une phrase courte. Sert à mesurer, indépendamment de toute la
+        logique CV/docx, à quelle fréquence WebLLM plante sur cette machine. Reclique
+        plusieurs fois de suite pour avoir un vrai taux de réussite.
+      </p>
+      <input type="text" id="diag-prompt" value="Dis bonjour en une phrase." />
+      <button id="diag-run-btn" class="secondary-btn" style="width:100%; margin-top:10px;">▶️ Lancer un essai isolé</button>
+      <p id="diag-status" class="status">Prêt — <span id="diag-score">0 essai, 0 réussite</span></p>
+      <pre id="diag-output"></pre>
+    </section>
+
     <footer>
       <p>Aucune donnée envoyée à un serveur — lecture du CV, inférence IA et réassemblage du
       .docx se font entièrement côté client.</p>
