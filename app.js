@@ -156,21 +156,25 @@ async function ensureEngine(modelId) {
 }
 
 // ==== 4. Construction du prompt ====
-// On plafonne la taille du texte envoyé au modèle : un prompt trop long
-// se traduit par un seul très gros calcul GPU ("prefill") qui peut dépasser
-// le délai que le pilote/OS accorde avant de le tuer (device lost).
-const MAX_CV_CHARS = 3500;
-const MAX_JOB_CHARS = 3500;
 
-function capText(text, maxChars, label) {
-  if (text.length <= maxChars) return text;
-  log(`⚠️ ${label} tronqué de ${text.length} à ${maxChars} caractères pour éviter un calcul trop long.`);
-  return text.slice(0, maxChars) + '\n[…texte tronqué…]';
+// On n'écourte jamais le CV ni l'annonce : un prompt long peut ralentir ou
+// faire échouer le calcul sur certains GPU/pilotes, mais c'est à l'utilisateur
+// de décider s'il préfère réduire le texte ou tenter quand même — on se
+// contente de prévenir.
+const CV_LENGTH_WARN_THRESHOLD = 3500;
+const JOB_LENGTH_WARN_THRESHOLD = 3500;
+
+function warnIfLong(text, threshold, label) {
+  if (text.length > threshold) {
+    log(`⚠️ ${label} est long (${text.length} caractères) — le calcul peut être plus lent, voire échouer sur certains GPU/pilotes (voir le journal en cas d'échec). Si l'adaptation échoue, essaie de réduire ce texte.`);
+  }
 }
 
 // Seuil sous lequel on refuse de toute façon de modifier un segment (voir
 // applyEdits) : les segments courts sont presque toujours du factuel isolé
-// (une date seule, un sigle…) qu'on ne veut jamais reformuler.
+// (une date seule, un sigle…) qu'on ne veut jamais reformuler. Ceci ne
+// tronque rien : ça rejette juste une modification proposée par le modèle
+// sur un segment jugé trop court pour être du vrai contenu.
 const MIN_EDITABLE_RUN_LENGTH = 15;
 
 function buildRunsListing(runs) {
@@ -194,9 +198,9 @@ function buildRunsListing(runs) {
 }
 
 function buildEditPrompt(runs, jobText) {
-  let listText = buildRunsListing(runs);
-  listText = capText(listText, MAX_CV_CHARS, 'Le CV');
-  jobText = capText(jobText, MAX_JOB_CHARS, "Le texte de l'annonce");
+  const listText = buildRunsListing(runs);
+  warnIfLong(listText, CV_LENGTH_WARN_THRESHOLD, 'Le CV');
+  warnIfLong(jobText, JOB_LENGTH_WARN_THRESHOLD, "Le texte de l'annonce");
 
   const system = `Tu es un expert en recrutement et rédaction de CV. On te donne la liste NUMÉROTÉE des segments de texte ("runs") d'un CV existant, regroupés par paragraphe d'origine (repères "--- paragraphe N ---"). Un segment marqué "(gras)" est en gras dans le document original — c'est presque toujours le signe qu'il s'agit d'un titre, d'une date ou d'un nom d'entreprise, PAS de contenu à reformuler. On te donne aussi le texte d'une offre d'emploi.
 
