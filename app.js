@@ -9,8 +9,6 @@ const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 const hfTokenInput = document.getElementById('hf-token');
-const hfModelInput = document.getElementById('hf-model');
-const hfRefreshModelsBtn = document.getElementById('hf-refresh-models');
 const hfModelSelect = document.getElementById('hf-model-select');
 const hfModelStatusEl = document.getElementById('hf-model-status');
 
@@ -34,27 +32,46 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
-// ==== Token + modèle Hugging Face (persistés localement pour le confort) ====
+// ==== Token Hugging Face (persisté localement) + liste des modèles ====
 const savedToken = localStorage.getItem('cvAdapterHfToken');
 if (savedToken) hfTokenInput.value = savedToken;
+const savedModelId = localStorage.getItem('cvAdapterHfModel');
+
+let modelFetchTimer = null;
 hfTokenInput.addEventListener('input', () => {
   localStorage.setItem('cvAdapterHfToken', hfTokenInput.value.trim());
+  clearTimeout(modelFetchTimer);
+  modelFetchTimer = setTimeout(fetchModelList, 700); // laisse finir de coller/taper avant d'interroger l'API
 });
 
-const savedModel = localStorage.getItem('cvAdapterHfModel');
-if (savedModel) hfModelInput.value = savedModel;
-hfModelInput.addEventListener('input', () => {
-  localStorage.setItem('cvAdapterHfModel', hfModelInput.value.trim());
+hfModelSelect.addEventListener('change', () => {
+  localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
 });
 
-// ==== Liste réelle des modèles disponibles (récupérée depuis l'API) ====
-hfRefreshModelsBtn.addEventListener('click', async () => {
+function describeModel(model) {
+  // On construit une description à partir de ce que l'API renvoie
+  // (l'identifiant est le seul champ garanti ; on enrichit avec le
+  // fournisseur s'il est encodé dans l'id, et le propriétaire si fourni).
+  let id = model.id;
+  let provider = null;
+  if (id.includes(':')) {
+    const parts = id.split(':');
+    provider = parts.pop();
+    id = parts.join(':');
+  }
+  const bits = [];
+  if (provider) bits.push(`fournisseur : ${provider}`);
+  if (model.owned_by) bits.push(`par ${model.owned_by}`);
+  return bits.length ? `${id} — ${bits.join(', ')}` : id;
+}
+
+async function fetchModelList() {
   const token = hfTokenInput.value.trim();
   if (!token) {
-    hfModelStatusEl.textContent = "⚠️ Renseigne d'abord ton token Hugging Face.";
+    hfModelStatusEl.textContent = 'Renseigne ton token ci-dessus pour charger la liste des modèles disponibles.';
+    hfModelSelect.innerHTML = '';
     return;
   }
-  hfRefreshModelsBtn.disabled = true;
   hfModelStatusEl.textContent = 'Récupération de la liste des modèles…';
   try {
     const response = await fetch('https://router.huggingface.co/v1/models', {
@@ -65,31 +82,26 @@ hfRefreshModelsBtn.addEventListener('click', async () => {
       throw new Error(`Réponse ${response.status} : ${errText.slice(0, 200)}`);
     }
     const data = await response.json();
-    const ids = (data.data || []).map((m) => m.id).sort();
-    if (ids.length === 0) throw new Error('Aucun modèle retourné par ce compte.');
+    const models = (data.data || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+    if (models.length === 0) throw new Error('Aucun modèle retourné par ce compte.');
 
     hfModelSelect.innerHTML = '';
-    ids.forEach((id) => {
+    models.forEach((model) => {
       const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = id;
-      if (id === hfModelInput.value.trim()) opt.selected = true;
+      opt.value = model.id;
+      opt.textContent = describeModel(model);
+      if (model.id === savedModelId) opt.selected = true;
       hfModelSelect.appendChild(opt);
     });
-    hfModelSelect.hidden = false;
-    hfModelStatusEl.textContent = `✅ ${ids.length} modèle(s) disponible(s) — choisis-en un dans la liste.`;
+    hfModelStatusEl.textContent = `✅ ${models.length} modèle(s) disponible(s).`;
+    localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
   } catch (err) {
     console.error(err);
-    hfModelStatusEl.textContent = '❌ Échec : ' + err.message;
-  } finally {
-    hfRefreshModelsBtn.disabled = false;
+    hfModelStatusEl.textContent = '❌ Échec du chargement des modèles : ' + err.message;
   }
-});
+}
 
-hfModelSelect.addEventListener('change', () => {
-  hfModelInput.value = hfModelSelect.value;
-  localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
-});
+if (savedToken) fetchModelList();
 
 // ==== Persistance du dernier CV chargé (IndexedDB, pour survivre au
 // rechargement de la page — localStorage n'est pas adapté à du binaire) ====
@@ -276,8 +288,8 @@ function looksLikeContactInfo(text) {
 async function generateText(messages, maxTokens) {
   const token = hfTokenInput.value.trim();
   if (!token) throw new Error("Renseigne un token Hugging Face dans le champ prévu.");
-  const model = hfModelInput.value.trim();
-  if (!model) throw new Error('Renseigne un identifiant de modèle Hugging Face.');
+  const model = hfModelSelect.value;
+  if (!model) throw new Error("Aucun modèle sélectionné — vérifie ton token et la liste des modèles.");
 
   const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
     method: 'POST',
