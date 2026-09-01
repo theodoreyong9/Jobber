@@ -10,6 +10,9 @@ const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 const hfTokenInput = document.getElementById('hf-token');
 const hfModelInput = document.getElementById('hf-model');
+const hfRefreshModelsBtn = document.getElementById('hf-refresh-models');
+const hfModelSelect = document.getElementById('hf-model-select');
+const hfModelStatusEl = document.getElementById('hf-model-status');
 
 // État du document en cours d'édition, gardé EN MÉMOIRE et modifié en place :
 // tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page, images,
@@ -31,25 +34,115 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
-// ==== Token Hugging Face (persisté localement pour le confort) ====
+// ==== Token + modèle Hugging Face (persistés localement pour le confort) ====
 const savedToken = localStorage.getItem('cvAdapterHfToken');
 if (savedToken) hfTokenInput.value = savedToken;
 hfTokenInput.addEventListener('input', () => {
   localStorage.setItem('cvAdapterHfToken', hfTokenInput.value.trim());
 });
 
+const savedModel = localStorage.getItem('cvAdapterHfModel');
+if (savedModel) hfModelInput.value = savedModel;
+hfModelInput.addEventListener('input', () => {
+  localStorage.setItem('cvAdapterHfModel', hfModelInput.value.trim());
+});
+
+// ==== Liste réelle des modèles disponibles (récupérée depuis l'API) ====
+hfRefreshModelsBtn.addEventListener('click', async () => {
+  const token = hfTokenInput.value.trim();
+  if (!token) {
+    hfModelStatusEl.textContent = "⚠️ Renseigne d'abord ton token Hugging Face.";
+    return;
+  }
+  hfRefreshModelsBtn.disabled = true;
+  hfModelStatusEl.textContent = 'Récupération de la liste des modèles…';
+  try {
+    const response = await fetch('https://router.huggingface.co/v1/models', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Réponse ${response.status} : ${errText.slice(0, 200)}`);
+    }
+    const data = await response.json();
+    const ids = (data.data || []).map((m) => m.id).sort();
+    if (ids.length === 0) throw new Error('Aucun modèle retourné par ce compte.');
+
+    hfModelSelect.innerHTML = '';
+    ids.forEach((id) => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id;
+      if (id === hfModelInput.value.trim()) opt.selected = true;
+      hfModelSelect.appendChild(opt);
+    });
+    hfModelSelect.hidden = false;
+    hfModelStatusEl.textContent = `✅ ${ids.length} modèle(s) disponible(s) — choisis-en un dans la liste.`;
+  } catch (err) {
+    console.error(err);
+    hfModelStatusEl.textContent = '❌ Échec : ' + err.message;
+  } finally {
+    hfRefreshModelsBtn.disabled = false;
+  }
+});
+
+hfModelSelect.addEventListener('change', () => {
+  hfModelInput.value = hfModelSelect.value;
+  localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
+});
+
+// ==== Persistance du dernier CV chargé (IndexedDB, pour survivre au
+// rechargement de la page — localStorage n'est pas adapté à du binaire) ====
+const CV_DB_NAME = 'cv-adapter-db';
+const CV_STORE_NAME = 'files';
+const CV_STORE_KEY = 'last-cv';
+
+function openCvDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CV_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(CV_STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveCvToDb(name, arrayBuffer) {
+  try {
+    const db = await openCvDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(CV_STORE_NAME, 'readwrite');
+      tx.objectStore(CV_STORE_NAME).put({ name, arrayBuffer }, CV_STORE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Sauvegarde locale du CV échouée (non bloquant) :', err);
+  }
+}
+
+async function loadCvFromDb() {
+  try {
+    const db = await openCvDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(CV_STORE_NAME, 'readonly');
+      const req = tx.objectStore(CV_STORE_NAME).get(CV_STORE_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Lecture locale du CV échouée (non bloquant) :', err);
+    return null;
+  }
+}
+
 // ==== 1. Lecture du CV .docx (JSZip + DOM XML natif, 100% client) ====
-fileInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  originalFileName = file.name.replace(/\.docx$/i, '');
-  baseFileName = originalFileName;
-  iteration = 1;
-  fileNameEl.textContent = file.name;
+async function loadCvFromArrayBuffer(arrayBuffer, displayName) {
+  fileNameEl.textContent = displayName;
   setStatus('Lecture du CV…');
   downloadArea.innerHTML = '';
   try {
-    const arrayBuffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
     const docXmlFile = zip.file('word/document.xml');
     if (!docXmlFile) throw new Error("Ce fichier ne ressemble pas à un .docx valide (word/document.xml introuvable).");
@@ -66,12 +159,36 @@ fileInput.addEventListener('change', async (e) => {
     editable.forEach((r) => log(`  → [${r.role}] "${r.text.trim().slice(0, 60)}${r.text.trim().length > 60 ? '…' : ''}"`));
     setStatus("CV chargé. Colle l'annonce puis lance l'adaptation.");
     updateRunButton();
+    return true;
   } catch (err) {
     console.error(err);
     docState = null;
     setStatus('Erreur de lecture du .docx : ' + err.message);
+    return false;
   }
+}
+
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  originalFileName = file.name.replace(/\.docx$/i, '');
+  baseFileName = originalFileName;
+  iteration = 1;
+  const arrayBuffer = await file.arrayBuffer();
+  const ok = await loadCvFromArrayBuffer(arrayBuffer, file.name);
+  if (ok) saveCvToDb(file.name, arrayBuffer);
 });
+
+// Restauration automatique du dernier CV chargé, au chargement de la page.
+(async () => {
+  const saved = await loadCvFromDb();
+  if (!saved) return;
+  originalFileName = saved.name.replace(/\.docx$/i, '');
+  baseFileName = originalFileName;
+  iteration = 1;
+  log(`CV précédemment chargé retrouvé (${saved.name}) — restauration…`);
+  await loadCvFromArrayBuffer(saved.arrayBuffer, saved.name + ' (restauré)');
+})();
 
 jobTextEl.addEventListener('input', () => {
   updateRunButton();

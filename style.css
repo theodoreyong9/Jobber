@@ -80,6 +80,18 @@ textarea, select, input[type="text"], input[type="password"] {
   margin-top: 12px;
 }
 .field-label:first-child { margin-top: 0; }
+
+.model-row {
+  display: flex;
+  gap: 8px;
+}
+.model-row input { flex: 1; }
+.model-row .secondary-btn {
+  width: auto;
+  white-space: nowrap;
+  margin-top: 0;
+}
+#hf-model-select { margin-top: 8px; }
 code {
   background: #10131a;
   padding: 1px 5px;
