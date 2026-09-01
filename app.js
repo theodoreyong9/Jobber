@@ -10,17 +10,17 @@ const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 
-// État du document en cours d'édition. On garde le zip et le DOM du
-// document.xml EN MÉMOIRE et on les modifie en place à chaque passe :
-// tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page,
-// images, tableaux, numérotation…) reste strictement intact d'un bout à
-// l'autre, y compris à travers plusieurs itérations "continuer à améliorer".
+// État du document en cours d'édition, gardé EN MÉMOIRE et modifié en place :
+// tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page, images,
+// tableaux, numérotation…) reste strictement intact, y compris à travers
+// plusieurs itérations "continuer à améliorer".
 let docState = null; // { zip, xmlDoc }
 let originalFileName = 'cv';
 let baseFileName = 'cv';
 let iteration = 1;
 let engine = null;
 let currentModelId = null;
+let currentModelIdWanted = null; // le modèle demandé pour la passe en cours, utilisé par les réessais
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -34,11 +34,6 @@ function setStatus(msg) {
 }
 
 // ==== 1. Lecture du CV .docx (JSZip + DOM XML natif, 100% client) ====
-// Un .docx est une archive zip contenant du XML. On ne fait AUCUNE
-// reconstruction : on ouvre l'archive, on parse word/document.xml comme du
-// XML, et plus tard on ne modifiera que le texte de certains segments,
-// en laissant tout le reste (styles, polices, tableaux, images, en-têtes…)
-// strictement inchangé.
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -60,8 +55,10 @@ fileInput.addEventListener('change', async (e) => {
     }
     docState = { zip, xmlDoc };
 
-    const textRuns = getTextRuns(docState.xmlDoc);
-    log(`CV chargé : ${textRuns.length} segments de texte détectés dans le document.`);
+    const runs = classifyRuns(getTextRuns(docState.xmlDoc));
+    const editable = runs.filter((r) => r.editable);
+    log(`CV chargé : ${runs.length} segments détectés, ${editable.length} identifiés comme du contenu modifiable (voir journal pour le détail).`);
+    editable.forEach((r) => log(`  → [${r.role}] "${r.text.trim().slice(0, 60)}${r.text.trim().length > 60 ? '…' : ''}"`));
     setStatus("CV chargé. Colle l'annonce puis lance l'adaptation.");
     updateRunButton();
   } catch (err) {
@@ -71,18 +68,10 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-const JOB_TEXT_WARN_THRESHOLD = 3000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
-
 jobTextEl.addEventListener('input', () => {
   updateRunButton();
   const n = jobTextEl.value.length;
-  if (n > JOB_TEXT_WARN_THRESHOLD) {
-    jobCountEl.textContent = `⚠️ ${n} caractères — c'est beaucoup pour un texte d'annonce, tu as probablement collé toute la page. Garde uniquement la description du poste.`;
-    jobCountEl.style.color = '#e0a030';
-  } else {
-    jobCountEl.textContent = `${n} caractère${n > 1 ? 's' : ''}`;
-    jobCountEl.style.color = '';
-  }
+  jobCountEl.textContent = `${n} caractère${n > 1 ? 's' : ''}`;
 });
 
 function updateRunButton() {
@@ -90,12 +79,6 @@ function updateRunButton() {
 }
 
 // ==== 2. Extraction des segments de texte ("runs") depuis le XML ====
-// Un paragraphe Word peut contenir plusieurs "runs" (segments) avec des
-// mises en forme différentes — typiquement un segment en gras pour
-// "Poste — Entreprise — Dates" suivi d'un segment normal pour la
-// description de la mission, DANS LE MÊME PARAGRAPHE. On édite donc au
-// niveau du run, jamais du paragraphe entier, pour pouvoir figer l'un tout
-// en reformulant l'autre.
 function getTextRuns(xmlDoc) {
   const pNodes = Array.from(xmlDoc.getElementsByTagName('w:p'));
   const runs = [];
@@ -105,7 +88,7 @@ function getTextRuns(xmlDoc) {
       const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
       let text = '';
       for (const t of tNodes) text += t.textContent;
-      if (!text.trim()) return; // segment vide (ex: simple saut de ligne) : rien à proposer au modèle
+      if (!text.trim()) return;
       runs.push({ node: rNode, text, bold: isBoldRun(rNode), paragraphIndex });
     });
   });
@@ -121,28 +104,85 @@ function isBoldRun(rNode) {
   return val !== '0' && val !== 'false';
 }
 
-// ==== 3. Chargement du moteur WebLLM (dans le cache du navigateur) ====
+// ==== 3. ORCHESTRATION : classification déterministe, sans aucun appel au
+// modèle. C'est le cœur du changement : plutôt que de demander à un LLM de
+// deviner quels segments sont "du contenu" ou "du factuel", le code s'en
+// charge lui-même avec des règles simples et fiables. Le modèle ne verra
+// donc jamais un segment qu'on ne veut pas qu'il touche — pas besoin de lui
+// faire confiance là-dessus.
+const MIN_EDITABLE_RUN_LENGTH = 25;
+
+// Certaines sections entières doivent rester figées même pour du texte non
+// gras qui, ailleurs, ressemblerait à du "contenu" (ex: la spécialisation
+// d'un diplôme sous "EDUCATION" n'est pas en gras mais ne doit jamais être
+// reformulée, contrairement à une description de mission sous "EXPERIENCE").
+const FROZEN_SECTION_PATTERN = /\b(education|formation|dipl[oô]me|langue|language|divers|autre)/i;
+
+function classifyRuns(runs) {
+  const firstBoldIndex = runs.findIndex((r) => r.bold);
+  let currentSection = 'Profil / en-tête';
+  let currentSectionFrozen = false;
+
+  return runs.map((r, i) => {
+    const trimmed = r.text.trim();
+
+    if (r.bold && trimmed.length < 30 && trimmed === trimmed.toUpperCase() && /[A-ZÀ-Ü]/.test(trimmed)) {
+      currentSection = trimmed;
+      currentSectionFrozen = FROZEN_SECTION_PATTERN.test(trimmed);
+      return { ...r, editable: false, role: 'section', section: currentSection };
+    }
+
+    if (i === firstBoldIndex) {
+      return { ...r, editable: true, role: 'headline', section: currentSection };
+    }
+
+    if (r.bold) {
+      return { ...r, editable: false, role: 'frozen-bold', section: currentSection };
+    }
+
+    if (currentSectionFrozen) {
+      return { ...r, editable: false, role: 'frozen-section', section: currentSection };
+    }
+
+    if (trimmed.length < MIN_EDITABLE_RUN_LENGTH) {
+      return { ...r, editable: false, role: 'frozen-short', section: currentSection };
+    }
+
+    if (looksLikeContactInfo(trimmed)) {
+      return { ...r, editable: false, role: 'frozen-contact', section: currentSection };
+    }
+
+    return { ...r, editable: true, role: 'content', section: currentSection };
+  });
+}
+
+function looksLikeContactInfo(text) {
+  const emailRe = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+  const phoneRe = /(\+?\d[\d\s().-]{7,}\d)/;
+  const urlRe = /(linkedin\.com|github\.com|https?:\/\/|www\.)/i;
+  return emailRe.test(text) || phoneRe.test(text) || urlRe.test(text);
+}
+
+// ==== 4. Chargement du moteur WebLLM (chargé UNE FOIS, réutilisé pour
+// tous les petits appels de la passe — exactement comme dans les projets
+// où WebLLM tourne de façon fiable : un seul engine.chat.completions.create
+// par appel, jamais de rechargement entre deux échanges tant qu'aucune
+// erreur ne l'exige). ====
 const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm';
 
 async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
+  if (engine && currentModelId === modelId) return engine;
 
-  // Bug connu de web-llm : réutiliser un moteur déjà chargé pour une nouvelle
-  // génération corrompt parfois son état interne et déclenche
-  // "Object/Module has already been disposed" (voir mlc-ai/web-llm#486 et #560).
-  // On décharge donc systématiquement le moteur précédent et on repart d'un
-  // moteur neuf à chaque clic, même pour le même modèle. Le modèle reste en
-  // cache navigateur (IndexedDB) donc ça ne re-télécharge rien, juste
-  // ré-initialise proprement sur le GPU.
   if (engine) {
-    try { await engine.unload(); } catch (_) { /* on ignore, on repart de zéro */ }
+    try { await engine.unload(); } catch (_) { /* on ignore */ }
     engine = null;
     currentModelId = null;
   }
 
-  setStatus('Initialisation du moteur…');
+  setStatus('Chargement du modèle…');
   const webllm = await import(WEBLLM_URL);
   engine = await webllm.CreateMLCEngine(modelId, {
     initProgressCallback: (p) => {
@@ -155,112 +195,61 @@ async function ensureEngine(modelId) {
   return engine;
 }
 
-// ==== 4. Construction du prompt ====
-
-// On n'écourte jamais le CV ni l'annonce : un prompt long peut ralentir ou
-// faire échouer le calcul sur certains GPU/pilotes, mais c'est à l'utilisateur
-// de décider s'il préfère réduire le texte ou tenter quand même — on se
-// contente de prévenir.
-const CV_LENGTH_WARN_THRESHOLD = 3500;
-const JOB_LENGTH_WARN_THRESHOLD = 3500;
-
-function warnIfLong(text, threshold, label) {
-  if (text.length > threshold) {
-    log(`⚠️ ${label} est long (${text.length} caractères) — le calcul peut être plus lent, voire échouer sur certains GPU/pilotes (voir le journal en cas d'échec). Si l'adaptation échoue, essaie de réduire ce texte.`);
-  }
+function discardEngine() {
+  // Après une erreur runtime (disposed / device lost), le moteur en mémoire
+  // n'est plus fiable : on le jette pour forcer un rechargement complet au
+  // prochain appel, plutôt que de continuer à s'appuyer dessus.
+  engine = null;
+  currentModelId = null;
 }
 
-// Seuil sous lequel on refuse de toute façon de modifier un segment (voir
-// applyEdits) : les segments courts sont presque toujours du factuel isolé
-// (une date seule, un sigle…) qu'on ne veut jamais reformuler. Ceci ne
-// tronque rien : ça rejette juste une modification proposée par le modèle
-// sur un segment jugé trop court pour être du vrai contenu.
-const MIN_EDITABLE_RUN_LENGTH = 15;
+// ==== 5. Réécriture d'UN SEUL segment à la fois ====
+// Volontairement minimaliste : un texte en entrée, un texte en sortie, pas
+// de JSON, pas de structure à faire respecter. Chaque appel est court à
+// générer (peu de tokens de sortie), donc rapide et bien plus fiable que
+// l'ancienne version qui demandait une grosse génération JSON d'un coup.
+const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à ce que dit l'extrait original. N'invente aucun fait, aucune expérience, aucune compétence absente de l'extrait original — c'est une reformulation, pas une invention. Si l'extrait n'a vraiment rien à gagner à être changé, renvoie-le tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets, sans préambule, sans balises, sans explication.`;
 
-function buildRunsListing(runs) {
-  const lines = [];
-  let lastParagraph = null;
-  const firstBoldIndex = runs.findIndex((r) => r.bold);
-  runs.forEach((r, i) => {
-    if (r.paragraphIndex !== lastParagraph) {
-      lines.push(`--- paragraphe ${r.paragraphIndex} ---`);
-      lastParagraph = r.paragraphIndex;
+async function rewriteRun(run, jobText) {
+  const messages = [
+    { role: 'system', content: REWRITE_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: `--- OFFRE D'EMPLOI ---\n${jobText}\n\n--- EXTRAIT DU CV À REFORMULER (section "${run.section}", rôle: ${run.role === 'headline' ? "titre d'accroche" : 'contenu'}) ---\n${run.text.trim()}\n\nRéponds uniquement avec le texte reformulé.`
     }
-    let tag = '';
-    if (r.bold && i === firstBoldIndex) {
-      tag = ' (gras — probablement le titre d\'accroche du CV, celui-ci EST modifiable)';
-    } else if (r.bold) {
-      tag = ' (gras)';
-    }
-    lines.push(`[${i}]${tag} ${r.text}`);
-  });
-  return lines.join('\n');
-}
-
-function buildEditPrompt(runs, jobText) {
-  const listText = buildRunsListing(runs);
-  warnIfLong(listText, CV_LENGTH_WARN_THRESHOLD, 'Le CV');
-  warnIfLong(jobText, JOB_LENGTH_WARN_THRESHOLD, "Le texte de l'annonce");
-
-  const system = `Tu es un expert en recrutement et rédaction de CV. On te donne la liste NUMÉROTÉE des segments de texte ("runs") d'un CV existant, regroupés par paragraphe d'origine (repères "--- paragraphe N ---"). Un segment marqué "(gras)" est en gras dans le document original — c'est presque toujours le signe qu'il s'agit d'un titre, d'une date ou d'un nom d'entreprise, PAS de contenu à reformuler. On te donne aussi le texte d'une offre d'emploi.
-
-Ta tâche : repérer les segments de CONTENU RÉDIGÉ (résumé/profil, descriptions de missions et réalisations, compétences) et les reformuler pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à une expérience ou compétence déjà présente.
-
-RÈGLES ABSOLUES, à ne jamais enfreindre :
-1. NE TOUCHE JAMAIS : le nom du candidat, les dates, les noms d'entreprises et d'établissements, les diplômes, les coordonnées (email/téléphone/adresse/LinkedIn), les langues, les rubriques "autres/divers", les titres de section ("EXPÉRIENCE", "FORMATION"…), et l'intitulé de poste PROPRE À CHAQUE EXPÉRIENCE (ex: "Business Analyst — DRAY — May 2023 – Dec 2025"). Un segment marqué simplement "(gras)" est très probablement l'un de ces éléments factuels : ne le touche jamais.
-2. Le seul segment en gras que tu PEUX reformuler est celui explicitement annoté "(gras — probablement le titre d'accroche du CV, celui-ci EST modifiable)". Tu peux aussi reformuler, même non gras : le résumé/profil, les compétences, et les descriptions de missions/réalisations sous chaque expérience.
-3. Un même paragraphe original peut contenir plusieurs segments : par exemple un segment gras "Poste — Entreprise — Dates" suivi d'un segment normal "Description de la mission". Dans ce cas, laisse le premier intact et ne reformule que le second.
-4. L'offre d'emploi sert UNIQUEMENT à choisir l'angle et le vocabulaire. Elle n'est JAMAIS une source de faits sur le candidat. N'invente rien, ne déduis aucune donnée factuelle de l'offre.
-5. Chaque reformulation doit rester fidèle au sens du segment original — c'est une reformulation, pas une invention. Si le poste visé est éloigné du parcours, ne fabrique pas de fausse cohérence : reformule honnêtement avec ce qui existe réellement.
-6. Ne renvoie QUE les segments que tu modifies réellement.
-
-Tu réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, sans balises markdown, de la forme :
-[{"index": 12, "text": "nouveau texte du segment 12"}, {"index": 15, "text": "nouveau texte du segment 15"}]`;
-
-  const user = `--- SEGMENTS DU CV (numérotés, seule source de vérité) ---\n${listText}\n\n--- OFFRE D'EMPLOI (uniquement pour le vocabulaire et l'angle) ---\n${jobText}\n\nRenvoie le tableau JSON des segments de contenu à reformuler, en respectant strictement les règles ci-dessus.`;
-
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: user }
   ];
-}
-
-function extractJsonArray(text) {
-  let t = text.trim();
-  t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
-  const start = t.indexOf('[');
-  const end = t.lastIndexOf(']');
-  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de tableau JSON trouvé).');
-  const arr = JSON.parse(t.slice(start, end + 1));
-  if (!Array.isArray(arr)) throw new Error('Réponse du modèle non exploitable (pas un tableau).');
-  return arr;
-}
-
-// ==== 5. Application des modifications dans le XML ====
-// On ne touche QUE le texte (<w:t>) du run visé : sa mise en forme (rPr —
-// police, couleur, gras, taille…) n'est jamais recréée ni même effleurée,
-// elle reste l'élément XML original tel quel. Seul son contenu textuel change.
-function applyEdits(runs, edits) {
-  let applied = 0;
-  let skipped = 0;
-
-  edits.forEach(({ index, text }) => {
-    const entry = runs[index];
-    if (!entry || typeof text !== 'string' || !text.trim()) return;
-
-    if (entry.text.trim().length < MIN_EDITABLE_RUN_LENGTH) {
-      skipped++;
-      log(`⚠️ Modification du segment [${index}] ignorée (trop court pour être un vrai contenu à reformuler) : "${entry.text.trim()}"`);
-      return;
-    }
-
-    setRunText(entry.node, text);
-    applied++;
+  const reply = await engine.chat.completions.create({
+    messages,
+    temperature: 0.2,
+    max_tokens: 260,
   });
-
-  return { applied, skipped };
+  return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
 }
 
+async function rewriteRunWithRetry(run, jobText) {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await rewriteRun(run, jobText);
+    } catch (err) {
+      const msg = err.message || '';
+      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+      log(`  ⚠️ Échec sur ce segment (tentative ${attempt}/${maxAttempts}) : ${msg}`);
+      discardEngine();
+      if (isDeviceLost) throw err; // un vrai crash GPU : inutile d'insister, on remonte l'erreur
+      if (attempt < maxAttempts) {
+        await ensureEngine(currentModelIdWanted); // recharge un moteur neuf avant de réessayer
+        continue;
+      }
+      return null; // on abandonne CE segment précis, mais pas toute la passe
+    }
+  }
+  return null;
+}
+
+// ==== 6. Application d'une réécriture dans le XML ====
+// On ne touche QUE le texte (<w:t>) du run visé : sa mise en forme (rPr —
+// police, couleur, gras, taille…) reste l'élément XML original intact.
 function setRunText(rNode, newText) {
   const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
   if (tNodes.length === 0) {
@@ -272,12 +261,10 @@ function setRunText(rNode, newText) {
   }
   tNodes[0].setAttribute('xml:space', 'preserve');
   tNodes[0].textContent = newText;
-  for (let i = 1; i < tNodes.length; i++) {
-    tNodes[i].textContent = '';
-  }
+  for (let i = 1; i < tNodes.length; i++) tNodes[i].textContent = '';
 }
 
-// ==== 6. Génération du fichier .docx modifié ====
+// ==== 7. Génération du fichier .docx modifié ====
 async function packageDocx() {
   const serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
   const withDeclaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + serialized;
@@ -288,101 +275,94 @@ async function packageDocx() {
   });
 }
 
-// ==== 7. Orchestration ====
+// ==== 8. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
 
-  const maxAttempts = 2; // le bug "already disposed" pur (sans device_removed) est transitoire : un 2e essai avec moteur neuf suffit souvent
+  const jobText = jobTextEl.value.trim();
+  const modelId = modelSelect.value;
+  currentModelIdWanted = modelId;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const modelId = modelSelect.value;
-      await ensureEngine(modelId);
+  try {
+    await ensureEngine(modelId);
 
-      const textRuns = getTextRuns(docState.xmlDoc);
+    const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
+    const editable = allRuns.filter((r) => r.editable);
+    log(`${editable.length} segment(s) à reformuler, un par un.`);
 
-      setStatus('Analyse du CV et génération des reformulations (le modèle réfléchit)…');
-      const messages = buildEditPrompt(textRuns, jobTextEl.value.trim());
-      const reply = await engine.chat.completions.create({
-        messages,
-        temperature: 0.1,
-        max_tokens: 1200,
-      });
-      const text = reply.choices[0].message.content;
-      log(`Réponse reçue (${text.length} caractères).`);
+    let applied = 0;
+    let failed = 0;
 
-      const edits = extractJsonArray(text);
-      log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
-      const { applied, skipped } = applyEdits(textRuns, edits);
-      log(`${applied} segment(s) modifié(s)${skipped ? `, ${skipped} ignoré(s) par sécurité` : ''}.`);
-
-      if (applied === 0) {
-        setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B), ou vérifie que l'annonce est bien pertinente par rapport au CV.");
-        break;
-      }
-
-      setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
-      const blob = await packageDocx();
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = originalFileName + '-adapte.docx';
-      a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
-      a.className = 'download-link';
-      downloadArea.appendChild(a);
-
-      const continueBtn = document.createElement('button');
-      continueBtn.type = 'button';
-      continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
-      continueBtn.className = 'secondary-btn';
-      continueBtn.title = 'Relance une nouvelle passe de reformulation sur le document déjà modifié.';
-      continueBtn.addEventListener('click', () => {
-        iteration += 1;
-        originalFileName = baseFileName + '-v' + iteration;
-        log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
-        setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
-        downloadArea.innerHTML = '';
-        jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
-      downloadArea.appendChild(continueBtn);
-
-      setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
-      break; // succès, on sort de la boucle de réessai
-    } catch (err) {
-      console.error(err);
-      const msg = err.message || '';
-      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
-      const isDisposedGlitch = /disposed/i.test(msg) && !isDeviceLost;
-      log('Erreur : ' + (err.stack || err.message));
-      engine = null; // le moteur en mémoire n'est plus fiable, on force un rechargement complet la prochaine fois
-
-      if (isDisposedGlitch && attempt < maxAttempts) {
-        log(`Bug transitoire du runtime WebGPU/TVM détecté (tentative ${attempt}/${maxAttempts}), nouvel essai avec un moteur neuf…`);
-        setStatus('Petit bug du moteur, on réessaie automatiquement…');
-        continue;
-      }
-
-      if (isDeviceLost) {
-        setStatus(
-          "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
-          "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
-        );
-      } else if (isDisposedGlitch) {
-        setStatus(
-          "Bug transitoire du moteur WebLLM, persistant même après réessai automatique. Recharge la page (F5) " +
-          "et réessaie — ce bug est documenté côté WebLLM (mlc-ai/web-llm#486, #560), pas lié au contenu de ton CV."
-        );
+    for (let i = 0; i < editable.length; i++) {
+      const run = editable[i];
+      setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
+      const newText = await rewriteRunWithRetry(run, jobText);
+      if (newText && newText.length > 0) {
+        setRunText(run.node, newText);
+        applied++;
+        log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
       } else {
-        setStatus('Erreur : ' + err.message);
+        failed++;
+        log(`  ✗ [${i + 1}/${editable.length}] segment laissé inchangé après échec.`);
       }
-      break;
     }
-  }
 
-  runBtn.disabled = false;
-  updateRunButton();
+    log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s) après échec.`);
+
+    if (applied === 0) {
+      setStatus("Aucun segment n'a pu être reformulé — vérifie le journal technique pour comprendre pourquoi.");
+      return;
+    }
+
+    setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
+    const blob = await packageDocx();
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = originalFileName + '-adapte.docx';
+    a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
+    a.className = 'download-link';
+    downloadArea.appendChild(a);
+
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
+    continueBtn.className = 'secondary-btn';
+    continueBtn.addEventListener('click', () => {
+      iteration += 1;
+      originalFileName = baseFileName + '-v' + iteration;
+      log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
+      setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
+      downloadArea.innerHTML = '';
+      jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    downloadArea.appendChild(continueBtn);
+
+    const msg = failed > 0
+      ? `Terminé avec ${failed} segment(s) non modifié(s) (voir journal) — mise en page d'origine conservée.`
+      : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
+    setStatus(msg);
+  } catch (err) {
+    console.error(err);
+    const msg = err.message || '';
+    const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+    log('Erreur : ' + (err.stack || err.message));
+    discardEngine();
+
+    if (isDeviceLost) {
+      setStatus(
+        "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
+        "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
+      );
+    } else {
+      setStatus('Erreur : ' + err.message);
+    }
+  } finally {
+    runBtn.disabled = false;
+    updateRunButton();
+  }
 });

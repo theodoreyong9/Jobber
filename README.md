@@ -4,46 +4,48 @@ Site statique, 100 % client, qui adapte un CV `.docx` à une offre d'emploi
 en utilisant [WebLLM](https://github.com/mlc-ai/web-llm) (LLM exécuté dans
 le navigateur via WebGPU) — aucun serveur, aucune donnée envoyée nulle part.
 
-## Fonctionnement
+## Architecture : l'orchestrateur décide, le modèle rédige
 
-Un `.docx` est en réalité une archive zip contenant du XML. Plutôt que de
-regénérer un nouveau CV avec une mise en page générique, l'app **édite le
-document original en place** :
+Plutôt que de confier une grosse tâche complexe à un seul (et long) appel au
+modèle, le travail est explicitement découpé :
 
-1. Tu uploades ton CV `.docx` → l'archive est ouverte dans le navigateur
-   ([JSZip](https://stuk.github.io/jszip/)) et `word/document.xml` est parsé
+1. **Lecture** : le `.docx` est ouvert comme une archive zip
+   ([JSZip](https://stuk.github.io/jszip/)), `word/document.xml` est parsé
    comme du XML natif (`DOMParser`).
-2. Chaque **segment de texte** ("run" au sens Word, un fragment de
-   paragraphe avec une mise en forme homogène) est numéroté et son texte
-   extrait. C'est important : sur beaucoup de CV, une ligne comme
-   *"Poste — Entreprise — Dates"* (en gras) suivie de sa description
-   (normale) forment en réalité **un seul paragraphe** en deux segments —
-   éditer au niveau du paragraphe entier empêcherait de figer l'un tout en
-   reformulant l'autre.
-3. Tu colles le texte d'une offre d'emploi.
-4. Un modèle (Llama 3.2 1B/3B, Phi-3.5 mini ou Llama 3.1 8B, au choix) est
-   téléchargé une seule fois et mis en cache par le navigateur, puis reçoit
-   la liste numérotée des segments (avec une annotation "(gras)" comme
-   indice) + l'offre, et renvoie uniquement les numéros et le nouveau texte
-   des segments de **contenu** (résumé, descriptions de missions,
-   compétences, titre d'accroche) qu'il juge utile de reformuler.
-5. Pour chaque segment concerné, seul son **texte** est remplacé — sa mise
-   en forme (police, couleur, gras, taille) n'est ni recréée ni même
-   effleurée : c'est le même élément XML, avec juste un contenu différent.
-   Tout le reste du document (styles, thème, tableaux, en-têtes/pieds de
-   page, photo, numérotation, dates, noms d'entreprises, diplômes,
-   coordonnées) n'est jamais touché.
-6. Le zip est ré-assemblé avec ce `document.xml` modifié et proposé au
-   téléchargement.
+2. **Classification déterministe (le code, pas le modèle)** : chaque
+   segment de texte ("run" Word — un fragment de paragraphe à la mise en
+   forme homogène) est classé par des règles simples et fiables, sans
+   aucun appel au modèle :
+   - segment en gras, court, tout en majuscules → repère de section
+     ("EXPERIENCE", "SKILLS"…), jamais modifiable ;
+   - premier segment en gras du document → titre d'accroche du CV,
+     modifiable ;
+   - tout autre segment en gras → intitulé de poste / entreprise / diplôme,
+     jamais modifiable ;
+   - segment sous une section "Formation/Éducation/Langues/Diplôme/Autres" →
+     jamais modifiable, même si non gras ;
+   - segment ressemblant à un email/téléphone/URL → jamais modifiable ;
+   - segment trop court (< 25 caractères) → jamais modifiable ;
+   - tout le reste → contenu modifiable (résumé, compétences, descriptions
+     de missions).
 
-Le modèle ne touche jamais au nom, aux dates, aux noms d'entreprises, aux
-diplômes ou aux coordonnées : ces segments sont explicitement exclus du
-prompt (avec une distinction explicite entre "titre d'accroche du CV",
-modifiable, et "intitulé de poste par expérience", figé — les deux sont
-souvent en gras mais n'ont pas le même statut). Un filet de sécurité côté
-code rejette en plus toute tentative de modifier un segment trop court
-(donc probablement une date ou un sigle isolé) même si le modèle en
-proposait une.
+   Le modèle ne voit donc **jamais** un segment qu'on ne veut pas qu'il
+   touche : ce n'est pas une consigne qu'on espère qu'il respecte, c'est une
+   sélection faite en amont par du code déterministe.
+3. **Réécriture unitaire** : chaque segment retenu comme modifiable est
+   envoyé **un par un** au modèle (texte court en entrée, réponse en texte
+   libre — pas de JSON à produire), avec l'offre d'emploi. Beaucoup de
+   petits appels séquentiels plutôt qu'un seul gros. Si un appel échoue
+   (bug runtime WebLLM), on retente une fois ce segment précis avec un
+   moteur neuf ; s'il échoue encore, ce seul segment reste inchangé et le
+   reste de la passe continue — jamais tout perdre pour un incident isolé.
+4. **Écriture** : pour chaque segment reformulé, seul son texte (`<w:t>`)
+   est remplacé. Sa mise en forme (police, couleur, gras, taille) n'est ni
+   recréée ni même effleurée. Tout le reste du document (styles, thème,
+   tableaux, en-têtes/pieds de page, photo, numérotation) n'est jamais
+   touché.
+5. **Réassemblage** : le zip est reconstruit avec ce `document.xml` modifié
+   et proposé au téléchargement.
 
 Tout se passe dans l'onglet du navigateur : pas de backend, pas de clé API,
 rien n'est jamais uploadé sur un serveur.
@@ -82,24 +84,27 @@ directement dans le navigateur de l'utilisateur. WebLLM est chargé depuis
 - Le premier chargement du modèle télécharge plusieurs centaines de Mo à
   quelques Go selon le modèle choisi — c'est lent la première fois,
   quasi instantané ensuite grâce au cache du navigateur.
-- Un segment reformulé garde exactement sa mise en forme d'origine (même
-  police, couleur, gras...), mais s'il contenait lui-même un mélange de
-  styles en son sein (rare : un mot en couleur au milieu d'une phrase par
-  exemple), ce détail interne est perdu au profit du style global du
-  segment.
-- Le modèle est prompté pour ne pas inventer d'expérience ou de diplôme et
-  pour ne jamais toucher aux paragraphes factuels, mais comme tout LLM il
-  peut se tromper : relis toujours le résultat avant de l'envoyer.
+- La classification des segments repose sur des heuristiques (gras, taille,
+  mots-clés de section, motifs de contact) qui couvrent bien les CV
+  classiques mais peuvent se tromper sur une mise en page très inhabituelle
+  — relis toujours le résultat avant de l'envoyer.
+- Le modèle est prompté pour ne pas inventer d'expérience ou de compétence,
+  mais comme tout LLM il peut se tromper : relis toujours le résultat avant
+  de l'envoyer.
 - Sur un GPU peu puissant ou avec peu de VRAM, le pilote graphique peut
   planter en cours d'inférence (`DXGI_ERROR_DEVICE_REMOVED` / "Device was
   lost"). Dans ce cas : recharge la page, choisis le modèle "très léger",
-  et vérifie que tes pilotes graphiques sont à jour.
+  et vérifie que tes pilotes graphiques sont à jour. Un bug plus léger et
+  intermittent du runtime WebLLM ("Object has already been disposed",
+  documenté sur mlc-ai/web-llm#486 et #560) peut aussi survenir
+  ponctuellement sur un segment isolé — l'app le gère automatiquement en
+  ne perdant que ce segment, pas toute la passe.
 
 ## Structure du repo
 
 ```
 index.html                  page unique
 style.css                   styles
-app.js                      logique (lecture/édition XML du docx, WebLLM, réassemblage)
+app.js                      logique (classification, lecture/édition XML du docx, WebLLM, réassemblage)
 .github/workflows/deploy.yml   CI de déploiement Pages
 ```
