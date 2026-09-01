@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CV Adapter — 100% dans ton navigateur</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🎯 CV Adapter</h1>
+      <p class="subtitle">
+        Adapte ton CV .docx à une offre d'emploi, mot-clé par mot-clé.
+        Tout tourne <strong>dans ton navigateur</strong> (WebLLM) : ton CV et l'offre
+        ne quittent jamais ta machine, rien n'est envoyé à un serveur.
+      </p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>1. Ton CV (.docx)</h2>
+        <label class="file-drop">
+          <input type="file" id="cv-file" accept=".docx" />
+          <span id="file-name">Choisir un fichier .docx…</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>2. L'offre d'emploi</h2>
+        <textarea id="job-text" rows="10" placeholder="Colle ici le texte complet de l'annonce…"></textarea>
+      </section>
+
+      <section class="card">
+        <h2>3. Modèle IA (téléchargé une seule fois, mis en cache)</h2>
+        <select id="model-select">
+          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B — rapide (~2 Go)</option>
+          <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini — équilibré (~2,5 Go)</option>
+          <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">Llama 3.1 8B — meilleure qualité (~5 Go)</option>
+        </select>
+        <p class="hint">
+          Nécessite un navigateur avec WebGPU (Chrome/Edge récents). Le premier lancement
+          télécharge le modèle ; les suivants sont instantanés grâce au cache du navigateur.
+        </p>
+      </section>
+
+      <section class="card">
+        <button id="run-btn" disabled>✨ Adapter mon CV</button>
+        <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
+        <p id="status" class="status">Charge un CV et colle une offre pour commencer.</p>
+        <div id="download-area"></div>
+        <details>
+          <summary>Journal technique</summary>
+          <pre id="log"></pre>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <p>Aucune donnée envoyée à un serveur — extraction du CV, inférence IA et génération du
+      nouveau .docx se font entièrement côté client.</p>
+    </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
