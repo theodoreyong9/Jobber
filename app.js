@@ -8,9 +8,6 @@ const statusEl = document.getElementById('status');
 const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
-const wasmPanel = document.getElementById('wasm-panel');
-const hfPanel = document.getElementById('hf-panel');
-const wasmModelSelect = document.getElementById('wasm-model');
 const hfTokenInput = document.getElementById('hf-token');
 const hfModelInput = document.getElementById('hf-model');
 
@@ -34,19 +31,7 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
-// ==== Choix du moteur (persisté localement pour le confort) ====
-const engineRadios = document.querySelectorAll('input[name="engine-mode"]');
-function getEngineMode() {
-  return document.querySelector('input[name="engine-mode"]:checked').value;
-}
-function updateEnginePanels() {
-  const mode = getEngineMode();
-  wasmPanel.hidden = mode !== 'wasm';
-  hfPanel.hidden = mode !== 'hf';
-}
-engineRadios.forEach((r) => r.addEventListener('change', updateEnginePanels));
-updateEnginePanels();
-
+// ==== Token Hugging Face (persisté localement pour le confort) ====
 const savedToken = localStorage.getItem('cvAdapterHfToken');
 if (savedToken) hfTokenInput.value = savedToken;
 hfTokenInput.addEventListener('input', () => {
@@ -170,38 +155,8 @@ function looksLikeContactInfo(text) {
   return emailRe.test(text) || phoneRe.test(text) || urlRe.test(text);
 }
 
-// ==== 4. Moteur A — CPU/WASM local (transformers.js) ====
-// Aucun GPU, aucun WebGPU : ce chemin n'a pas la classe de bugs de pilote
-// qu'on a chassée avec WebLLM. Plus lent, mais fiable et 100% privé.
-let wasmGenerator = null;
-let wasmGeneratorModelId = null;
-
-async function ensureWasmGenerator(modelId) {
-  if (wasmGenerator && wasmGeneratorModelId === modelId) return wasmGenerator;
-  setStatus('Chargement du modèle (CPU)…');
-  const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers');
-  wasmGenerator = await pipeline('text-generation', modelId, {
-    progress_callback: (p) => {
-      if (p.status === 'progress' && typeof p.progress === 'number') {
-        setStatus(`Téléchargement du modèle… ${Math.round(p.progress)}%`);
-      } else if (p.status) {
-        setStatus(`Chargement du modèle (${p.status})…`);
-      }
-    }
-  });
-  wasmGeneratorModelId = modelId;
-  return wasmGenerator;
-}
-
-async function generateWithWasm(messages, maxTokens) {
-  const modelId = wasmModelSelect.value;
-  const generator = await ensureWasmGenerator(modelId);
-  const output = await generator(messages, { max_new_tokens: maxTokens, temperature: 0.3, do_sample: true });
-  return output[0].generated_text.at(-1).content;
-}
-
-// ==== 5. Moteur B — GPU distant via Hugging Face (API compatible OpenAI) ====
-async function generateWithHF(messages, maxTokens) {
+// ==== 4. Génération via Hugging Face (API compatible OpenAI) ====
+async function generateText(messages, maxTokens) {
   const token = hfTokenInput.value.trim();
   if (!token) throw new Error("Renseigne un token Hugging Face dans le champ prévu.");
   const model = hfModelInput.value.trim();
@@ -229,14 +184,7 @@ async function generateWithHF(messages, maxTokens) {
   return data.choices[0].message.content;
 }
 
-// ==== 6. Abstraction commune ====
-async function generateText(messages, maxTokens) {
-  return getEngineMode() === 'wasm'
-    ? generateWithWasm(messages, maxTokens)
-    : generateWithHF(messages, maxTokens);
-}
-
-// ==== 7. Reformulation d'un segment ====
+// ==== 5. Reformulation d'un segment ====
 const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
 
 function buildSegmentPrompt(run, jobText) {
@@ -258,7 +206,7 @@ async function rewriteSegment(run, jobText) {
   }
 }
 
-// ==== 8. Application d'une réécriture dans le XML ====
+// ==== 6. Application d'une réécriture dans le XML ====
 function setRunText(rNode, newText) {
   const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
   if (tNodes.length === 0) {
@@ -273,7 +221,7 @@ function setRunText(rNode, newText) {
   for (let i = 1; i < tNodes.length; i++) tNodes[i].textContent = '';
 }
 
-// ==== 9. Génération du fichier .docx modifié ====
+// ==== 7. Génération du fichier .docx modifié ====
 async function packageDocx() {
   const serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
   const withDeclaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + serialized;
@@ -284,13 +232,12 @@ async function packageDocx() {
   });
 }
 
-// ==== 10. Orchestration principale ====
+// ==== 8. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
-  log(`Moteur : ${getEngineMode() === 'wasm' ? 'CPU local' : 'Hugging Face'}`);
 
   const jobText = jobTextEl.value.trim();
 
