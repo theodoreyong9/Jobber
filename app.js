@@ -56,11 +56,11 @@ function updateRunButton() {
 // corrompu qu'il faut jeter plutôt que réutiliser).
 const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
 
-async function ensureEngine(modelId, forceReload = false) {
+async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
-  if (engine && currentModelId === modelId && !forceReload) return engine;
+  if (engine && currentModelId === modelId) return engine;
 
   if (engine) {
     try { await engine.unload(); } catch (_) { /* on ignore, on repart de zéro */ }
@@ -230,65 +230,52 @@ runBtn.addEventListener('click', async () => {
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
-  let attempt = 0;
-  const maxAttempts = 2; // 1 essai normal + 1 réessai avec moteur rechargé si erreur runtime
+  try {
+    const modelId = modelSelect.value;
+    await ensureEngine(modelId);
 
-  while (attempt < maxAttempts) {
-    attempt++;
-    try {
-      const modelId = modelSelect.value;
-      await ensureEngine(modelId, attempt > 1);
+    setStatus('Génération du CV adapté (le modèle réfléchit)…');
+    const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
+    const reply = await engine.chat.completions.create({
+      messages,
+      temperature: 0.3,
+      max_tokens: 2048,
+    });
+    const text = reply.choices[0].message.content;
+    log(`Réponse reçue (${text.length} caractères).`);
 
-      setStatus('Génération du CV adapté (le modèle réfléchit)…');
-      const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
-      const reply = await engine.chat.completions.create({
-        messages,
-        temperature: 0.3,
-        max_tokens: 2048,
-      });
-      const text = reply.choices[0].message.content;
-      log(`Réponse reçue (${text.length} caractères).`);
+    const data = extractJson(text);
+    setStatus('Construction du fichier .docx…');
+    const blob = await buildDocx(data);
 
-      const data = extractJson(text);
-      setStatus('Construction du fichier .docx…');
-      const blob = await buildDocx(data);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = originalFileName + '-adapte.docx';
+    a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
+    a.className = 'download-link';
+    downloadArea.appendChild(a);
 
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = originalFileName + '-adapte.docx';
-      a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
-      a.className = 'download-link';
-      downloadArea.appendChild(a);
+    setStatus('Terminé ✅');
+  } catch (err) {
+    console.error(err);
+    const msg = err.message || '';
+    const isGpuCrash = /device_removed|device was lost|requestdevice|disposed/i.test(msg);
+    log('Erreur : ' + (err.stack || err.message));
+    engine = null; // le moteur en mémoire n'est plus fiable, on force un rechargement complet la prochaine fois
 
-      setStatus('Terminé ✅');
-      break;
-    } catch (err) {
-      console.error(err);
-      const msg = err.message || '';
-      const isTransientGlitch = /disposed/i.test(msg) && !/device/i.test(msg);
-      const isGpuCrash = /device_removed|device was lost|requestdevice|gpu process/i.test(msg);
-      log('Erreur : ' + (err.stack || err.message));
-
-      if (isTransientGlitch && attempt < maxAttempts) {
-        log('Bug connu du runtime WebGPU/TVM détecté, rechargement du moteur puis nouvel essai…');
-        setStatus('Le moteur a buggé, on recharge et on réessaie…');
-        continue;
-      }
-
-      if (isGpuCrash) {
-        setStatus(
-          "Le pilote GPU a planté (mémoire vidéo insuffisante ou calcul trop long). " +
-          "Choisis le modèle « très léger » dans la liste, ferme les autres onglets/apps qui utilisent le GPU, " +
-          "et vérifie que tes pilotes graphiques sont à jour, puis réessaie."
-        );
-      } else {
-        setStatus('Erreur : ' + err.message);
-      }
-      break;
+    if (isGpuCrash) {
+      setStatus(
+        "Le pilote GPU a planté (DEVICE_REMOVED / device lost) — ce n'est pas récupérable dans l'onglet actuel. " +
+        "Recharge complètement la page (F5), choisis le modèle « très léger », et si ça se reproduit : " +
+        "mets à jour tes pilotes graphiques ou force le navigateur sur ton GPU dédié dans les paramètres " +
+        "Windows (Paramètres système → Affichage → Graphismes)."
+      );
+    } else {
+      setStatus('Erreur : ' + err.message);
     }
+  } finally {
+    runBtn.disabled = false;
+    updateRunButton();
   }
-
-  runBtn.disabled = false;
-  updateRunButton();
 });

@@ -53,9 +53,21 @@ les librairies (`mammoth`, `docx`, `web-llm`) sont chargées depuis des CDN
   le pilote graphique peut planter en cours d'inférence (erreur Windows
   `DXGI_ERROR_DEVICE_REMOVED` / "Device was lost" côté Chrome). Ce n'est
   pas un bug de l'app : c'est le pilote GPU qui abandonne un calcul trop
-  long ou trop gourmand en mémoire. Dans ce cas, choisis le modèle
-  "très léger" (1B), ferme les autres onglets/apps qui utilisent le GPU,
-  et mets à jour tes pilotes graphiques.
+  long ou trop gourmand en mémoire. Une fois le device perdu, il faut
+  **recharger complètement la page** (l'app ne peut pas récupérer un GPU
+  mort depuis l'onglet). Si ça se reproduit :
+  - choisis le modèle "très léger" (1B) ;
+  - mets à jour tes pilotes graphiques (souvent la cause n°1) ;
+  - si ton PC a deux GPU (intégré + dédié), force le navigateur sur le GPU
+    dédié : *Paramètres Windows → Système → Affichage → Graphismes →
+    ajoute chrome.exe/msedge.exe → Options → Performances élevées* ;
+  - en dernier recours (avancé, nécessite un redémarrage) : Windows tue
+    par défaut tout calcul GPU qui dépasse ~2 secondes sans réponse
+    (mécanisme TDR). On peut l'assouplir en ajoutant une valeur DWORD
+    `TdrDelay` (ex: `10`) sous
+    `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\GraphicsDrivers`
+    dans le Registre — à ne faire que si tu es à l'aise avec le Registre
+    Windows.
 
 ## Structure du repo
 
