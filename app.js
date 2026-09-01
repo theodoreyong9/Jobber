@@ -203,49 +203,7 @@ function discardEngine() {
   currentModelId = null;
 }
 
-// ==== 5. UN SEUL appel au modèle pour toute la passe ====
-// Le code a déjà fait le tri (étape 3) : le modèle ne reçoit que les
-// segments pré-filtrés comme modifiables, numérotés, et renvoie un tableau
-// JSON des segments qu'il choisit de reformuler. C'est l'architecture qui a
-// concrètement produit un CV sur cette machine — on ne la re-complexifie
-// pas sans preuve que c'est nécessaire.
-function buildEditPrompt(editableRuns, jobText) {
-  const listing = editableRuns
-    .map((r, i) => `[${i}] (${r.section}${r.role === 'headline' ? ", titre d'accroche" : ''}) ${r.text.trim()}`)
-    .join('\n');
-
-  const system = `Tu es un expert en recrutement et rédaction de CV. On te donne une liste NUMÉROTÉE d'extraits d'un CV — déjà triés pour ne contenir QUE du contenu rédigé modifiable (résumé, compétences, descriptions de missions, titre d'accroche). Aucun de ces extraits n'est une donnée factuelle (nom, date, entreprise, diplôme, coordonnées) : ce tri a déjà été fait, tu n'as pas à t'en soucier. On te donne aussi le texte d'une offre d'emploi.
-
-Ta tâche : reformuler les extraits pertinents pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à ce que dit l'extrait original.
-
-RÈGLES ABSOLUES :
-1. N'invente aucun fait, aucune expérience, aucune compétence absente de l'extrait original — c'est une reformulation, pas une invention.
-2. Si le poste visé est éloigné du parcours, ne fabrique pas de fausse cohérence : reformule honnêtement avec ce qui existe réellement.
-3. Ne renvoie QUE les extraits que tu modifies réellement. Si un extrait n'a rien à gagner à être changé, ne le renvoie pas.
-
-Tu réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, sans balises markdown, de la forme :
-[{"index": 2, "text": "nouveau texte de l'extrait 2"}, {"index": 5, "text": "nouveau texte de l'extrait 5"}]`;
-
-  const user = `--- EXTRAITS DU CV (numérotés) ---\n${listing}\n\n--- OFFRE D'EMPLOI ---\n${jobText}\n\nRenvoie le tableau JSON des extraits à reformuler.`;
-
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: user }
-  ];
-}
-
-function extractJsonArray(text) {
-  let t = text.trim();
-  t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
-  const start = t.indexOf('[');
-  const end = t.lastIndexOf(']');
-  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de tableau JSON trouvé).');
-  const arr = JSON.parse(t.slice(start, end + 1));
-  if (!Array.isArray(arr)) throw new Error('Réponse du modèle non exploitable (pas un tableau).');
-  return arr;
-}
-
-// ==== 6. Application des modifications dans le XML ====
+// ==== 5. Application des modifications dans le XML ====
 // On ne touche QUE le texte (<w:t>) du run visé : sa mise en forme (rPr —
 // police, couleur, gras, taille…) reste l'élément XML original intact.
 function setRunText(rNode, newText) {
@@ -262,18 +220,7 @@ function setRunText(rNode, newText) {
   for (let i = 1; i < tNodes.length; i++) tNodes[i].textContent = '';
 }
 
-function applyEdits(editableRuns, edits) {
-  let applied = 0;
-  edits.forEach(({ index, text }) => {
-    const entry = editableRuns[index];
-    if (!entry || typeof text !== 'string' || !text.trim()) return;
-    setRunText(entry.node, text);
-    applied++;
-  });
-  return applied;
-}
-
-// ==== 7. Génération du fichier .docx modifié ====
+// ==== 6. Génération du fichier .docx modifié ====
 async function packageDocx() {
   const serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
   const withDeclaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + serialized;
@@ -284,7 +231,55 @@ async function packageDocx() {
   });
 }
 
-// ==== 8. Orchestration principale ====
+// ==== 8. Un appel PAR SEGMENT, volontairement petit ====
+// Mesuré concrètement sur cette machine (tests progressifs plus bas) :
+// un plafond dur d'environ 10-12 secondes de calcul GPU continu, au-delà
+// duquel ça casse — indépendamment de la taille exacte du prompt ou du
+// modèle. Chaque appel ici reste donc largement sous ce plafond : un seul
+// segment de CV à la fois (pas la liste entière), un extrait court de
+// l'annonce, et une sortie limitée à 150 tokens — la combinaison qui a
+// été mesurée fiable dans le testeur de diagnostic plus bas sur la page.
+const MAX_JOB_CHARS_PER_CALL = 600;
+const PER_SEGMENT_MAX_TOKENS = 150;
+
+function buildSegmentPrompt(run, jobText) {
+  let job = jobText;
+  if (job.length > MAX_JOB_CHARS_PER_CALL) {
+    job = job.slice(0, MAX_JOB_CHARS_PER_CALL) + '…';
+  }
+  const system = `Tu es un expert en recrutement. On te donne un court extrait d'un CV (section "${run.section}") et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
+  const user = `--- OFFRE D'EMPLOI (extrait) ---\n${job}\n\n--- EXTRAIT DU CV ---\n${run.text.trim()}\n\nRéponds uniquement avec le texte reformulé.`;
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user }
+  ];
+}
+
+async function rewriteSegment(run, jobText, modelId) {
+  const messages = buildSegmentPrompt(run, jobText);
+  try {
+    const reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: PER_SEGMENT_MAX_TOKENS });
+    return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
+  } catch (err) {
+    const msg = err.message || '';
+    const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+    log(`  ⚠️ Échec sur ce segment : ${msg}`);
+    discardEngine();
+    if (isDeviceLost) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await ensureEngine(modelId);
+    try {
+      const reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: PER_SEGMENT_MAX_TOKENS });
+      return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
+    } catch (err2) {
+      log(`  ✗ Toujours en échec, segment laissé inchangé : ${err2.message}`);
+      discardEngine();
+      return null;
+    }
+  }
+}
+
+// ==== 9. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
@@ -299,37 +294,29 @@ runBtn.addEventListener('click', async () => {
 
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
-    log(`${editable.length} segment(s) pré-filtré(s) envoyé(s) au modèle en un seul appel.`);
+    log(`${editable.length} segment(s) à reformuler, un par un (petits appels).`);
 
-    setStatus('Génération des reformulations (le modèle réfléchit)…');
-    const messages = buildEditPrompt(editable, jobText);
+    let applied = 0;
+    let failed = 0;
 
-    let reply;
-    try {
-      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1500 });
-    } catch (err) {
-      const msg = err.message || '';
-      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
-      log(`⚠️ Échec du premier essai : ${msg}`);
-      discardEngine();
-      if (isDeviceLost) throw err; // vrai crash GPU : inutile d'insister
-      log('Nouvel essai avec un moteur neuf…');
-      setStatus('Libération de la mémoire GPU avant de réessayer…');
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      await ensureEngine(modelId);
-      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1500 });
+    for (let i = 0; i < editable.length; i++) {
+      const run = editable[i];
+      setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
+      const newText = await rewriteSegment(run, jobText, modelId);
+      if (newText && newText.length > 0) {
+        setRunText(run.node, newText);
+        applied++;
+        log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
+      } else {
+        failed++;
+        log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé.`);
+      }
     }
 
-    const text = reply.choices[0].message.content;
-    log(`Réponse reçue (${text.length} caractères).`);
-
-    const edits = extractJsonArray(text);
-    log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
-    const applied = applyEdits(editable, edits);
-    log(`${applied} segment(s) modifié(s).`);
+    log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s).`);
 
     if (applied === 0) {
-      setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B).");
+      setStatus("Aucun segment n'a pu être reformulé — vérifie le journal technique.");
       return;
     }
 
@@ -358,7 +345,10 @@ runBtn.addEventListener('click', async () => {
     });
     downloadArea.appendChild(continueBtn);
 
-    setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
+    const msg = failed > 0
+      ? `Terminé avec ${failed} segment(s) non modifié(s) (voir journal).`
+      : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
+    setStatus(msg);
   } catch (err) {
     console.error(err);
     const msg = err.message || '';
@@ -368,8 +358,8 @@ runBtn.addEventListener('click', async () => {
 
     if (isDeviceLost) {
       setStatus(
-        "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
-        "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
+        "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5) " +
+        "et réessaie."
       );
     } else {
       setStatus('Erreur : ' + err.message);
@@ -396,6 +386,8 @@ const DIAG_LEVELS = [
   { id: 1, label: 'Niveau 1 — prompt minuscule, sortie courte', prompt: 'Salut', maxTokens: 20, calls: 1 },
   { id: 2, label: 'Niveau 2 — prompt court (1 phrase), sortie courte', prompt: 'Explique la photosynthèse en une phrase.', maxTokens: 100, calls: 1 },
   { id: 3, label: 'Niveau 3 — prompt moyen (~800 caractères)', prompt: fillerText(800) + '\n\nRésume ce texte en une phrase.', maxTokens: 150, calls: 1 },
+  { id: '3a', label: 'Niveau 3a — MÊME prompt ~800 caractères MAIS sortie très courte (20 tokens)', prompt: fillerText(800) + '\n\nRésume ce texte en 3 mots maximum.', maxTokens: 20, calls: 1 },
+  { id: '3b', label: 'Niveau 3b — prompt minuscule MAIS sortie longue (150 tokens, comme le niveau 3)', prompt: 'Écris un texte de plusieurs phrases sur un sujet de ton choix.', maxTokens: 150, calls: 1 },
   { id: 4, label: 'Niveau 4 — prompt long (~3500 caractères, taille d\'un CV réel)', prompt: fillerText(3500) + '\n\nRésume ce texte en une phrase.', maxTokens: 150, calls: 1 },
   { id: 5, label: 'Niveau 5 — prompt long + grosse sortie (1500 tokens, comme l\'adaptation de CV)', prompt: fillerText(3500) + '\n\nListe 30 idées en lien avec ce texte, une par ligne.', maxTokens: 1500, calls: 1 },
   { id: 6, label: 'Niveau 6 — DEUX appels courts d\'affilée sur le même moteur', prompt: 'Dis un chiffre entre 1 et 10.', maxTokens: 20, calls: 2 },
