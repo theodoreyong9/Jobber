@@ -6,17 +6,54 @@ le navigateur via WebGPU) — aucun serveur, aucune donnée envoyée nulle part.
 
 ## Fonctionnement
 
-1. Tu uploades ton CV `.docx` → le texte est extrait dans le navigateur avec
-   [mammoth.js](https://github.com/mwilliamson/mammoth.js).
-2. Tu colles le texte d'une offre d'emploi.
-3. Un modèle (Llama 3.2 3B, Phi-3.5 mini ou Llama 3.1 8B, au choix) est
-   téléchargé une seule fois et mis en cache par le navigateur, puis
-   réécrit ton CV en intégrant les mots-clés de l'offre.
-4. Un nouveau `.docx` est généré à la volée avec la librairie
-   [`docx`](https://github.com/dolanmiu/docx) et proposé au téléchargement.
+Un `.docx` est en réalité une archive zip contenant du XML. Plutôt que de
+regénérer un nouveau CV avec une mise en page générique, l'app **édite le
+document original en place** :
+
+1. Tu uploades ton CV `.docx` → l'archive est ouverte dans le navigateur
+   ([JSZip](https://stuk.github.io/jszip/)) et `word/document.xml` est parsé
+   comme du XML natif (`DOMParser`).
+2. Chaque **segment de texte** ("run" au sens Word, un fragment de
+   paragraphe avec une mise en forme homogène) est numéroté et son texte
+   extrait. C'est important : sur beaucoup de CV, une ligne comme
+   *"Poste — Entreprise — Dates"* (en gras) suivie de sa description
+   (normale) forment en réalité **un seul paragraphe** en deux segments —
+   éditer au niveau du paragraphe entier empêcherait de figer l'un tout en
+   reformulant l'autre.
+3. Tu colles le texte d'une offre d'emploi.
+4. Un modèle (Llama 3.2 1B/3B, Phi-3.5 mini ou Llama 3.1 8B, au choix) est
+   téléchargé une seule fois et mis en cache par le navigateur, puis reçoit
+   la liste numérotée des segments (avec une annotation "(gras)" comme
+   indice) + l'offre, et renvoie uniquement les numéros et le nouveau texte
+   des segments de **contenu** (résumé, descriptions de missions,
+   compétences, titre d'accroche) qu'il juge utile de reformuler.
+5. Pour chaque segment concerné, seul son **texte** est remplacé — sa mise
+   en forme (police, couleur, gras, taille) n'est ni recréée ni même
+   effleurée : c'est le même élément XML, avec juste un contenu différent.
+   Tout le reste du document (styles, thème, tableaux, en-têtes/pieds de
+   page, photo, numérotation, dates, noms d'entreprises, diplômes,
+   coordonnées) n'est jamais touché.
+6. Le zip est ré-assemblé avec ce `document.xml` modifié et proposé au
+   téléchargement.
+
+Le modèle ne touche jamais au nom, aux dates, aux noms d'entreprises, aux
+diplômes ou aux coordonnées : ces segments sont explicitement exclus du
+prompt (avec une distinction explicite entre "titre d'accroche du CV",
+modifiable, et "intitulé de poste par expérience", figé — les deux sont
+souvent en gras mais n'ont pas le même statut). Un filet de sécurité côté
+code rejette en plus toute tentative de modifier un segment trop court
+(donc probablement une date ou un sigle isolé) même si le modèle en
+proposait une.
 
 Tout se passe dans l'onglet du navigateur : pas de backend, pas de clé API,
 rien n'est jamais uploadé sur un serveur.
+
+## Continuer à améliorer
+
+Après une première passe, un bouton « Continuer à améliorer ce CV » permet
+de relancer une nouvelle passe de reformulation directement sur le document
+déjà modifié (en changeant éventuellement le texte de l'annonce), sans
+jamais perdre la mise en page d'origine.
 
 ## Déploiement automatique sur GitHub Pages
 
@@ -32,9 +69,11 @@ automatiquement sur GitHub Pages à chaque push sur `main`.
    l'onglet Actions) : le site est déployé sur
    `https://<ton-user>.github.io/<nom-du-repo>/`.
 
-Aucune étape de build n'est nécessaire : le site est du HTML/CSS/JS pur,
-les librairies (`mammoth`, `docx`, `web-llm`) sont chargées depuis des CDN
-(`jsdelivr`, `esm.sh`) directement dans le navigateur de l'utilisateur.
+Aucune étape de build n'est nécessaire : le site est du HTML/CSS/JS pur, et
+la seule librairie externe ([JSZip](https://stuk.github.io/jszip/), pour
+lire/écrire l'archive du `.docx`) est chargée depuis un CDN (`jsdelivr`)
+directement dans le navigateur de l'utilisateur. WebLLM est chargé depuis
+`esm.run` (également jsDelivr).
 
 ## Limites à connaître
 
@@ -43,37 +82,24 @@ les librairies (`mammoth`, `docx`, `web-llm`) sont chargées depuis des CDN
 - Le premier chargement du modèle télécharge plusieurs centaines de Mo à
   quelques Go selon le modèle choisi — c'est lent la première fois,
   quasi instantané ensuite grâce au cache du navigateur.
-- Le nouveau `.docx` est généré avec une mise en forme simple et propre
-  (titres, listes à puces) — il ne reproduit pas exactement la mise en
-  page graphique du fichier original, il en réutilise le contenu.
-- Le modèle est prompté pour ne pas inventer d'expérience ou de diplôme,
-  mais comme tout LLM il peut se tromper : relis toujours le résultat
-  avant de l'envoyer.
-- Sur un GPU peu puissant ou avec peu de VRAM (typiquement un GPU intégré),
-  le pilote graphique peut planter en cours d'inférence (erreur Windows
-  `DXGI_ERROR_DEVICE_REMOVED` / "Device was lost" côté Chrome). Ce n'est
-  pas un bug de l'app : c'est le pilote GPU qui abandonne un calcul trop
-  long ou trop gourmand en mémoire. Une fois le device perdu, il faut
-  **recharger complètement la page** (l'app ne peut pas récupérer un GPU
-  mort depuis l'onglet). Si ça se reproduit :
-  - choisis le modèle "très léger" (1B) ;
-  - mets à jour tes pilotes graphiques (souvent la cause n°1) ;
-  - si ton PC a deux GPU (intégré + dédié), force le navigateur sur le GPU
-    dédié : *Paramètres Windows → Système → Affichage → Graphismes →
-    ajoute chrome.exe/msedge.exe → Options → Performances élevées* ;
-  - en dernier recours (avancé, nécessite un redémarrage) : Windows tue
-    par défaut tout calcul GPU qui dépasse ~2 secondes sans réponse
-    (mécanisme TDR). On peut l'assouplir en ajoutant une valeur DWORD
-    `TdrDelay` (ex: `10`) sous
-    `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\GraphicsDrivers`
-    dans le Registre — à ne faire que si tu es à l'aise avec le Registre
-    Windows.
+- Un segment reformulé garde exactement sa mise en forme d'origine (même
+  police, couleur, gras...), mais s'il contenait lui-même un mélange de
+  styles en son sein (rare : un mot en couleur au milieu d'une phrase par
+  exemple), ce détail interne est perdu au profit du style global du
+  segment.
+- Le modèle est prompté pour ne pas inventer d'expérience ou de diplôme et
+  pour ne jamais toucher aux paragraphes factuels, mais comme tout LLM il
+  peut se tromper : relis toujours le résultat avant de l'envoyer.
+- Sur un GPU peu puissant ou avec peu de VRAM, le pilote graphique peut
+  planter en cours d'inférence (`DXGI_ERROR_DEVICE_REMOVED` / "Device was
+  lost"). Dans ce cas : recharge la page, choisis le modèle "très léger",
+  et vérifie que tes pilotes graphiques sont à jour.
 
 ## Structure du repo
 
 ```
 index.html                  page unique
 style.css                   styles
-app.js                      logique (lecture docx, WebLLM, génération docx)
+app.js                      logique (lecture/édition XML du docx, WebLLM, réassemblage)
 .github/workflows/deploy.yml   CI de déploiement Pages
 ```

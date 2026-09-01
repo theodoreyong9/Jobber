@@ -11,9 +11,11 @@
     <header>
       <h1>🎯 CV Adapter</h1>
       <p class="subtitle">
-        Adapte ton CV .docx à une offre d'emploi, mot-clé par mot-clé.
-        Tout tourne <strong>dans ton navigateur</strong> (WebLLM) : ton CV et l'offre
-        ne quittent jamais ta machine, rien n'est envoyé à un serveur.
+        Adapte ton CV .docx à une offre d'emploi, en gardant exactement ta mise en page,
+        tes polices, tes couleurs, tes tableaux et ta photo d'origine — seuls les textes de
+        contenu (résumé, descriptions de poste, compétences) sont reformulés. Tout tourne
+        <strong>dans ton navigateur</strong> (WebLLM) : ton CV et l'offre ne quittent jamais
+        ta machine, rien n'est envoyé à un serveur.
       </p>
     </header>
 
@@ -41,16 +43,11 @@
       <section class="card">
         <h2>3. Modèle IA (téléchargé une seule fois, mis en cache)</h2>
         <select id="model-select">
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B — très rapide mais peu fiable, invente parfois des infos (~700 Mo)</option>
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B — très rapide mais peu fiable (~700 Mo)</option>
           <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC" selected>Llama 3.2 3B — bon compromis (~2 Go)</option>
           <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini — équilibré (~2,5 Go)</option>
           <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">Llama 3.1 8B — le plus fiable pour cette tâche (~5 Go, GPU puissant requis)</option>
         </select>
-        <p class="hint">
-          ⚠️ Cette tâche demande au modèle de bien comprendre et respecter ton CV. Les petits
-          modèles (1B) peuvent halluciner (inventer un nom, un employeur…) — préfère le 3B
-          voire le 8B si ton GPU le permet, et relis toujours le résultat.
-        </p>
         <p class="hint">
           Nécessite un navigateur avec WebGPU (Chrome/Edge récents). Le premier lancement
           télécharge le modèle ; les suivants sont instantanés grâce au cache du navigateur.
@@ -70,12 +67,12 @@
     </main>
 
     <footer>
-      <p>Aucune donnée envoyée à un serveur — extraction du CV, inférence IA et génération du
-      nouveau .docx se font entièrement côté client.</p>
+      <p>Aucune donnée envoyée à un serveur — lecture du CV, inférence IA et réassemblage du
+      .docx se font entièrement côté client.</p>
     </footer>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

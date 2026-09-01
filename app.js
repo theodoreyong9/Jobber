@@ -10,12 +10,19 @@ const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 
-let originalCvText = null;
+// État du document en cours d'édition. On garde le zip et le DOM du
+// document.xml EN MÉMOIRE et on les modifie en place à chaque passe :
+// tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page,
+// images, tableaux, numérotation…) reste strictement intact d'un bout à
+// l'autre, y compris à travers plusieurs itérations "continuer à améliorer".
+let docState = null; // { zip, xmlDoc }
 let originalFileName = 'cv';
 let baseFileName = 'cv';
 let iteration = 1;
 let engine = null;
 let currentModelId = null;
+
+const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 function log(msg) {
   logEl.textContent += msg + '\n';
@@ -26,7 +33,12 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
-// ==== 1. Lecture du CV .docx (mammoth.js, 100% client) ====
+// ==== 1. Lecture du CV .docx (JSZip + DOM XML natif, 100% client) ====
+// Un .docx est une archive zip contenant du XML. On ne fait AUCUNE
+// reconstruction : on ouvre l'archive, on parse word/document.xml comme du
+// XML, et plus tard on ne modifiera que le texte de certains segments,
+// en laissant tout le reste (styles, polices, tableaux, images, en-têtes…)
+// strictement inchangé.
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -35,15 +47,26 @@ fileInput.addEventListener('change', async (e) => {
   iteration = 1;
   fileNameEl.textContent = file.name;
   setStatus('Lecture du CV…');
+  downloadArea.innerHTML = '';
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const result = await mammoth.extractRawText({ arrayBuffer });
-    originalCvText = result.value;
-    log(`CV chargé : ${originalCvText.length} caractères extraits.`);
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const docXmlFile = zip.file('word/document.xml');
+    if (!docXmlFile) throw new Error("Ce fichier ne ressemble pas à un .docx valide (word/document.xml introuvable).");
+    const xmlText = await docXmlFile.async('text');
+    const xmlDoc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    if (xmlDoc.getElementsByTagName('parsererror').length) {
+      throw new Error('Le XML du document est illisible.');
+    }
+    docState = { zip, xmlDoc };
+
+    const textRuns = getTextRuns(docState.xmlDoc);
+    log(`CV chargé : ${textRuns.length} segments de texte détectés dans le document.`);
     setStatus("CV chargé. Colle l'annonce puis lance l'adaptation.");
     updateRunButton();
   } catch (err) {
     console.error(err);
+    docState = null;
     setStatus('Erreur de lecture du .docx : ' + err.message);
   }
 });
@@ -63,14 +86,42 @@ jobTextEl.addEventListener('input', () => {
 });
 
 function updateRunButton() {
-  runBtn.disabled = !(originalCvText && jobTextEl.value.trim().length > 20);
+  runBtn.disabled = !(docState && jobTextEl.value.trim().length > 20);
 }
 
-// ==== 2. Chargement du moteur WebLLM (dans le cache du navigateur) ====
-// Version figée (pas "latest") pour éviter les régressions du CDN, et
-// remise à zéro complète du moteur en cas d'erreur runtime (le bug WebGPU/TVM
-// "Object has already been disposed" laisse parfois le moteur dans un état
-// corrompu qu'il faut jeter plutôt que réutiliser).
+// ==== 2. Extraction des segments de texte ("runs") depuis le XML ====
+// Un paragraphe Word peut contenir plusieurs "runs" (segments) avec des
+// mises en forme différentes — typiquement un segment en gras pour
+// "Poste — Entreprise — Dates" suivi d'un segment normal pour la
+// description de la mission, DANS LE MÊME PARAGRAPHE. On édite donc au
+// niveau du run, jamais du paragraphe entier, pour pouvoir figer l'un tout
+// en reformulant l'autre.
+function getTextRuns(xmlDoc) {
+  const pNodes = Array.from(xmlDoc.getElementsByTagName('w:p'));
+  const runs = [];
+  pNodes.forEach((pNode, paragraphIndex) => {
+    const rNodes = Array.from(pNode.getElementsByTagName('w:r'));
+    rNodes.forEach((rNode) => {
+      const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
+      let text = '';
+      for (const t of tNodes) text += t.textContent;
+      if (!text.trim()) return; // segment vide (ex: simple saut de ligne) : rien à proposer au modèle
+      runs.push({ node: rNode, text, bold: isBoldRun(rNode), paragraphIndex });
+    });
+  });
+  return runs;
+}
+
+function isBoldRun(rNode) {
+  const rPr = rNode.getElementsByTagName('w:rPr')[0];
+  if (!rPr) return false;
+  const b = rPr.getElementsByTagName('w:b')[0];
+  if (!b) return false;
+  const val = b.getAttribute('w:val');
+  return val !== '0' && val !== 'false';
+}
+
+// ==== 3. Chargement du moteur WebLLM (dans le cache du navigateur) ====
 const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm';
 
 async function ensureEngine(modelId) {
@@ -104,11 +155,10 @@ async function ensureEngine(modelId) {
   return engine;
 }
 
-// ==== 3. Construction du prompt ====
+// ==== 4. Construction du prompt ====
 // On plafonne la taille du texte envoyé au modèle : un prompt trop long
 // se traduit par un seul très gros calcul GPU ("prefill") qui peut dépasser
-// le délai que Windows accorde au driver avant de le tuer (device lost),
-// même sur un GPU qui gère très bien des prompts courts.
+// le délai que le pilote/OS accorde avant de le tuer (device lost).
 const MAX_CV_CHARS = 3500;
 const MAX_JOB_CHARS = 3500;
 
@@ -118,236 +168,123 @@ function capText(text, maxChars, label) {
   return text.slice(0, maxChars) + '\n[…texte tronqué…]';
 }
 
-function buildPrompt(cvText, jobText) {
-  cvText = capText(cvText, MAX_CV_CHARS, 'Le CV');
+// Seuil sous lequel on refuse de toute façon de modifier un segment (voir
+// applyEdits) : les segments courts sont presque toujours du factuel isolé
+// (une date seule, un sigle…) qu'on ne veut jamais reformuler.
+const MIN_EDITABLE_RUN_LENGTH = 15;
+
+function buildRunsListing(runs) {
+  const lines = [];
+  let lastParagraph = null;
+  const firstBoldIndex = runs.findIndex((r) => r.bold);
+  runs.forEach((r, i) => {
+    if (r.paragraphIndex !== lastParagraph) {
+      lines.push(`--- paragraphe ${r.paragraphIndex} ---`);
+      lastParagraph = r.paragraphIndex;
+    }
+    let tag = '';
+    if (r.bold && i === firstBoldIndex) {
+      tag = ' (gras — probablement le titre d\'accroche du CV, celui-ci EST modifiable)';
+    } else if (r.bold) {
+      tag = ' (gras)';
+    }
+    lines.push(`[${i}]${tag} ${r.text}`);
+  });
+  return lines.join('\n');
+}
+
+function buildEditPrompt(runs, jobText) {
+  let listText = buildRunsListing(runs);
+  listText = capText(listText, MAX_CV_CHARS, 'Le CV');
   jobText = capText(jobText, MAX_JOB_CHARS, "Le texte de l'annonce");
 
-  const system = `Tu es un expert en recrutement et rédaction de CV. Tu reçois un CV existant (SOURCE DE VÉRITÉ ABSOLUE) et une offre d'emploi. Ta tâche : reformuler et réorganiser le CV pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à une expérience ou compétence déjà présente dans le CV.
+  const system = `Tu es un expert en recrutement et rédaction de CV. On te donne la liste NUMÉROTÉE des segments de texte ("runs") d'un CV existant, regroupés par paragraphe d'origine (repères "--- paragraphe N ---"). Un segment marqué "(gras)" est en gras dans le document original — c'est presque toujours le signe qu'il s'agit d'un titre, d'une date ou d'un nom d'entreprise, PAS de contenu à reformuler. On te donne aussi le texte d'une offre d'emploi.
+
+Ta tâche : repérer les segments de CONTENU RÉDIGÉ (résumé/profil, descriptions de missions et réalisations, compétences) et les reformuler pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à une expérience ou compétence déjà présente.
 
 RÈGLES ABSOLUES, à ne jamais enfreindre :
-1. Le nom, l'email, le téléphone, le LinkedIn/l'adresse, les noms d'entreprises, les dates et les établissements de formation DOIVENT être recopiés EXACTEMENT tels qu'ils apparaissent dans le CV ORIGINAL. Ne les modifie jamais, ne les invente jamais, ne les déduis jamais de l'offre d'emploi.
-2. L'offre d'emploi sert UNIQUEMENT à choisir l'angle de présentation et le vocabulaire. Elle n'est JAMAIS une source d'informations factuelles sur le candidat. N'en recopie aucun nom propre, aucune coordonnée, aucune donnée dans les champs nom/contact/expériences/formations.
-3. Si une information n'existe pas dans le CV, mets null (champ simple) ou un tableau vide (liste). N'invente rien pour combler un vide.
-4. Si le poste visé est éloigné du parcours du candidat, ne fabrique pas de fausse cohérence : mets en avant honnêtement les compétences transférables réellement présentes dans le CV (ex: relation client, autonomie, organisation), sans prétendre à une expérience du secteur visé qui n'existe pas.
-5. Chaque élément de ta réponse (compétence, poste, description) doit être traçable à une phrase précise du CV original. Si tu ne peux pas le justifier par le texte du CV fourni, ne l'inclus pas.
-6. Avant de répondre, vérifie mentalement : le nom que je m'apprête à écrire apparaît-il littéralement dans le CV original ? Chaque entreprise citée apparaît-elle dans le CV original ? Si non, corrige-toi avant de répondre.
+1. NE TOUCHE JAMAIS : le nom du candidat, les dates, les noms d'entreprises et d'établissements, les diplômes, les coordonnées (email/téléphone/adresse/LinkedIn), les langues, les rubriques "autres/divers", les titres de section ("EXPÉRIENCE", "FORMATION"…), et l'intitulé de poste PROPRE À CHAQUE EXPÉRIENCE (ex: "Business Analyst — DRAY — May 2023 – Dec 2025"). Un segment marqué simplement "(gras)" est très probablement l'un de ces éléments factuels : ne le touche jamais.
+2. Le seul segment en gras que tu PEUX reformuler est celui explicitement annoté "(gras — probablement le titre d'accroche du CV, celui-ci EST modifiable)". Tu peux aussi reformuler, même non gras : le résumé/profil, les compétences, et les descriptions de missions/réalisations sous chaque expérience.
+3. Un même paragraphe original peut contenir plusieurs segments : par exemple un segment gras "Poste — Entreprise — Dates" suivi d'un segment normal "Description de la mission". Dans ce cas, laisse le premier intact et ne reformule que le second.
+4. L'offre d'emploi sert UNIQUEMENT à choisir l'angle et le vocabulaire. Elle n'est JAMAIS une source de faits sur le candidat. N'invente rien, ne déduis aucune donnée factuelle de l'offre.
+5. Chaque reformulation doit rester fidèle au sens du segment original — c'est une reformulation, pas une invention. Si le poste visé est éloigné du parcours, ne fabrique pas de fausse cohérence : reformule honnêtement avec ce qui existe réellement.
+6. Ne renvoie QUE les segments que tu modifies réellement.
 
-Tu réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises markdown, respectant exactement ce schéma :
-{
-  "nom": string,
-  "titre_professionnel": string,
-  "contact": { "email": string|null, "telephone": string|null, "adresse": string|null, "linkedin": string|null },
-  "resume": string,
-  "competences": string[],
-  "experiences": [ { "poste": string, "entreprise": string, "dates": string, "lieu": string|null, "description": string[] } ],
-  "formations": [ { "diplome": string, "etablissement": string, "dates": string } ],
-  "langues": string[],
-  "autres": string|null
-}`;
-  const user = `--- CV ORIGINAL (seule source de vérité pour les faits) ---\n${cvText}\n\n--- OFFRE D'EMPLOI (uniquement pour le vocabulaire et l'angle) ---\n${jobText}\n\nAdapte ce CV à cette offre en respectant strictement les règles ci-dessus. Réponds uniquement avec le JSON demandé.`;
+Tu réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, sans balises markdown, de la forme :
+[{"index": 12, "text": "nouveau texte du segment 12"}, {"index": 15, "text": "nouveau texte du segment 15"}]`;
+
+  const user = `--- SEGMENTS DU CV (numérotés, seule source de vérité) ---\n${listText}\n\n--- OFFRE D'EMPLOI (uniquement pour le vocabulaire et l'angle) ---\n${jobText}\n\nRenvoie le tableau JSON des segments de contenu à reformuler, en respectant strictement les règles ci-dessus.`;
+
   return [
     { role: 'system', content: system },
     { role: 'user', content: user }
   ];
 }
 
-function serializeCvData(data) {
-  const lines = [];
-  if (data.nom) lines.push(data.nom);
-  if (data.titre_professionnel) lines.push(data.titre_professionnel);
-  const contact = data.contact || {};
-  const contactLine = ['email', 'telephone', 'adresse', 'linkedin']
-    .map((k) => contact[k]).filter(Boolean).join(' · ');
-  if (contactLine) lines.push(contactLine);
-
-  if (data.resume) { lines.push('', 'RÉSUMÉ', data.resume); }
-
-  if (data.competences && data.competences.length) {
-    lines.push('', 'COMPÉTENCES', data.competences.join(', '));
-  }
-
-  if (data.experiences && data.experiences.length) {
-    lines.push('', 'EXPÉRIENCE PROFESSIONNELLE');
-    data.experiences.forEach((exp) => {
-      lines.push([exp.poste, exp.entreprise].filter(Boolean).join(' — '));
-      const meta = [exp.dates, exp.lieu].filter(Boolean).join(' · ');
-      if (meta) lines.push(meta);
-      (exp.description || []).forEach((d) => lines.push('- ' + d));
-    });
-  }
-
-  if (data.formations && data.formations.length) {
-    lines.push('', 'FORMATION');
-    data.formations.forEach((f) => {
-      lines.push([f.diplome, f.etablissement, f.dates].filter(Boolean).join(' — '));
-    });
-  }
-
-  if (data.langues && data.langues.length) {
-    lines.push('', 'LANGUES', data.langues.join(', '));
-  }
-
-  if (data.autres) { lines.push('', 'AUTRES', data.autres); }
-
-  return lines.join('\n');
-}
-
-function extractJson(text) {
+function extractJsonArray(text) {
   let t = text.trim();
   t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
-  const start = t.indexOf('{');
-  const end = t.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de JSON trouvé).');
-  return JSON.parse(t.slice(start, end + 1));
+  const start = t.indexOf('[');
+  const end = t.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de tableau JSON trouvé).');
+  const arr = JSON.parse(t.slice(start, end + 1));
+  if (!Array.isArray(arr)) throw new Error('Réponse du modèle non exploitable (pas un tableau).');
+  return arr;
 }
 
-// Filet de sécurité anti-hallucination : le nom et les entreprises citées
-// doivent apparaître littéralement dans le CV original. Un modèle petit/faible
-// peut sinon "abandonner" et recopier des bouts de l'offre d'emploi à la place
-// (ex: prendre "Nouveau Collègue" dans l'annonce pour le nom du candidat).
-function normalize(s) {
-  return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
+// ==== 5. Application des modifications dans le XML ====
+// On ne touche QUE le texte (<w:t>) du run visé : sa mise en forme (rPr —
+// police, couleur, gras, taille…) n'est jamais recréée ni même effleurée,
+// elle reste l'élément XML original tel quel. Seul son contenu textuel change.
+function applyEdits(runs, edits) {
+  let applied = 0;
+  let skipped = 0;
 
-function checkForHallucination(data, cvText) {
-  const cvNorm = normalize(cvText);
-  const problems = [];
+  edits.forEach(({ index, text }) => {
+    const entry = runs[index];
+    if (!entry || typeof text !== 'string' || !text.trim()) return;
 
-  if (data.nom && !cvNorm.includes(normalize(data.nom))) {
-    problems.push(`le nom généré ("${data.nom}") n'apparaît pas dans le CV original`);
-  }
-  (data.experiences || []).forEach((exp) => {
-    if (exp.entreprise && !cvNorm.includes(normalize(exp.entreprise))) {
-      problems.push(`l'entreprise "${exp.entreprise}" n'apparaît pas dans le CV original`);
+    if (entry.text.trim().length < MIN_EDITABLE_RUN_LENGTH) {
+      skipped++;
+      log(`⚠️ Modification du segment [${index}] ignorée (trop court pour être un vrai contenu à reformuler) : "${entry.text.trim()}"`);
+      return;
     }
+
+    setRunText(entry.node, text);
+    applied++;
   });
 
-  if (problems.length) {
-    log('⚠️ Alerte hallucination possible : ' + problems.join(' ; '));
-    setStatus(
-      "⚠️ Le résultat semble contenir des informations inventées (voir le journal technique). " +
-      "Ne l'utilise pas tel quel : vérifie chaque champ, ou réessaie avec un modèle plus grand (8B)."
-    );
-    return true;
-  }
-  return false;
+  return { applied, skipped };
 }
 
-// ==== 4. Mise en page aléatoire ====
-// À chaque génération, on tire une palette de couleur, une paire de polices
-// et un alignement d'en-tête au sort, pour que chaque CV exporté ait un
-// habillage visuel légèrement différent (tout en restant sobre et lisible).
-const THEMES = [
-  { accent: '2E5EAA', headingFont: 'Calibri',      bodyFont: 'Calibri',    align: 'left',   rule: true  },
-  { accent: '1F7A5C', headingFont: 'Cambria',       bodyFont: 'Calibri',    align: 'center', rule: false },
-  { accent: '8A3B2E', headingFont: 'Georgia',       bodyFont: 'Garamond',   align: 'left',   rule: true  },
-  { accent: '5B3E8A', headingFont: 'Trebuchet MS',  bodyFont: 'Verdana',    align: 'center', rule: true  },
-  { accent: '2E7A82', headingFont: 'Verdana',       bodyFont: 'Georgia',    align: 'left',   rule: false },
-  { accent: '7A2E4B', headingFont: 'Garamond',      bodyFont: 'Cambria',    align: 'center', rule: true  },
-];
-
-function pickTheme() {
-  return THEMES[Math.floor(Math.random() * THEMES.length)];
+function setRunText(rNode, newText) {
+  const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
+  if (tNodes.length === 0) {
+    const t = docState.xmlDoc.createElementNS(W_NS, 'w:t');
+    t.setAttribute('xml:space', 'preserve');
+    t.textContent = newText;
+    rNode.appendChild(t);
+    return;
+  }
+  tNodes[0].setAttribute('xml:space', 'preserve');
+  tNodes[0].textContent = newText;
+  for (let i = 1; i < tNodes.length; i++) {
+    tNodes[i].textContent = '';
+  }
 }
 
-// ==== 5. Génération du nouveau .docx (librairie "docx", 100% client) ====
-async function buildDocx(data) {
-  const docx = await import('https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.mjs');
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = docx;
-
-  const theme = pickTheme();
-  const align = theme.align === 'center' ? AlignmentType.CENTER : AlignmentType.LEFT;
-
-  const children = [];
-
-  // Nom en grand, coloré, avec alignement et filet aléatoires
-  children.push(new Paragraph({
-    alignment: align,
-    border: theme.rule ? {
-      bottom: { color: theme.accent, space: 6, style: BorderStyle.SINGLE, size: 8 }
-    } : undefined,
-    children: [
-      new TextRun({ text: data.nom || '', bold: true, size: 48, color: theme.accent, font: theme.headingFont })
-    ]
-  }));
-
-  if (data.titre_professionnel) {
-    children.push(new Paragraph({
-      alignment: align,
-      children: [new TextRun({ text: data.titre_professionnel, size: 26, font: theme.bodyFont, italics: true })]
-    }));
-  }
-
-  const contactParts = [];
-  if (data.contact) {
-    ['email', 'telephone', 'adresse', 'linkedin'].forEach((k) => {
-      if (data.contact[k]) contactParts.push(data.contact[k]);
-    });
-  }
-  if (contactParts.length) {
-    children.push(new Paragraph({
-      alignment: align,
-      children: [new TextRun({ text: contactParts.join(' · '), size: 20, font: theme.bodyFont })]
-    }));
-  }
-
-  function heading(text) {
-    return new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      children: [new TextRun({ text, bold: true, color: theme.accent, font: theme.headingFont })]
-    });
-  }
-  function body(text, opts = {}) {
-    return new Paragraph({
-      bullet: opts.bullet ? { level: 0 } : undefined,
-      children: [new TextRun({ text, font: theme.bodyFont, bold: opts.bold, italics: opts.italics })]
-    });
-  }
-
-  if (data.resume) {
-    children.push(heading('Résumé'));
-    children.push(body(data.resume));
-  }
-
-  if (data.competences && data.competences.length) {
-    children.push(heading('Compétences'));
-    data.competences.forEach((c) => children.push(body(c, { bullet: true })));
-  }
-
-  if (data.experiences && data.experiences.length) {
-    children.push(heading('Expérience professionnelle'));
-    data.experiences.forEach((exp) => {
-      const titleLine = [exp.poste, exp.entreprise].filter(Boolean).join(' — ');
-      children.push(body(titleLine, { bold: true }));
-      const meta = [exp.dates, exp.lieu].filter(Boolean).join(' · ');
-      if (meta) children.push(body(meta, { italics: true }));
-      (exp.description || []).forEach((d) => children.push(body(d, { bullet: true })));
-    });
-  }
-
-  if (data.formations && data.formations.length) {
-    children.push(heading('Formation'));
-    data.formations.forEach((f) => {
-      const line = [f.diplome, f.etablissement, f.dates].filter(Boolean).join(' — ');
-      children.push(body(line));
-    });
-  }
-
-  if (data.langues && data.langues.length) {
-    children.push(heading('Langues'));
-    children.push(body(data.langues.join(', ')));
-  }
-
-  if (data.autres) {
-    children.push(heading('Autres'));
-    children.push(body(data.autres));
-  }
-
-  const doc = new Document({ sections: [{ children }] });
-  return Packer.toBlob(doc);
+// ==== 6. Génération du fichier .docx modifié ====
+async function packageDocx() {
+  const serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
+  const withDeclaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + serialized;
+  docState.zip.file('word/document.xml', withDeclaration);
+  return docState.zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
 }
 
-// ==== 6. Orchestration ====
+// ==== 7. Orchestration ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
@@ -357,8 +294,10 @@ runBtn.addEventListener('click', async () => {
     const modelId = modelSelect.value;
     await ensureEngine(modelId);
 
-    setStatus('Génération du CV adapté (le modèle réfléchit)…');
-    const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
+    const textRuns = getTextRuns(docState.xmlDoc);
+
+    setStatus('Analyse du CV et génération des reformulations (le modèle réfléchit)…');
+    const messages = buildEditPrompt(textRuns, jobTextEl.value.trim());
     const reply = await engine.chat.completions.create({
       messages,
       temperature: 0.1,
@@ -367,10 +306,18 @@ runBtn.addEventListener('click', async () => {
     const text = reply.choices[0].message.content;
     log(`Réponse reçue (${text.length} caractères).`);
 
-    const data = extractJson(text);
-    const hasHallucination = checkForHallucination(data, originalCvText);
-    setStatus('Construction du fichier .docx…');
-    const blob = await buildDocx(data);
+    const edits = extractJsonArray(text);
+    log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
+    const { applied, skipped } = applyEdits(textRuns, edits);
+    log(`${applied} segment(s) modifié(s)${skipped ? `, ${skipped} ignoré(s) par sécurité` : ''}.`);
+
+    if (applied === 0) {
+      setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B), ou vérifie que l'annonce est bien pertinente par rapport au CV.");
+      return;
+    }
+
+    setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
+    const blob = await packageDocx();
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -384,23 +331,18 @@ runBtn.addEventListener('click', async () => {
     continueBtn.type = 'button';
     continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
     continueBtn.className = 'secondary-btn';
-    continueBtn.title = "Réutilise ce résultat comme nouveau point de départ pour une nouvelle passe d'adaptation.";
+    continueBtn.title = 'Relance une nouvelle passe de reformulation sur le document déjà modifié.';
     continueBtn.addEventListener('click', () => {
       iteration += 1;
-      originalCvText = serializeCvData(data);
       originalFileName = baseFileName + '-v' + iteration;
-      fileNameEl.textContent = `CV en cours d'amélioration (version ${iteration}) — ${originalCvText.length} caractères`;
-      log(`--- Reprise du CV généré comme nouveau point de départ (version ${iteration}) ---`);
+      log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
       setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
       downloadArea.innerHTML = '';
-      updateRunButton();
       jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
     downloadArea.appendChild(continueBtn);
 
-    if (!hasHallucination) {
-      setStatus('Terminé ✅');
-    }
+    setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
   } catch (err) {
     console.error(err);
     const msg = err.message || '';
@@ -410,10 +352,8 @@ runBtn.addEventListener('click', async () => {
 
     if (isGpuCrash) {
       setStatus(
-        "Le pilote GPU a planté (DEVICE_REMOVED / device lost) — ce n'est pas récupérable dans l'onglet actuel. " +
-        "Recharge complètement la page (F5), choisis le modèle « très léger », et si ça se reproduit : " +
-        "mets à jour tes pilotes graphiques ou force le navigateur sur ton GPU dédié dans les paramètres " +
-        "Windows (Paramètres système → Affichage → Graphismes)."
+        "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
+        "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
       );
     } else {
       setStatus('Erreur : ' + err.message);
