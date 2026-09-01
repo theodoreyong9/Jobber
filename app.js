@@ -12,6 +12,8 @@ const logEl = document.getElementById('log');
 
 let originalCvText = null;
 let originalFileName = 'cv';
+let baseFileName = 'cv';
+let iteration = 1;
 let engine = null;
 let currentModelId = null;
 
@@ -29,6 +31,8 @@ fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   originalFileName = file.name.replace(/\.docx$/i, '');
+  baseFileName = originalFileName;
+  iteration = 1;
   fileNameEl.textContent = file.name;
   setStatus('Lecture du CV…');
   try {
@@ -44,7 +48,7 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-const JOB_TEXT_WARN_THRESHOLD = 4000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
+const JOB_TEXT_WARN_THRESHOLD = 2000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
 
 jobTextEl.addEventListener('input', () => {
   updateRunButton();
@@ -67,7 +71,7 @@ function updateRunButton() {
 // remise à zéro complète du moteur en cas d'erreur runtime (le bug WebGPU/TVM
 // "Object has already been disposed" laisse parfois le moteur dans un état
 // corrompu qu'il faut jeter plutôt que réutiliser).
-const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
+const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm';
 
 async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
@@ -105,8 +109,8 @@ async function ensureEngine(modelId) {
 // se traduit par un seul très gros calcul GPU ("prefill") qui peut dépasser
 // le délai que Windows accorde au driver avant de le tuer (device lost),
 // même sur un GPU qui gère très bien des prompts courts.
-const MAX_CV_CHARS = 6000;
-const MAX_JOB_CHARS = 6000;
+const MAX_CV_CHARS = 3500;
+const MAX_JOB_CHARS = 2500;
 
 function capText(text, maxChars, label) {
   if (text.length <= maxChars) return text;
@@ -145,6 +149,47 @@ Tu réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balise
     { role: 'system', content: system },
     { role: 'user', content: user }
   ];
+}
+
+function serializeCvData(data) {
+  const lines = [];
+  if (data.nom) lines.push(data.nom);
+  if (data.titre_professionnel) lines.push(data.titre_professionnel);
+  const contact = data.contact || {};
+  const contactLine = ['email', 'telephone', 'adresse', 'linkedin']
+    .map((k) => contact[k]).filter(Boolean).join(' · ');
+  if (contactLine) lines.push(contactLine);
+
+  if (data.resume) { lines.push('', 'RÉSUMÉ', data.resume); }
+
+  if (data.competences && data.competences.length) {
+    lines.push('', 'COMPÉTENCES', data.competences.join(', '));
+  }
+
+  if (data.experiences && data.experiences.length) {
+    lines.push('', 'EXPÉRIENCE PROFESSIONNELLE');
+    data.experiences.forEach((exp) => {
+      lines.push([exp.poste, exp.entreprise].filter(Boolean).join(' — '));
+      const meta = [exp.dates, exp.lieu].filter(Boolean).join(' · ');
+      if (meta) lines.push(meta);
+      (exp.description || []).forEach((d) => lines.push('- ' + d));
+    });
+  }
+
+  if (data.formations && data.formations.length) {
+    lines.push('', 'FORMATION');
+    data.formations.forEach((f) => {
+      lines.push([f.diplome, f.etablissement, f.dates].filter(Boolean).join(' — '));
+    });
+  }
+
+  if (data.langues && data.langues.length) {
+    lines.push('', 'LANGUES', data.langues.join(', '));
+  }
+
+  if (data.autres) { lines.push('', 'AUTRES', data.autres); }
+
+  return lines.join('\n');
 }
 
 function extractJson(text) {
@@ -317,7 +362,7 @@ runBtn.addEventListener('click', async () => {
     const reply = await engine.chat.completions.create({
       messages,
       temperature: 0.1,
-      max_tokens: 2048,
+      max_tokens: 900,
     });
     const text = reply.choices[0].message.content;
     log(`Réponse reçue (${text.length} caractères).`);
@@ -334,6 +379,24 @@ runBtn.addEventListener('click', async () => {
     a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
     a.className = 'download-link';
     downloadArea.appendChild(a);
+
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
+    continueBtn.className = 'secondary-btn';
+    continueBtn.title = "Réutilise ce résultat comme nouveau point de départ pour une nouvelle passe d'adaptation.";
+    continueBtn.addEventListener('click', () => {
+      iteration += 1;
+      originalCvText = serializeCvData(data);
+      originalFileName = baseFileName + '-v' + iteration;
+      fileNameEl.textContent = `CV en cours d'amélioration (version ${iteration}) — ${originalCvText.length} caractères`;
+      log(`--- Reprise du CV généré comme nouveau point de départ (version ${iteration}) ---`);
+      setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
+      downloadArea.innerHTML = '';
+      updateRunButton();
+      jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    downloadArea.appendChild(continueBtn);
 
     if (!hasHallucination) {
       setStatus('Terminé ✅');

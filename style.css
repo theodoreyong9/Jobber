@@ -117,12 +117,31 @@ button:disabled {
 .download-link {
   display: inline-block;
   margin-top: 12px;
+  margin-right: 10px;
   padding: 10px 16px;
   border-radius: 8px;
   background: var(--accent-2);
   color: #05070a;
   text-decoration: none;
   font-weight: 600;
+}
+
+.secondary-btn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 16px;
+  width: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.secondary-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 details {
