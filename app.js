@@ -308,6 +308,14 @@ runBtn.addEventListener('click', async () => {
         failed++;
         log(`  ✗ [${i + 1}/${editable.length}] segment laissé inchangé après échec.`);
       }
+      // Petite pause entre deux appels : on enchaînait les générations en
+      // boucle serrée sans jamais laisser la file de commandes GPU se
+      // vider, contrairement à un usage "naturel" espacé par des actions
+      // utilisateur. Ce délai coûte quelques secondes au total mais laisse
+      // le driver respirer entre deux générations.
+      if (i < editable.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
     }
 
     log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s) après échec.`);
