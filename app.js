@@ -176,16 +176,20 @@ function looksLikeContactInfo(text) {
 // marchait" et "ça ne marche plus", donc on revient à ce qui est prouvé.
 const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
 
-async function ensureEngine(modelId) {
+async function ensureEngine(modelId, forceReload = false) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
-  if (engine && currentModelId === modelId) return engine;
+  if (engine && currentModelId === modelId && !forceReload) return engine;
 
   if (engine) {
     try { await engine.unload(); } catch (_) { /* on ignore */ }
     engine = null;
     currentModelId = null;
+    // Laisse le temps au GPU de vraiment libérer la mémoire du moteur
+    // précédent avant d'en recréer un — un rechargement immédiat après
+    // unload() semble être ce qui déclenche le DEVICE_REMOVED observé.
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   setStatus('Chargement du modèle…');
@@ -244,7 +248,7 @@ async function rewriteRunWithRetry(run, jobText) {
       discardEngine();
       if (isDeviceLost) throw err; // un vrai crash GPU : inutile d'insister, on remonte l'erreur
       if (attempt < maxAttempts) {
-        await ensureEngine(currentModelIdWanted); // recharge un moteur neuf avant de réessayer
+        await ensureEngine(currentModelIdWanted, true); // recharge un moteur neuf avant de réessayer
         continue;
       }
       return null; // on abandonne CE segment précis, mais pas toute la passe
@@ -293,8 +297,6 @@ runBtn.addEventListener('click', async () => {
   currentModelIdWanted = modelId;
 
   try {
-    await ensureEngine(modelId);
-
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
     log(`${editable.length} segment(s) à reformuler, un par un.`);
@@ -304,6 +306,14 @@ runBtn.addEventListener('click', async () => {
 
     for (let i = 0; i < editable.length; i++) {
       const run = editable[i];
+      // Moteur entièrement neuf pour CHAQUE segment : on a constaté qu'un
+      // deuxième appel enchaîné sur le même moteur juste après un premier
+      // réussi provoque le crash GPU — la mémoire du premier appel n'a
+      // visiblement pas le temps d'être libérée. C'est plus lent (le
+      // modèle reste en cache donc pas de re-téléchargement, mais il y a
+      // une réinitialisation à chaque fois), mais chaque génération repart
+      // d'un état garanti propre.
+      await ensureEngine(modelId, true);
       setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
       const newText = await rewriteRunWithRetry(run, jobText);
       if (newText && newText.length > 0) {
@@ -313,14 +323,6 @@ runBtn.addEventListener('click', async () => {
       } else {
         failed++;
         log(`  ✗ [${i + 1}/${editable.length}] segment laissé inchangé après échec.`);
-      }
-      // Petite pause entre deux appels : on enchaînait les générations en
-      // boucle serrée sans jamais laisser la file de commandes GPU se
-      // vider, contrairement à un usage "naturel" espacé par des actions
-      // utilisateur. Ce délai coûte quelques secondes au total mais laisse
-      // le driver respirer entre deux générations.
-      if (i < editable.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
       }
     }
 
