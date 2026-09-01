@@ -297,11 +297,22 @@ runBtn.addEventListener('click', async () => {
 
     setStatus('Génération des reformulations (le modèle réfléchit)…');
     const messages = buildEditPrompt(editable, jobText);
-    const reply = await engine.chat.completions.create({
-      messages,
-      temperature: 0.2,
-      max_tokens: 1500,
-    });
+
+    let reply;
+    try {
+      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1500 });
+    } catch (err) {
+      const msg = err.message || '';
+      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+      log(`⚠️ Échec du premier essai : ${msg}`);
+      discardEngine();
+      if (isDeviceLost) throw err; // vrai crash GPU : inutile d'insister
+      log('Nouvel essai avec un moteur neuf…');
+      setStatus('Petit bug transitoire, on réessaie…');
+      await ensureEngine(modelId);
+      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1500 });
+    }
+
     const text = reply.choices[0].message.content;
     log(`Réponse reçue (${text.length} caractères).`);
 
