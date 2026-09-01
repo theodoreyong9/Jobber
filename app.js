@@ -177,6 +177,12 @@ async function ensureEngine(modelId) {
     try { await engine.unload(); } catch (_) { /* on ignore */ }
     engine = null;
     currentModelId = null;
+    // Le nettoyage GPU déclenché par unload() est en partie asynchrone côté
+    // navigateur : recréer un device immédiatement après peut échouer
+    // (DEVICE_REMOVED) si les ressources du device précédent ne sont pas
+    // encore vraiment libérées. On laisse un vrai délai avant de recréer.
+    setStatus('Libération de la mémoire GPU avant de recharger…');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
   setStatus('Chargement du modèle…');
@@ -308,7 +314,8 @@ runBtn.addEventListener('click', async () => {
       discardEngine();
       if (isDeviceLost) throw err; // vrai crash GPU : inutile d'insister
       log('Nouvel essai avec un moteur neuf…');
-      setStatus('Petit bug transitoire, on réessaie…');
+      setStatus('Libération de la mémoire GPU avant de réessayer…');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       await ensureEngine(modelId);
       reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1500 });
     }
