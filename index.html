@@ -14,7 +14,8 @@
         Adapte ton CV .docx à une offre d'emploi, en gardant exactement ta mise en page,
         tes polices, tes couleurs, tes tableaux et ta photo d'origine — seuls les textes de
         contenu (résumé, descriptions de poste, compétences) sont reformulés, via
-        <a href="https://huggingface.co/docs/inference-providers" target="_blank" rel="noopener">Hugging Face</a>.
+        <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>,
+        entièrement dans ton navigateur.
       </p>
     </header>
 
@@ -34,20 +35,28 @@
       </section>
 
       <section class="card">
-        <h2>3. Génération (via Hugging Face)</h2>
-        <label class="field-label" for="hf-token">Token API Hugging Face</label>
-        <input type="password" id="hf-token" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+        <h2>3. Génération (100 % locale, dans ton navigateur — WebGPU)</h2>
+        <label class="field-label" for="model-select">Modèle</label>
+        <select id="model-select">
+          <option value="auto">Auto (choisi selon ton appareil)</option>
+          <option value="small">Petit / rapide (~1 Go, mobile)</option>
+          <option value="medium">Moyen (~2 Go, desktop)</option>
+          <option value="large">Grand / meilleure qualité (~5 Go, desktop avec beaucoup de VRAM)</option>
+        </select>
         <p class="hint">
-          Gratuit à créer sur <a href="https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
-          (coche « Make calls to Inference Providers »). Stocké uniquement dans ton navigateur (localStorage), jamais envoyé ailleurs qu'à Hugging Face.
+          Le modèle tourne entièrement dans ton navigateur via
+          <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>
+          (WebGPU) — rien n'est envoyé à un serveur. Le premier chargement télécharge le
+          modèle (plusieurs centaines de Mo à quelques Go), puis il reste en cache.
         </p>
-        <label class="field-label" for="hf-model-select">Modèle</label>
-        <select id="hf-model-select"></select>
-        <p id="hf-model-status" class="hint">Renseigne ton token ci-dessus pour charger la liste des modèles disponibles.</p>
+        <button id="load-model-btn" type="button" class="secondary-btn">⬇️ Charger le modèle maintenant</button>
+        <div class="progress-outer"><div id="model-load-bar" class="progress-inner"></div></div>
+        <p id="engine-status" class="hint">Modèle non chargé — il se précharge automatiquement dès que tu déposes ton CV.</p>
       </section>
 
       <section class="card">
         <button id="run-btn" disabled>✨ Adapter mon CV</button>
+        <button id="stop-btn" type="button" class="secondary-btn" hidden>⏹ Stop</button>
         <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
         <p id="status" class="status">Charge un CV et colle une offre pour commencer.</p>
         <div id="download-area"></div>
@@ -59,8 +68,9 @@
     </main>
 
     <footer>
-      <p>Ton CV et le texte de l'annonce sont envoyés à Hugging Face (et à son fournisseur
-      d'inférence) pour la génération — voir le token API ci-dessus.</p>
+      <p>Ton CV et le texte de l'annonce ne quittent jamais ton navigateur : la génération
+      se fait localement via WebGPU (WebLLM). Aucune donnée n'est envoyée à un serveur.
+      Nécessite un navigateur récent avec WebGPU (Chrome/Edge).</p>
     </footer>
   </div>
 

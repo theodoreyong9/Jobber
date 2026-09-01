@@ -4,13 +4,15 @@ const fileNameEl = document.getElementById('file-name');
 const jobTextEl = document.getElementById('job-text');
 const jobCountEl = document.getElementById('job-count');
 const runBtn = document.getElementById('run-btn');
+const stopBtn = document.getElementById('stop-btn');
 const statusEl = document.getElementById('status');
 const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
-const hfTokenInput = document.getElementById('hf-token');
-const hfModelSelect = document.getElementById('hf-model-select');
-const hfModelStatusEl = document.getElementById('hf-model-status');
+const modelSelect = document.getElementById('model-select');
+const loadModelBtn = document.getElementById('load-model-btn');
+const modelLoadBar = document.getElementById('model-load-bar');
+const engineStatusEl = document.getElementById('engine-status');
 
 // État du document en cours d'édition, gardé EN MÉMOIRE et modifié en place :
 // tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page, images,
@@ -32,76 +34,210 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
-// ==== Token Hugging Face (persisté localement) + liste des modèles ====
-const savedToken = localStorage.getItem('cvAdapterHfToken');
-if (savedToken) hfTokenInput.value = savedToken;
-const savedModelId = localStorage.getItem('cvAdapterHfModel');
-
-let modelFetchTimer = null;
-hfTokenInput.addEventListener('input', () => {
-  localStorage.setItem('cvAdapterHfToken', hfTokenInput.value.trim());
-  clearTimeout(modelFetchTimer);
-  modelFetchTimer = setTimeout(fetchModelList, 700); // laisse finir de coller/taper avant d'interroger l'API
-});
-
-hfModelSelect.addEventListener('change', () => {
-  localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
-});
-
-function describeModel(model) {
-  // On construit une description à partir de ce que l'API renvoie
-  // (l'identifiant est le seul champ garanti ; on enrichit avec le
-  // fournisseur s'il est encodé dans l'id, et le propriétaire si fourni).
-  let id = model.id;
-  let provider = null;
-  if (id.includes(':')) {
-    const parts = id.split(':');
-    provider = parts.pop();
-    id = parts.join(':');
-  }
-  const bits = [];
-  if (provider) bits.push(`fournisseur : ${provider}`);
-  if (model.owned_by) bits.push(`par ${model.owned_by}`);
-  return bits.length ? `${id} — ${bits.join(', ')}` : id;
+function dlog(msg) {
+  const t = ((performance.now ? performance.now() : Date.now()) / 1000).toFixed(2);
+  console.log('[WebLLM ' + t + 's]', msg);
 }
 
-async function fetchModelList() {
-  const token = hfTokenInput.value.trim();
-  if (!token) {
-    hfModelStatusEl.textContent = 'Renseigne ton token ci-dessus pour charger la liste des modèles disponibles.';
-    hfModelSelect.innerHTML = '';
-    return;
-  }
-  hfModelStatusEl.textContent = 'Récupération de la liste des modèles…';
+// ==== WebLLM — moteur local (WebGPU), chargé une fois et réutilisé =========
+// Contrairement à l'ancienne version (un appel réseau HF par segment), le
+// moteur est initialisé UNE SEULE FOIS puis réutilisé pour tous les
+// segments d'une passe. Réinitialiser le moteur à chaque segment serait le
+// principal tueur de perf ici (rechargement du modèle = plusieurs
+// centaines de Mo à chaque fois) — ce que l'ancien code ne faisait pas côté
+// modèle (HF gardait le modèle chargé côté serveur), mais qu'il faut éviter
+// explicitement nous-mêmes en local.
+const WEBLLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
+
+// Modèles choisis pour de la réécriture de texte (pas du code) : instruct
+// models généralistes. À adapter à la liste réellement disponible dans ta
+// version de web-llm (prebuiltAppConfig.model_list) si ces IDs changent.
+const MODELS = {
+  small: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',   // ~880 Mo — mobile / peu de VRAM
+  medium: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',  // ~2 Go   — desktop par défaut
+  large: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',     // ~5 Go   — desktop avec beaucoup de VRAM
+};
+
+let webllmModelId = null; // résolu par resolveModelChoice()
+let webllmWorker = null;
+let webllmEngine = null;
+let webllmReady = false;
+let webllmLoading = false;
+let wakeLock = null;
+let stopSignalResolve = null;
+
+function newStopSignal() {
+  return new Promise((resolve) => { stopSignalResolve = resolve; });
+}
+function triggerStop() {
+  if (stopSignalResolve) { stopSignalResolve(); stopSignalResolve = null; }
+}
+
+async function acquireWakeLock() {
   try {
-    const response = await fetch('https://router.huggingface.co/v1/models', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`Réponse ${response.status} : ${errText.slice(0, 200)}`);
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
     }
-    const data = await response.json();
-    const models = (data.data || []).slice().sort((a, b) => a.id.localeCompare(b.id));
-    if (models.length === 0) throw new Error('Aucun modèle retourné par ce compte.');
+  } catch (e) {
+    console.warn('Wake lock indisponible :', e.message);
+  }
+}
+function releaseWakeLock() {
+  try { wakeLock?.release(); } catch {}
+  wakeLock = null;
+}
 
-    hfModelSelect.innerHTML = '';
-    models.forEach((model) => {
-      const opt = document.createElement('option');
-      opt.value = model.id;
-      opt.textContent = describeModel(model);
-      if (model.id === savedModelId) opt.selected = true;
-      hfModelSelect.appendChild(opt);
+function isGpuContextLostError(e) {
+  const msg = String(e && e.message || e || '');
+  return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed/i.test(msg);
+}
+
+function resetWebllmState() {
+  webllmReady = false;
+  webllmEngine = null;
+  try { webllmWorker?.terminate(); } catch {}
+  webllmWorker = null;
+}
+
+// Le Worker dédié est essentiel : sans lui, l'inférence WebGPU bloque le
+// thread principal et l'UI (barre de progression, bouton Stop) gèle
+// pendant la génération. Ce n'est PAS un Service Worker.
+function createWorker() {
+  const code = `
+    import * as webllm from '${WEBLLM_CDN}';
+    const handler = new webllm.WebWorkerMLCEngineHandler();
+    self.onmessage = (msg) => { handler.onmessage(msg); };
+  `;
+  const blob = new Blob([code], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  const worker = new Worker(url, { type: 'module' });
+  worker.addEventListener('error', (e) => dlog('worker error: ' + e.message));
+  return worker;
+}
+
+async function loadWebllmLib() {
+  if (window.webllm) return;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.type = 'module';
+    s.textContent = `
+      import * as webllm from '${WEBLLM_CDN}';
+      window.webllm = webllm;
+      window.dispatchEvent(new Event('webllm-loaded'));
+    `;
+    document.head.appendChild(s);
+    window.addEventListener('webllm-loaded', resolve, { once: true });
+    setTimeout(() => reject(new Error('Chargement de la librairie WebLLM (CDN) trop long.')), 30000);
+  });
+}
+
+function resolveModelChoice() {
+  const choice = modelSelect.value; // 'auto' | 'small' | 'medium' | 'large'
+  if (choice !== 'auto') return MODELS[choice] || MODELS.medium;
+
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  const mem = navigator.deviceMemory; // plafonné à 8 par les navigateurs, indicatif seulement
+  if (isMobile) return MODELS.small;
+  if (typeof mem === 'number' && mem >= 8) return MODELS.large;
+  return MODELS.medium;
+}
+
+async function checkWebGpuSupport() {
+  if (typeof navigator === 'undefined' || !navigator.gpu) {
+    return { supported: false, reason: "WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge (Safari/Firefox n'ont pas encore un support fiable)." };
+  }
+  return { supported: true };
+}
+
+async function createEngine() {
+  dlog('CreateWebWorkerMLCEngine() pour ' + webllmModelId);
+  const t0 = performance.now ? performance.now() : Date.now();
+  if (!webllmWorker) webllmWorker = createWorker();
+  const engine = await window.webllm.CreateWebWorkerMLCEngine(webllmWorker, webllmModelId, {
+    initProgressCallback: (p) => {
+      const pct = Math.round((p.progress || 0) * 100);
+      modelLoadBar.style.width = pct + '%';
+      engineStatusEl.textContent = (p.text || 'Chargement…') + ' (' + pct + '%)';
+    },
+  });
+  dlog('Moteur prêt après ' + (((performance.now ? performance.now() : Date.now()) - t0) / 1000).toFixed(1) + 's');
+  return engine;
+}
+
+// Initialise (ou réutilise) le moteur. Appelé explicitement au clic sur
+// "Charger le modèle", ET en préchargement dès qu'un CV est déposé — pour
+// que le téléchargement du modèle se fasse PENDANT que l'utilisateur colle
+// l'offre d'emploi, au lieu d'attendre le clic sur "Adapter mon CV". C'est
+// le principal gain perçu : le modèle est déjà chaud quand on lance la
+// génération.
+async function initWebLLM(_isRetry) {
+  if (webllmReady && webllmEngine) return webllmEngine;
+  if (webllmLoading && !_isRetry) {
+    await new Promise((r) => {
+      const iv = setInterval(() => { if (!webllmLoading) { clearInterval(iv); r(); } }, 300);
     });
-    hfModelStatusEl.textContent = `✅ ${models.length} modèle(s) disponible(s).`;
-    localStorage.setItem('cvAdapterHfModel', hfModelSelect.value);
-  } catch (err) {
-    console.error(err);
-    hfModelStatusEl.textContent = '❌ Échec du chargement des modèles : ' + err.message;
+    if (webllmReady) return webllmEngine;
+  }
+
+  const gpu = await checkWebGpuSupport();
+  if (!gpu.supported) throw new Error(gpu.reason);
+
+  webllmLoading = true;
+  if (!_isRetry) webllmModelId = resolveModelChoice();
+  engineStatusEl.textContent = 'Initialisation…';
+  await acquireWakeLock();
+
+  try {
+    await loadWebllmLib();
+    let engine;
+    try {
+      engine = await createEngine();
+    } catch (e) {
+      if (isGpuContextLostError(e) && !_isRetry) {
+        console.warn('Contexte GPU perdu pendant le chargement, nouvelle tentative…');
+        resetWebllmState();
+        engineStatusEl.textContent = 'Contexte GPU perdu — nouvelle tentative…';
+        webllmLoading = false;
+        return await initWebLLM(true);
+      }
+      throw e;
+    }
+    webllmEngine = engine;
+    webllmReady = true;
+    engineStatusEl.textContent = '✅ Modèle chargé (' + webllmModelId + ') — prêt.';
+    modelLoadBar.style.width = '100%';
+    return engine;
+  } catch (e) {
+    engineStatusEl.textContent = '❌ Échec du chargement : ' + e.message;
+    throw e;
+  } finally {
+    webllmLoading = false;
+    releaseWakeLock();
   }
 }
 
-if (savedToken) fetchModelList();
+// Termine le worker si la page est vraiment fermée — sinon il continue de
+// tourner (et le GPU avec lui) après la fermeture visuelle de l'onglet.
+window.addEventListener('pagehide', resetWebllmState);
+window.addEventListener('beforeunload', resetWebllmState);
+
+loadModelBtn.addEventListener('click', () => {
+  initWebLLM().catch((e) => log('⚠️ ' + e.message));
+});
+
+modelSelect.addEventListener('change', () => {
+  localStorage.setItem('cvAdapterModelChoice', modelSelect.value);
+  // Un changement de modèle après coup nécessite de recharger le moteur.
+  if (webllmReady) {
+    resetWebllmState();
+    engineStatusEl.textContent = 'Modèle changé — recharge-le avant de lancer une adaptation.';
+    modelLoadBar.style.width = '0%';
+  }
+});
+
+const savedModelChoice = localStorage.getItem('cvAdapterModelChoice');
+if (savedModelChoice) modelSelect.value = savedModelChoice;
 
 // ==== Persistance du dernier CV chargé (IndexedDB, pour survivre au
 // rechargement de la page — localStorage n'est pas adapté à du binaire) ====
@@ -171,6 +307,14 @@ async function loadCvFromArrayBuffer(arrayBuffer, displayName) {
     editable.forEach((r) => log(`  → [${r.role}] "${r.text.trim().slice(0, 60)}${r.text.trim().length > 60 ? '…' : ''}"`));
     setStatus("CV chargé. Colle l'annonce puis lance l'adaptation.");
     updateRunButton();
+
+    // Préchargement du modèle en tâche de fond : pendant que l'utilisateur
+    // colle l'offre d'emploi, le modèle se télécharge déjà. C'est le plus
+    // gros gain de "performance perçue" par rapport à un chargement lancé
+    // au clic sur "Adapter mon CV".
+    if (!webllmReady && !webllmLoading) {
+      initWebLLM().catch((e) => log('⚠️ Préchargement du modèle échoué : ' + e.message));
+    }
     return true;
   } catch (err) {
     console.error(err);
@@ -209,30 +353,23 @@ jobTextEl.addEventListener('input', () => {
 });
 
 function updateRunButton() {
-  runBtn.disabled = !(docState && jobTextEl.value.trim().length > 20);
+  runBtn.disabled = !docState || jobTextEl.value.trim().length === 0;
 }
 
-// ==== 2. Extraction des segments de texte ("runs") depuis le XML ====
+// ==== 2. Extraction des "runs" (segments) du document.xml ====
 function getTextRuns(xmlDoc) {
-  const pNodes = Array.from(xmlDoc.getElementsByTagName('w:p'));
-  const runs = [];
-  pNodes.forEach((pNode, paragraphIndex) => {
-    const rNodes = Array.from(pNode.getElementsByTagName('w:r'));
-    rNodes.forEach((rNode) => {
-      const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
-      let text = '';
-      for (const t of tNodes) text += t.textContent;
-      if (!text.trim()) return;
-      runs.push({ node: rNode, text, bold: isBoldRun(rNode), paragraphIndex });
-    });
-  });
-  return runs;
+  const rNodes = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'r'));
+  return rNodes.map((rNode) => {
+    const tNodes = Array.from(rNode.getElementsByTagNameNS(W_NS, 't'));
+    const text = tNodes.map((t) => t.textContent).join('');
+    const rPr = rNode.getElementsByTagNameNS(W_NS, 'rPr')[0] || null;
+    const bold = rPr ? isRunPropertyOn(rPr, 'b') : false;
+    return { node: rNode, text, bold };
+  }).filter((r) => r.text.trim().length > 0);
 }
 
-function isBoldRun(rNode) {
-  const rPr = rNode.getElementsByTagName('w:rPr')[0];
-  if (!rPr) return false;
-  const b = rPr.getElementsByTagName('w:b')[0];
+function isRunPropertyOn(rPr, tag) {
+  const b = rPr.getElementsByTagNameNS(W_NS, tag)[0];
   if (!b) return false;
   const val = b.getAttribute('w:val');
   return val !== '0' && val !== 'false';
@@ -284,33 +421,38 @@ function looksLikeContactInfo(text) {
   return emailRe.test(text) || phoneRe.test(text) || urlRe.test(text);
 }
 
-// ==== 4. Génération via Hugging Face (API compatible OpenAI) ====
-async function generateText(messages, maxTokens) {
-  const token = hfTokenInput.value.trim();
-  if (!token) throw new Error("Renseigne un token Hugging Face dans le champ prévu.");
-  const model = hfModelSelect.value;
-  if (!model) throw new Error("Aucun modèle sélectionné — vérifie ton token et la liste des modèles.");
-
-  const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: maxTokens,
-      temperature: 0.3,
-    }),
+// ==== 4. Génération via WebLLM (local, WebGPU) ==============================
+// Un seul moteur, initialisé une fois (voir initWebLLM), réutilisé pour
+// tous les segments. Chaque appel est un system+user "frais" (pas
+// d'historique cumulé) — ce qui reste correct pour un modèle local : ça
+// garde chaque prompt court, donc le "prefill" (lecture du prompt avant de
+// pouvoir générer le premier token) reste rapide à chaque segment.
+async function generateText(messages, maxTokens, stopSignal) {
+  const engine = await initWebLLM();
+  const stream = await engine.chat.completions.create({
+    messages,
+    temperature: 0.3,
+    max_tokens: maxTokens,
+    stream: true,
   });
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`Hugging Face a répondu ${response.status} : ${errText.slice(0, 300)}`);
+  let out = '';
+  const it = stream[Symbol.asyncIterator]();
+  while (true) {
+    let result;
+    if (stopSignal) {
+      result = await Promise.race([
+        it.next(),
+        stopSignal.then(() => { throw new Error('__STOPPED_BY_USER__'); }),
+      ]);
+    } else {
+      result = await it.next();
+    }
+    if (result.done) break;
+    const d = result.value.choices?.[0]?.delta?.content || '';
+    out += d;
   }
-  const data = await response.json();
-  return data.choices[0].message.content;
+  return out;
 }
 
 // ==== 5. Reformulation d'un segment ====
@@ -324,12 +466,13 @@ function buildSegmentPrompt(run, jobText) {
   ];
 }
 
-async function rewriteSegment(run, jobText) {
+async function rewriteSegment(run, jobText, stopSignal) {
   const messages = buildSegmentPrompt(run, jobText);
   try {
-    const text = await generateText(messages, 200);
+    const text = await generateText(messages, 200, stopSignal);
     return text.trim().replace(/^["«]|["»]$/g, '');
   } catch (err) {
+    if (err.message === '__STOPPED_BY_USER__') throw err;
     log(`  ⚠️ Échec sur ce segment : ${err.message}`);
     return null;
   }
@@ -364,13 +507,17 @@ async function packageDocx() {
 // ==== 8. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
+  stopBtn.hidden = false;
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
 
   const jobText = jobTextEl.value.trim();
+  const stopSignal = newStopSignal();
 
   try {
+    await initWebLLM(); // no-op si déjà chargé (préchargé au dépôt du CV)
+
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
     log(`${editable.length} segment(s) à reformuler.`);
@@ -383,7 +530,7 @@ runBtn.addEventListener('click', async () => {
       const pct = Math.round((i / editable.length) * 100);
       progressBar.style.width = pct + '%';
       setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
-      const newText = await rewriteSegment(run, jobText);
+      const newText = await rewriteSegment(run, jobText, stopSignal);
       if (newText && newText.length > 0) {
         setRunText(run.node, newText);
         applied++;
@@ -432,11 +579,21 @@ runBtn.addEventListener('click', async () => {
       : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
     setStatus(msg);
   } catch (err) {
-    console.error(err);
-    log('Erreur : ' + (err.stack || err.message));
-    setStatus('Erreur : ' + err.message);
+    if (err.message === '__STOPPED_BY_USER__' || err.message === 'Stopped by user.') {
+      log('⏹ Arrêté par l’utilisateur.');
+      setStatus('Arrêté.');
+    } else {
+      console.error(err);
+      log('Erreur : ' + (err.stack || err.message));
+      setStatus('Erreur : ' + err.message);
+    }
   } finally {
     runBtn.disabled = false;
+    stopBtn.hidden = true;
     updateRunButton();
   }
+});
+
+stopBtn.addEventListener('click', () => {
+  triggerStop();
 });
