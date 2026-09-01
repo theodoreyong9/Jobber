@@ -168,7 +168,13 @@ function looksLikeContactInfo(text) {
 // où WebLLM tourne de façon fiable : un seul engine.chat.completions.create
 // par appel, jamais de rechargement entre deux échanges tant qu'aucune
 // erreur ne l'exige). ====
-const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm';
+// Version FIGÉE, volontairement : on a la preuve concrète que la version
+// 0.2.83 fonctionne sur cette machine (deux générations réussies avec elle
+// plus tôt). La version non-pinnée (esm.run sans numéro = "dernière
+// version") sert potentiellement un build différent d'un jour à l'autre
+// sans prévenir — c'est le principal changement identifié entre "ça
+// marchait" et "ça ne marche plus", donc on revient à ce qui est prouvé.
+const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
 
 async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
