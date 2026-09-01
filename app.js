@@ -294,76 +294,95 @@ runBtn.addEventListener('click', async () => {
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
-  try {
-    const modelId = modelSelect.value;
-    await ensureEngine(modelId);
 
-    const textRuns = getTextRuns(docState.xmlDoc);
+  const maxAttempts = 2; // le bug "already disposed" pur (sans device_removed) est transitoire : un 2e essai avec moteur neuf suffit souvent
 
-    setStatus('Analyse du CV et génération des reformulations (le modèle réfléchit)…');
-    const messages = buildEditPrompt(textRuns, jobTextEl.value.trim());
-    const reply = await engine.chat.completions.create({
-      messages,
-      temperature: 0.1,
-      max_tokens: 1200,
-    });
-    const text = reply.choices[0].message.content;
-    log(`Réponse reçue (${text.length} caractères).`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const modelId = modelSelect.value;
+      await ensureEngine(modelId);
 
-    const edits = extractJsonArray(text);
-    log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
-    const { applied, skipped } = applyEdits(textRuns, edits);
-    log(`${applied} segment(s) modifié(s)${skipped ? `, ${skipped} ignoré(s) par sécurité` : ''}.`);
+      const textRuns = getTextRuns(docState.xmlDoc);
 
-    if (applied === 0) {
-      setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B), ou vérifie que l'annonce est bien pertinente par rapport au CV.");
-      return;
+      setStatus('Analyse du CV et génération des reformulations (le modèle réfléchit)…');
+      const messages = buildEditPrompt(textRuns, jobTextEl.value.trim());
+      const reply = await engine.chat.completions.create({
+        messages,
+        temperature: 0.1,
+        max_tokens: 1200,
+      });
+      const text = reply.choices[0].message.content;
+      log(`Réponse reçue (${text.length} caractères).`);
+
+      const edits = extractJsonArray(text);
+      log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
+      const { applied, skipped } = applyEdits(textRuns, edits);
+      log(`${applied} segment(s) modifié(s)${skipped ? `, ${skipped} ignoré(s) par sécurité` : ''}.`);
+
+      if (applied === 0) {
+        setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B), ou vérifie que l'annonce est bien pertinente par rapport au CV.");
+        break;
+      }
+
+      setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
+      const blob = await packageDocx();
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = originalFileName + '-adapte.docx';
+      a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
+      a.className = 'download-link';
+      downloadArea.appendChild(a);
+
+      const continueBtn = document.createElement('button');
+      continueBtn.type = 'button';
+      continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
+      continueBtn.className = 'secondary-btn';
+      continueBtn.title = 'Relance une nouvelle passe de reformulation sur le document déjà modifié.';
+      continueBtn.addEventListener('click', () => {
+        iteration += 1;
+        originalFileName = baseFileName + '-v' + iteration;
+        log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
+        setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
+        downloadArea.innerHTML = '';
+        jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      downloadArea.appendChild(continueBtn);
+
+      setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
+      break; // succès, on sort de la boucle de réessai
+    } catch (err) {
+      console.error(err);
+      const msg = err.message || '';
+      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+      const isDisposedGlitch = /disposed/i.test(msg) && !isDeviceLost;
+      log('Erreur : ' + (err.stack || err.message));
+      engine = null; // le moteur en mémoire n'est plus fiable, on force un rechargement complet la prochaine fois
+
+      if (isDisposedGlitch && attempt < maxAttempts) {
+        log(`Bug transitoire du runtime WebGPU/TVM détecté (tentative ${attempt}/${maxAttempts}), nouvel essai avec un moteur neuf…`);
+        setStatus('Petit bug du moteur, on réessaie automatiquement…');
+        continue;
+      }
+
+      if (isDeviceLost) {
+        setStatus(
+          "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
+          "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
+        );
+      } else if (isDisposedGlitch) {
+        setStatus(
+          "Bug transitoire du moteur WebLLM, persistant même après réessai automatique. Recharge la page (F5) " +
+          "et réessaie — ce bug est documenté côté WebLLM (mlc-ai/web-llm#486, #560), pas lié au contenu de ton CV."
+        );
+      } else {
+        setStatus('Erreur : ' + err.message);
+      }
+      break;
     }
-
-    setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
-    const blob = await packageDocx();
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = originalFileName + '-adapte.docx';
-    a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
-    a.className = 'download-link';
-    downloadArea.appendChild(a);
-
-    const continueBtn = document.createElement('button');
-    continueBtn.type = 'button';
-    continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
-    continueBtn.className = 'secondary-btn';
-    continueBtn.title = 'Relance une nouvelle passe de reformulation sur le document déjà modifié.';
-    continueBtn.addEventListener('click', () => {
-      iteration += 1;
-      originalFileName = baseFileName + '-v' + iteration;
-      log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
-      setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
-      downloadArea.innerHTML = '';
-      jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    downloadArea.appendChild(continueBtn);
-
-    setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
-  } catch (err) {
-    console.error(err);
-    const msg = err.message || '';
-    const isGpuCrash = /device_removed|device was lost|requestdevice|disposed/i.test(msg);
-    log('Erreur : ' + (err.stack || err.message));
-    engine = null; // le moteur en mémoire n'est plus fiable, on force un rechargement complet la prochaine fois
-
-    if (isGpuCrash) {
-      setStatus(
-        "Le pilote GPU a planté (DEVICE_REMOVED / device lost). Recharge complètement la page (F5), " +
-        "choisis le modèle « très léger », et si ça se reproduit : mets à jour tes pilotes graphiques."
-      );
-    } else {
-      setStatus('Erreur : ' + err.message);
-    }
-  } finally {
-    runBtn.disabled = false;
-    updateRunButton();
   }
+
+  runBtn.disabled = false;
+  updateRunButton();
 });
