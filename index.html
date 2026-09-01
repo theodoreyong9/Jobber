@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CV Adapter — 100% dans ton navigateur</title>
+<title>CV Adapter</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,9 +13,7 @@
       <p class="subtitle">
         Adapte ton CV .docx à une offre d'emploi, en gardant exactement ta mise en page,
         tes polices, tes couleurs, tes tableaux et ta photo d'origine — seuls les textes de
-        contenu (résumé, descriptions de poste, compétences) sont reformulés. Tout tourne
-        <strong>dans ton navigateur</strong> (WebLLM) : ton CV et l'offre ne quittent jamais
-        ta machine, rien n'est envoyé à un serveur.
+        contenu (résumé, descriptions de poste, compétences) sont reformulés.
       </p>
     </header>
 
@@ -32,24 +30,50 @@
         <h2>2. L'offre d'emploi</h2>
         <textarea id="job-text" rows="10" placeholder="Colle ici le texte complet de l'annonce…"></textarea>
         <p id="job-count" class="hint">0 caractère</p>
-        <p class="hint">
-          Le texte n'est jamais tronqué : colle simplement la description du poste
-          (missions, profil recherché, compétences).
-        </p>
       </section>
 
       <section class="card">
-        <h2>3. Modèle IA (téléchargé une seule fois, mis en cache)</h2>
-        <select id="model-select">
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC" selected>Llama 3.2 1B — très rapide mais peu fiable (~700 Mo)</option>
-          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B — bon compromis (~2 Go)</option>
-          <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini — équilibré (~2,5 Go)</option>
-          <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">Llama 3.1 8B — le plus fiable pour cette tâche (~5 Go, GPU puissant requis)</option>
-        </select>
-        <p class="hint">
-          Nécessite un navigateur avec WebGPU (Chrome/Edge récents). Le premier lancement
-          télécharge le modèle ; les suivants sont instantanés grâce au cache du navigateur.
-        </p>
+        <h2>3. Moteur de génération</h2>
+        <div class="engine-choice">
+          <label class="engine-option">
+            <input type="radio" name="engine-mode" value="wasm" checked />
+            <div>
+              <strong>💻 CPU, dans ton navigateur</strong>
+              <p class="hint">100% privé — rien ne quitte ta machine. Plus lent (quelques minutes pour tout le CV).</p>
+            </div>
+          </label>
+          <label class="engine-option">
+            <input type="radio" name="engine-mode" value="hf" />
+            <div>
+              <strong>☁️ GPU distant, via Hugging Face</strong>
+              <p class="hint">Rapide (quelques secondes). Ton CV et l'annonce sont envoyés aux serveurs de Hugging Face / de son fournisseur d'inférence.</p>
+            </div>
+          </label>
+        </div>
+
+        <div id="wasm-panel" class="engine-panel">
+          <label class="field-label" for="wasm-model">Modèle (tourne en local, CPU)</label>
+          <select id="wasm-model">
+            <option value="onnx-community/SmolLM2-360M-Instruct" selected>SmolLM2 360M — très léger, rapide pour du CPU (~350 Mo)</option>
+            <option value="onnx-community/SmolLM2-1.7B-Instruct">SmolLM2 1.7B — meilleure qualité, plus lent (~1,7 Go)</option>
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">Qwen2.5 0.5B — alternative (~500 Mo)</option>
+          </select>
+        </div>
+
+        <div id="hf-panel" class="engine-panel" hidden>
+          <label class="field-label" for="hf-token">Token API Hugging Face</label>
+          <input type="password" id="hf-token" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+          <p class="hint">
+            Gratuit à créer sur <a href="https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>
+            (coche « Make calls to Inference Providers »). Stocké uniquement dans ton navigateur (localStorage), jamais envoyé ailleurs qu'à Hugging Face.
+          </p>
+          <label class="field-label" for="hf-model">Modèle</label>
+          <input type="text" id="hf-model" value="meta-llama/Llama-3.2-3B-Instruct:fastest" />
+          <p class="hint">
+            Format <code>id-du-modèle:fournisseur</code> (ou <code>:fastest</code>). Change si ce modèle n'est pas
+            disponible sur ton compte — liste sur <a href="https://huggingface.co/models?inference_provider=all&pipeline_tag=text-generation" target="_blank" rel="noopener">huggingface.co/models</a>.
+          </p>
+        </div>
       </section>
 
       <section class="card">
@@ -64,19 +88,9 @@
       </section>
     </main>
 
-    <section class="card diagnostic-card">
-      <h2>🔬 Tests progressifs WebLLM (diagnostic)</h2>
-      <p class="hint">
-        Indépendant du CV. Chaque niveau augmente la charge (taille du prompt,
-        taille de la réponse, nombre d'appels d'affilée). Lance-les DANS L'ORDRE,
-        un par un — on va voir précisément à quel niveau ça casse.
-      </p>
-      <div id="diag-tests"></div>
-    </section>
-
     <footer>
-      <p>Aucune donnée envoyée à un serveur — lecture du CV, inférence IA et réassemblage du
-      .docx se font entièrement côté client.</p>
+      <p>Selon le moteur choisi : soit tout se fait dans ton navigateur, soit ton CV et
+      l'annonce sont envoyés à Hugging Face — voir le choix ci-dessus.</p>
     </footer>
   </div>
 

@@ -60,7 +60,7 @@ header h1 {
 .file-drop input { display: none; }
 .file-drop:hover { border-color: var(--accent); color: var(--text); }
 
-textarea, select, input[type="text"] {
+textarea, select, input[type="text"], input[type="password"] {
   width: 100%;
   background: #10131a;
   color: var(--text);
@@ -72,46 +72,53 @@ textarea, select, input[type="text"] {
   resize: vertical;
 }
 
-.diagnostic-card {
-  border-style: dashed;
-  border-color: #e0a030;
+.engine-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
 }
-.diagnostic-card h2 { color: #e0a030; }
-
-.diag-level {
+.engine-option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
+  cursor: pointer;
 }
-.diag-level-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
+.engine-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(110, 168, 254, 0.08);
 }
-.diag-level-label {
-  font-size: 0.88rem;
-  font-weight: 600;
+.engine-option input {
+  margin-top: 4px;
 }
-.diag-level-btn {
-  width: auto;
-  padding: 6px 14px;
-  font-size: 0.82rem;
-  border-radius: 6px;
+.engine-option strong {
+  font-size: 0.92rem;
 }
-.diag-level-status {
+.engine-option .hint {
+  margin-top: 4px;
+}
+
+.engine-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.field-label {
+  display: block;
   font-size: 0.82rem;
   color: var(--muted);
-  margin-top: 6px;
+  margin-bottom: 6px;
+  margin-top: 12px;
 }
-.diag-level-output {
-  white-space: pre-wrap;
-  font-size: 0.72rem;
-  color: var(--muted);
-  margin-top: 6px;
-  max-height: 100px;
-  overflow-y: auto;
+.field-label:first-child { margin-top: 0; }
+code {
+  background: #10131a;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
 }
 
 .hint {
