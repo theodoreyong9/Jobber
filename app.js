@@ -20,7 +20,6 @@ let baseFileName = 'cv';
 let iteration = 1;
 let engine = null;
 let currentModelId = null;
-let currentModelIdWanted = null; // le modèle demandé pour la passe en cours, utilisé par les réessais
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -104,12 +103,11 @@ function isBoldRun(rNode) {
   return val !== '0' && val !== 'false';
 }
 
-// ==== 3. ORCHESTRATION : classification déterministe, sans aucun appel au
-// modèle. C'est le cœur du changement : plutôt que de demander à un LLM de
-// deviner quels segments sont "du contenu" ou "du factuel", le code s'en
-// charge lui-même avec des règles simples et fiables. Le modèle ne verra
-// donc jamais un segment qu'on ne veut pas qu'il touche — pas besoin de lui
-// faire confiance là-dessus.
+// ==== 3. Classification déterministe, sans aucun appel au modèle ====
+// Plutôt que de demander à un LLM de deviner quels segments sont "du
+// contenu" ou "du factuel", le code s'en charge lui-même avec des règles
+// simples et fiables. Le modèle ne verra donc jamais un segment qu'on ne
+// veut pas qu'il touche.
 const MIN_EDITABLE_RUN_LENGTH = 25;
 
 // Certaines sections entières doivent rester figées même pour du texte non
@@ -163,33 +161,22 @@ function looksLikeContactInfo(text) {
   return emailRe.test(text) || phoneRe.test(text) || urlRe.test(text);
 }
 
-// ==== 4. Chargement du moteur WebLLM (chargé UNE FOIS, réutilisé pour
-// tous les petits appels de la passe — exactement comme dans les projets
-// où WebLLM tourne de façon fiable : un seul engine.chat.completions.create
-// par appel, jamais de rechargement entre deux échanges tant qu'aucune
-// erreur ne l'exige). ====
-// Version FIGÉE, volontairement : on a la preuve concrète que la version
-// 0.2.83 fonctionne sur cette machine (deux générations réussies avec elle
-// plus tôt). La version non-pinnée (esm.run sans numéro = "dernière
-// version") sert potentiellement un build différent d'un jour à l'autre
-// sans prévenir — c'est le principal changement identifié entre "ça
-// marchait" et "ça ne marche plus", donc on revient à ce qui est prouvé.
+// ==== 4. Chargement du moteur WebLLM ====
+// Version FIGÉE, volontairement : c'est la version utilisée lors des deux
+// seules générations qui ont réellement abouti sur cette machine. On ne la
+// change plus sans preuve concrète que c'est nécessaire.
 const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
 
-async function ensureEngine(modelId, forceReload = false) {
+async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
-  if (engine && currentModelId === modelId && !forceReload) return engine;
+  if (engine && currentModelId === modelId) return engine;
 
   if (engine) {
     try { await engine.unload(); } catch (_) { /* on ignore */ }
     engine = null;
     currentModelId = null;
-    // Laisse le temps au GPU de vraiment libérer la mémoire du moteur
-    // précédent avant d'en recréer un — un rechargement immédiat après
-    // unload() semble être ce qui déclenche le DEVICE_REMOVED observé.
-    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   setStatus('Chargement du modèle…');
@@ -206,58 +193,53 @@ async function ensureEngine(modelId, forceReload = false) {
 }
 
 function discardEngine() {
-  // Après une erreur runtime (disposed / device lost), le moteur en mémoire
-  // n'est plus fiable : on le jette pour forcer un rechargement complet au
-  // prochain appel, plutôt que de continuer à s'appuyer dessus.
   engine = null;
   currentModelId = null;
 }
 
-// ==== 5. Réécriture d'UN SEUL segment à la fois ====
-// Volontairement minimaliste : un texte en entrée, un texte en sortie, pas
-// de JSON, pas de structure à faire respecter. Chaque appel est court à
-// générer (peu de tokens de sortie), donc rapide et bien plus fiable que
-// l'ancienne version qui demandait une grosse génération JSON d'un coup.
-const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à ce que dit l'extrait original. N'invente aucun fait, aucune expérience, aucune compétence absente de l'extrait original — c'est une reformulation, pas une invention. Si l'extrait n'a vraiment rien à gagner à être changé, renvoie-le tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets, sans préambule, sans balises, sans explication.`;
+// ==== 5. UN SEUL appel au modèle pour toute la passe ====
+// Le code a déjà fait le tri (étape 3) : le modèle ne reçoit que les
+// segments pré-filtrés comme modifiables, numérotés, et renvoie un tableau
+// JSON des segments qu'il choisit de reformuler. C'est l'architecture qui a
+// concrètement produit un CV sur cette machine — on ne la re-complexifie
+// pas sans preuve que c'est nécessaire.
+function buildEditPrompt(editableRuns, jobText) {
+  const listing = editableRuns
+    .map((r, i) => `[${i}] (${r.section}${r.role === 'headline' ? ", titre d'accroche" : ''}) ${r.text.trim()}`)
+    .join('\n');
 
-async function rewriteRun(run, jobText) {
-  const messages = [
-    { role: 'system', content: REWRITE_SYSTEM_PROMPT },
-    {
-      role: 'user',
-      content: `--- OFFRE D'EMPLOI ---\n${jobText}\n\n--- EXTRAIT DU CV À REFORMULER (section "${run.section}", rôle: ${run.role === 'headline' ? "titre d'accroche" : 'contenu'}) ---\n${run.text.trim()}\n\nRéponds uniquement avec le texte reformulé.`
-    }
+  const system = `Tu es un expert en recrutement et rédaction de CV. On te donne une liste NUMÉROTÉE d'extraits d'un CV — déjà triés pour ne contenir QUE du contenu rédigé modifiable (résumé, compétences, descriptions de missions, titre d'accroche). Aucun de ces extraits n'est une donnée factuelle (nom, date, entreprise, diplôme, coordonnées) : ce tri a déjà été fait, tu n'as pas à t'en soucier. On te donne aussi le texte d'une offre d'emploi.
+
+Ta tâche : reformuler les extraits pertinents pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à ce que dit l'extrait original.
+
+RÈGLES ABSOLUES :
+1. N'invente aucun fait, aucune expérience, aucune compétence absente de l'extrait original — c'est une reformulation, pas une invention.
+2. Si le poste visé est éloigné du parcours, ne fabrique pas de fausse cohérence : reformule honnêtement avec ce qui existe réellement.
+3. Ne renvoie QUE les extraits que tu modifies réellement. Si un extrait n'a rien à gagner à être changé, ne le renvoie pas.
+
+Tu réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, sans balises markdown, de la forme :
+[{"index": 2, "text": "nouveau texte de l'extrait 2"}, {"index": 5, "text": "nouveau texte de l'extrait 5"}]`;
+
+  const user = `--- EXTRAITS DU CV (numérotés) ---\n${listing}\n\n--- OFFRE D'EMPLOI ---\n${jobText}\n\nRenvoie le tableau JSON des extraits à reformuler.`;
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user }
   ];
-  const reply = await engine.chat.completions.create({
-    messages,
-    temperature: 0.2,
-    max_tokens: 260,
-  });
-  return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
 }
 
-async function rewriteRunWithRetry(run, jobText) {
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await rewriteRun(run, jobText);
-    } catch (err) {
-      const msg = err.message || '';
-      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
-      log(`  ⚠️ Échec sur ce segment (tentative ${attempt}/${maxAttempts}) : ${msg}`);
-      discardEngine();
-      if (isDeviceLost) throw err; // un vrai crash GPU : inutile d'insister, on remonte l'erreur
-      if (attempt < maxAttempts) {
-        await ensureEngine(currentModelIdWanted, true); // recharge un moteur neuf avant de réessayer
-        continue;
-      }
-      return null; // on abandonne CE segment précis, mais pas toute la passe
-    }
-  }
-  return null;
+function extractJsonArray(text) {
+  let t = text.trim();
+  t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
+  const start = t.indexOf('[');
+  const end = t.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de tableau JSON trouvé).');
+  const arr = JSON.parse(t.slice(start, end + 1));
+  if (!Array.isArray(arr)) throw new Error('Réponse du modèle non exploitable (pas un tableau).');
+  return arr;
 }
 
-// ==== 6. Application d'une réécriture dans le XML ====
+// ==== 6. Application des modifications dans le XML ====
 // On ne touche QUE le texte (<w:t>) du run visé : sa mise en forme (rPr —
 // police, couleur, gras, taille…) reste l'élément XML original intact.
 function setRunText(rNode, newText) {
@@ -272,6 +254,17 @@ function setRunText(rNode, newText) {
   tNodes[0].setAttribute('xml:space', 'preserve');
   tNodes[0].textContent = newText;
   for (let i = 1; i < tNodes.length; i++) tNodes[i].textContent = '';
+}
+
+function applyEdits(editableRuns, edits) {
+  let applied = 0;
+  edits.forEach(({ index, text }) => {
+    const entry = editableRuns[index];
+    if (!entry || typeof text !== 'string' || !text.trim()) return;
+    setRunText(entry.node, text);
+    applied++;
+  });
+  return applied;
 }
 
 // ==== 7. Génération du fichier .docx modifié ====
@@ -294,48 +287,31 @@ runBtn.addEventListener('click', async () => {
 
   const jobText = jobTextEl.value.trim();
   const modelId = modelSelect.value;
-  currentModelIdWanted = modelId;
 
   try {
+    await ensureEngine(modelId);
+
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
-    log(`${editable.length} segment(s) à reformuler, un par un.`);
+    log(`${editable.length} segment(s) pré-filtré(s) envoyé(s) au modèle en un seul appel.`);
 
-    let applied = 0;
-    let failed = 0;
+    setStatus('Génération des reformulations (le modèle réfléchit)…');
+    const messages = buildEditPrompt(editable, jobText);
+    const reply = await engine.chat.completions.create({
+      messages,
+      temperature: 0.2,
+      max_tokens: 1500,
+    });
+    const text = reply.choices[0].message.content;
+    log(`Réponse reçue (${text.length} caractères).`);
 
-    for (let i = 0; i < editable.length; i++) {
-      const run = editable[i];
-      // Un seul chargement du moteur pour toute la passe (pas un par
-      // segment) : la mémoire GPU utilisée, c'est essentiellement le poids
-      // du modèle lui-même, constant quelle que soit la taille du texte
-      // généré. Recharger le modèle entier avant chaque segment multiplie
-      // l'opération la plus lourde (charger ~2 Go en mémoire GPU) au lieu
-      // de la faire une fois — ça a empiré les choses à l'usage, on
-      // revient donc à la réutilisation, avec rechargement uniquement en
-      // cas d'échec réel (voir rewriteRunWithRetry).
-      await ensureEngine(modelId);
-      setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
-      const newText = await rewriteRunWithRetry(run, jobText);
-      if (newText && newText.length > 0) {
-        setRunText(run.node, newText);
-        applied++;
-        log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
-      } else {
-        failed++;
-        log(`  ✗ [${i + 1}/${editable.length}] segment laissé inchangé après échec.`);
-      }
-      // Petite pause entre deux appels : laisse la file de commandes GPU
-      // se vider un peu avant d'enchaîner sur la génération suivante.
-      if (i < editable.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
-    }
-
-    log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s) après échec.`);
+    const edits = extractJsonArray(text);
+    log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
+    const applied = applyEdits(editable, edits);
+    log(`${applied} segment(s) modifié(s).`);
 
     if (applied === 0) {
-      setStatus("Aucun segment n'a pu être reformulé — vérifie le journal technique pour comprendre pourquoi.");
+      setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand (3B/8B).");
       return;
     }
 
@@ -364,10 +340,7 @@ runBtn.addEventListener('click', async () => {
     });
     downloadArea.appendChild(continueBtn);
 
-    const msg = failed > 0
-      ? `Terminé avec ${failed} segment(s) non modifié(s) (voir journal) — mise en page d'origine conservée.`
-      : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
-    setStatus(msg);
+    setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
   } catch (err) {
     console.error(err);
     const msg = err.message || '';
