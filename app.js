@@ -412,6 +412,8 @@ async function runDiagLevel(level, statusEl, outputEl, btnEl) {
   const t0 = performance.now();
   try {
     if (!diagEngine || diagEngineModelId !== modelId) {
+      statusEl.textContent = 'Libération / préparation du GPU…';
+      await new Promise((resolve) => setTimeout(resolve, 800));
       statusEl.textContent = 'Chargement du modèle…';
       const webllm = await import(WEBLLM_URL);
       diagEngine = await webllm.CreateMLCEngine(modelId, {
@@ -432,6 +434,14 @@ async function runDiagLevel(level, statusEl, outputEl, btnEl) {
     const dt = Math.round(performance.now() - t0);
     statusEl.textContent = `✅ Réussi en ${dt} ms`;
     outputEl.textContent = lastReply.choices[0].message.content.slice(0, 200);
+    // Volontaire : on jette le moteur même après un SUCCÈS. Hypothèse en
+    // cours de test (voir mlc-ai/web-llm#647) : le bug ne dépend pas de la
+    // taille du prompt, mais du nombre de fois qu'on réutilise le même
+    // moteur pour plusieurs générations d'affilée (souvent instable dès le
+    // 3e appel). En repartant systématiquement d'un moteur neuf, chaque
+    // niveau redevient un "1er appel" isolé, comme les niveaux 1 et 2.
+    diagEngine = null;
+    diagEngineModelId = null;
   } catch (err) {
     const dt = Math.round(performance.now() - t0);
     statusEl.textContent = `❌ ÉCHEC après ${dt} ms`;
