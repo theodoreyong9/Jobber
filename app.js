@@ -380,55 +380,99 @@ runBtn.addEventListener('click', async () => {
   }
 });
 
-// ==== 9. Testeur WebLLM isolé (diagnostic) ====
+// ==== 9. Tests progressifs WebLLM (diagnostic) ====
 // Complètement indépendant de tout ce qui précède : pas de docx, pas de
-// JSON à parser, juste "charge le modèle, envoie une phrase courte,
-// regarde si ça plante". Sert à mesurer objectivement la fiabilité brute
-// de WebLLM sur cette machine, en isolant la variable "est-ce que c'est
-// spécifique aux prompts plus lourds du CV, ou un problème plus général ?"
-const diagPromptEl = document.getElementById('diag-prompt');
-const diagRunBtn = document.getElementById('diag-run-btn');
-const diagStatusEl = document.getElementById('diag-status');
-const diagScoreEl = document.getElementById('diag-score');
-const diagOutputEl = document.getElementById('diag-output');
+// JSON à parser. Une échelle de niveaux de charge croissante, à lancer un
+// par un, pour voir précisément à partir de quel niveau ça casse — plutôt
+// que de deviner.
+function fillerText(targetChars) {
+  const sentence = 'Ce texte sert uniquement à simuler une charge de prompt réaliste pour le diagnostic. ';
+  let s = '';
+  while (s.length < targetChars) s += sentence;
+  return s.slice(0, targetChars);
+}
+
+const DIAG_LEVELS = [
+  { id: 1, label: 'Niveau 1 — prompt minuscule, sortie courte', prompt: 'Salut', maxTokens: 20, calls: 1 },
+  { id: 2, label: 'Niveau 2 — prompt court (1 phrase), sortie courte', prompt: 'Explique la photosynthèse en une phrase.', maxTokens: 100, calls: 1 },
+  { id: 3, label: 'Niveau 3 — prompt moyen (~800 caractères)', prompt: fillerText(800) + '\n\nRésume ce texte en une phrase.', maxTokens: 150, calls: 1 },
+  { id: 4, label: 'Niveau 4 — prompt long (~3500 caractères, taille d\'un CV réel)', prompt: fillerText(3500) + '\n\nRésume ce texte en une phrase.', maxTokens: 150, calls: 1 },
+  { id: 5, label: 'Niveau 5 — prompt long + grosse sortie (1500 tokens, comme l\'adaptation de CV)', prompt: fillerText(3500) + '\n\nListe 30 idées en lien avec ce texte, une par ligne.', maxTokens: 1500, calls: 1 },
+  { id: 6, label: 'Niveau 6 — DEUX appels courts d\'affilée sur le même moteur', prompt: 'Dis un chiffre entre 1 et 10.', maxTokens: 20, calls: 2 },
+];
 
 let diagEngine = null;
 let diagEngineModelId = null;
-let diagAttempts = 0;
-let diagSuccesses = 0;
 
-diagRunBtn.addEventListener('click', async () => {
-  diagRunBtn.disabled = true;
-  diagAttempts++;
+async function runDiagLevel(level, statusEl, outputEl, btnEl) {
+  btnEl.disabled = true;
+  statusEl.textContent = 'En cours…';
+  outputEl.textContent = '';
   const modelId = modelSelect.value;
   const t0 = performance.now();
   try {
     if (!diagEngine || diagEngineModelId !== modelId) {
-      diagStatusEl.textContent = 'Chargement du modèle (diagnostic)…';
+      statusEl.textContent = 'Chargement du modèle…';
       const webllm = await import(WEBLLM_URL);
       diagEngine = await webllm.CreateMLCEngine(modelId, {
-        initProgressCallback: (p) => { diagStatusEl.textContent = p.text || 'Chargement…'; }
+        initProgressCallback: (p) => { statusEl.textContent = p.text || 'Chargement…'; }
       });
       diagEngineModelId = modelId;
     }
-    diagStatusEl.textContent = 'Génération en cours…';
-    const reply = await diagEngine.chat.completions.create({
-      messages: [{ role: 'user', content: diagPromptEl.value.trim() || 'Dis bonjour.' }],
-      temperature: 0.7,
-      max_tokens: 100,
-    });
+    let lastReply = null;
+    for (let i = 0; i < level.calls; i++) {
+      if (level.calls > 1) statusEl.textContent = `Appel ${i + 1}/${level.calls}…`;
+      else statusEl.textContent = 'Génération…';
+      lastReply = await diagEngine.chat.completions.create({
+        messages: [{ role: 'user', content: level.prompt }],
+        temperature: 0.3,
+        max_tokens: level.maxTokens,
+      });
+    }
     const dt = Math.round(performance.now() - t0);
-    diagSuccesses++;
-    diagOutputEl.textContent = reply.choices[0].message.content;
-    diagStatusEl.innerHTML = `✅ Réussi en ${dt} ms — <span id="diag-score">${diagAttempts} essai(s), ${diagSuccesses} réussite(s)</span>`;
+    statusEl.textContent = `✅ Réussi en ${dt} ms`;
+    outputEl.textContent = lastReply.choices[0].message.content.slice(0, 200);
   } catch (err) {
     const dt = Math.round(performance.now() - t0);
-    diagOutputEl.textContent = 'ERREUR après ' + dt + ' ms :\n' + (err.stack || err.message);
-    diagStatusEl.innerHTML = `❌ Échec — <span id="diag-score">${diagAttempts} essai(s), ${diagSuccesses} réussite(s)</span>`;
-    // On jette le moteur diagnostic pour forcer un rechargement au prochain essai.
+    statusEl.textContent = `❌ ÉCHEC après ${dt} ms`;
+    outputEl.textContent = err.stack || err.message;
     diagEngine = null;
     diagEngineModelId = null;
   } finally {
-    diagRunBtn.disabled = false;
+    btnEl.disabled = false;
   }
+}
+
+const diagContainer = document.getElementById('diag-tests');
+DIAG_LEVELS.forEach((level) => {
+  const row = document.createElement('div');
+  row.className = 'diag-level';
+
+  const header = document.createElement('div');
+  header.className = 'diag-level-header';
+
+  const label = document.createElement('span');
+  label.className = 'diag-level-label';
+  label.textContent = level.label;
+
+  const btn = document.createElement('button');
+  btn.className = 'diag-level-btn secondary-btn';
+  btn.textContent = '▶️ Lancer';
+
+  header.appendChild(label);
+  header.appendChild(btn);
+
+  const status = document.createElement('p');
+  status.className = 'diag-level-status';
+  status.textContent = 'Pas encore lancé.';
+
+  const output = document.createElement('pre');
+  output.className = 'diag-level-output';
+
+  row.appendChild(header);
+  row.appendChild(status);
+  row.appendChild(output);
+  diagContainer.appendChild(row);
+
+  btn.addEventListener('click', () => runDiagLevel(level, status, output, btn));
 });
