@@ -49,6 +49,13 @@ les librairies (`mammoth`, `docx`, `web-llm`) sont chargées depuis des CDN
 - Le modèle est prompté pour ne pas inventer d'expérience ou de diplôme,
   mais comme tout LLM il peut se tromper : relis toujours le résultat
   avant de l'envoyer.
+- Sur un GPU peu puissant ou avec peu de VRAM (typiquement un GPU intégré),
+  le pilote graphique peut planter en cours d'inférence (erreur Windows
+  `DXGI_ERROR_DEVICE_REMOVED` / "Device was lost" côté Chrome). Ce n'est
+  pas un bug de l'app : c'est le pilote GPU qui abandonne un calcul trop
+  long ou trop gourmand en mémoire. Dans ce cas, choisis le modèle
+  "très léger" (1B), ferme les autres onglets/apps qui utilisent le GPU,
+  et mets à jour tes pilotes graphiques.
 
 ## Structure du repo
 

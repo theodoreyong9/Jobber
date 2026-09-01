@@ -265,17 +265,26 @@ runBtn.addEventListener('click', async () => {
       break;
     } catch (err) {
       console.error(err);
-      const isRuntimeGlitch = /disposed/i.test(err.message || '');
+      const msg = err.message || '';
+      const isTransientGlitch = /disposed/i.test(msg) && !/device/i.test(msg);
+      const isGpuCrash = /device_removed|device was lost|requestdevice|gpu process/i.test(msg);
       log('Erreur : ' + (err.stack || err.message));
 
-      if (isRuntimeGlitch && attempt < maxAttempts) {
+      if (isTransientGlitch && attempt < maxAttempts) {
         log('Bug connu du runtime WebGPU/TVM détecté, rechargement du moteur puis nouvel essai…');
         setStatus('Le moteur a buggé, on recharge et on réessaie…');
         continue;
       }
 
-      setStatus('Erreur : ' + err.message +
-        (isRuntimeGlitch ? ' — essaie de recharger la page, ou choisis un modèle plus petit.' : ''));
+      if (isGpuCrash) {
+        setStatus(
+          "Le pilote GPU a planté (mémoire vidéo insuffisante ou calcul trop long). " +
+          "Choisis le modèle « très léger » dans la liste, ferme les autres onglets/apps qui utilisent le GPU, " +
+          "et vérifie que tes pilotes graphiques sont à jour, puis réessaie."
+        );
+      } else {
+        setStatus('Erreur : ' + err.message);
+      }
       break;
     }
   }
