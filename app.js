@@ -50,14 +50,25 @@ function updateRunButton() {
 }
 
 // ==== 2. Chargement du moteur WebLLM (dans le cache du navigateur) ====
-async function ensureEngine(modelId) {
+// Version figée (pas "latest") pour éviter les régressions du CDN, et
+// remise à zéro complète du moteur en cas d'erreur runtime (le bug WebGPU/TVM
+// "Object has already been disposed" laisse parfois le moteur dans un état
+// corrompu qu'il faut jeter plutôt que réutiliser).
+const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.83/+esm';
+
+async function ensureEngine(modelId, forceReload = false) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
-  if (engine && currentModelId === modelId) return engine;
+  if (engine && currentModelId === modelId && !forceReload) return engine;
+
+  if (engine) {
+    try { await engine.unload(); } catch (_) { /* on ignore, on repart de zéro */ }
+    engine = null;
+  }
 
   setStatus('Chargement du modèle (1er lancement : téléchargement, plusieurs minutes)…');
-  const webllm = await import('https://esm.run/@mlc-ai/web-llm');
+  const webllm = await import(WEBLLM_URL);
   engine = await webllm.CreateMLCEngine(modelId, {
     initProgressCallback: (p) => {
       const pct = Math.round((p.progress || 0) * 100);
@@ -99,16 +110,49 @@ function extractJson(text) {
   return JSON.parse(t.slice(start, end + 1));
 }
 
-// ==== 4. Génération du nouveau .docx (librairie "docx", 100% client) ====
+// ==== 4. Mise en page aléatoire ====
+// À chaque génération, on tire une palette de couleur, une paire de polices
+// et un alignement d'en-tête au sort, pour que chaque CV exporté ait un
+// habillage visuel légèrement différent (tout en restant sobre et lisible).
+const THEMES = [
+  { accent: '2E5EAA', headingFont: 'Calibri',      bodyFont: 'Calibri',    align: 'left',   rule: true  },
+  { accent: '1F7A5C', headingFont: 'Cambria',       bodyFont: 'Calibri',    align: 'center', rule: false },
+  { accent: '8A3B2E', headingFont: 'Georgia',       bodyFont: 'Garamond',   align: 'left',   rule: true  },
+  { accent: '5B3E8A', headingFont: 'Trebuchet MS',  bodyFont: 'Verdana',    align: 'center', rule: true  },
+  { accent: '2E7A82', headingFont: 'Verdana',       bodyFont: 'Georgia',    align: 'left',   rule: false },
+  { accent: '7A2E4B', headingFont: 'Garamond',      bodyFont: 'Cambria',    align: 'center', rule: true  },
+];
+
+function pickTheme() {
+  return THEMES[Math.floor(Math.random() * THEMES.length)];
+}
+
+// ==== 5. Génération du nouveau .docx (librairie "docx", 100% client) ====
 async function buildDocx(data) {
   const docx = await import('https://cdn.jsdelivr.net/npm/docx@9.5.1/build/index.mjs');
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = docx;
+
+  const theme = pickTheme();
+  const align = theme.align === 'center' ? AlignmentType.CENTER : AlignmentType.LEFT;
 
   const children = [];
 
-  children.push(new Paragraph({ text: data.nom || '', heading: HeadingLevel.TITLE }));
+  // Nom en grand, coloré, avec alignement et filet aléatoires
+  children.push(new Paragraph({
+    alignment: align,
+    border: theme.rule ? {
+      bottom: { color: theme.accent, space: 6, style: BorderStyle.SINGLE, size: 8 }
+    } : undefined,
+    children: [
+      new TextRun({ text: data.nom || '', bold: true, size: 48, color: theme.accent, font: theme.headingFont })
+    ]
+  }));
+
   if (data.titre_professionnel) {
-    children.push(new Paragraph({ text: data.titre_professionnel, heading: HeadingLevel.HEADING_2 }));
+    children.push(new Paragraph({
+      alignment: align,
+      children: [new TextRun({ text: data.titre_professionnel, size: 26, font: theme.bodyFont, italics: true })]
+    }));
   }
 
   const contactParts = [];
@@ -118,91 +162,124 @@ async function buildDocx(data) {
     });
   }
   if (contactParts.length) {
-    children.push(new Paragraph({ text: contactParts.join(' · ') }));
+    children.push(new Paragraph({
+      alignment: align,
+      children: [new TextRun({ text: contactParts.join(' · '), size: 20, font: theme.bodyFont })]
+    }));
+  }
+
+  function heading(text) {
+    return new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun({ text, bold: true, color: theme.accent, font: theme.headingFont })]
+    });
+  }
+  function body(text, opts = {}) {
+    return new Paragraph({
+      bullet: opts.bullet ? { level: 0 } : undefined,
+      children: [new TextRun({ text, font: theme.bodyFont, bold: opts.bold, italics: opts.italics })]
+    });
   }
 
   if (data.resume) {
-    children.push(new Paragraph({ text: 'Résumé', heading: HeadingLevel.HEADING_1 }));
-    children.push(new Paragraph({ text: data.resume }));
+    children.push(heading('Résumé'));
+    children.push(body(data.resume));
   }
 
   if (data.competences && data.competences.length) {
-    children.push(new Paragraph({ text: 'Compétences', heading: HeadingLevel.HEADING_1 }));
-    data.competences.forEach((c) => children.push(new Paragraph({ text: c, bullet: { level: 0 } })));
+    children.push(heading('Compétences'));
+    data.competences.forEach((c) => children.push(body(c, { bullet: true })));
   }
 
   if (data.experiences && data.experiences.length) {
-    children.push(new Paragraph({ text: 'Expérience professionnelle', heading: HeadingLevel.HEADING_1 }));
+    children.push(heading('Expérience professionnelle'));
     data.experiences.forEach((exp) => {
       const titleLine = [exp.poste, exp.entreprise].filter(Boolean).join(' — ');
-      children.push(new Paragraph({ children: [new TextRun({ text: titleLine, bold: true })] }));
+      children.push(body(titleLine, { bold: true }));
       const meta = [exp.dates, exp.lieu].filter(Boolean).join(' · ');
-      if (meta) children.push(new Paragraph({ children: [new TextRun({ text: meta, italics: true })] }));
-      (exp.description || []).forEach((d) => children.push(new Paragraph({ text: d, bullet: { level: 0 } })));
+      if (meta) children.push(body(meta, { italics: true }));
+      (exp.description || []).forEach((d) => children.push(body(d, { bullet: true })));
     });
   }
 
   if (data.formations && data.formations.length) {
-    children.push(new Paragraph({ text: 'Formation', heading: HeadingLevel.HEADING_1 }));
+    children.push(heading('Formation'));
     data.formations.forEach((f) => {
       const line = [f.diplome, f.etablissement, f.dates].filter(Boolean).join(' — ');
-      children.push(new Paragraph({ text: line }));
+      children.push(body(line));
     });
   }
 
   if (data.langues && data.langues.length) {
-    children.push(new Paragraph({ text: 'Langues', heading: HeadingLevel.HEADING_1 }));
-    children.push(new Paragraph({ text: data.langues.join(', ') }));
+    children.push(heading('Langues'));
+    children.push(body(data.langues.join(', ')));
   }
 
   if (data.autres) {
-    children.push(new Paragraph({ text: 'Autres', heading: HeadingLevel.HEADING_1 }));
-    children.push(new Paragraph({ text: data.autres }));
+    children.push(heading('Autres'));
+    children.push(body(data.autres));
   }
 
   const doc = new Document({ sections: [{ children }] });
   return Packer.toBlob(doc);
 }
 
-// ==== 5. Orchestration ====
+// ==== 6. Orchestration ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
-  try {
-    const modelId = modelSelect.value;
-    await ensureEngine(modelId);
+  let attempt = 0;
+  const maxAttempts = 2; // 1 essai normal + 1 réessai avec moteur rechargé si erreur runtime
 
-    setStatus('Génération du CV adapté (le modèle réfléchit)…');
-    const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
-    const reply = await engine.chat.completions.create({
-      messages,
-      temperature: 0.3,
-      max_tokens: 2048,
-    });
-    const text = reply.choices[0].message.content;
-    log(`Réponse reçue (${text.length} caractères).`);
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      const modelId = modelSelect.value;
+      await ensureEngine(modelId, attempt > 1);
 
-    const data = extractJson(text);
-    setStatus('Construction du fichier .docx…');
-    const blob = await buildDocx(data);
+      setStatus('Génération du CV adapté (le modèle réfléchit)…');
+      const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
+      const reply = await engine.chat.completions.create({
+        messages,
+        temperature: 0.3,
+        max_tokens: 2048,
+      });
+      const text = reply.choices[0].message.content;
+      log(`Réponse reçue (${text.length} caractères).`);
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = originalFileName + '-adapte.docx';
-    a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
-    a.className = 'download-link';
-    downloadArea.appendChild(a);
+      const data = extractJson(text);
+      setStatus('Construction du fichier .docx…');
+      const blob = await buildDocx(data);
 
-    setStatus('Terminé ✅');
-  } catch (err) {
-    console.error(err);
-    setStatus('Erreur : ' + err.message);
-    log('Erreur : ' + (err.stack || err.message));
-  } finally {
-    runBtn.disabled = false;
-    updateRunButton();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = originalFileName + '-adapte.docx';
+      a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
+      a.className = 'download-link';
+      downloadArea.appendChild(a);
+
+      setStatus('Terminé ✅');
+      break;
+    } catch (err) {
+      console.error(err);
+      const isRuntimeGlitch = /disposed/i.test(err.message || '');
+      log('Erreur : ' + (err.stack || err.message));
+
+      if (isRuntimeGlitch && attempt < maxAttempts) {
+        log('Bug connu du runtime WebGPU/TVM détecté, rechargement du moteur puis nouvel essai…');
+        setStatus('Le moteur a buggé, on recharge et on réessaie…');
+        continue;
+      }
+
+      setStatus('Erreur : ' + err.message +
+        (isRuntimeGlitch ? ' — essaie de recharger la page, ou choisis un modèle plus petit.' : ''));
+      break;
+    }
   }
+
+  runBtn.disabled = false;
+  updateRunButton();
 });
