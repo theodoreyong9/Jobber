@@ -117,7 +117,18 @@ function capText(text, maxChars, label) {
 function buildPrompt(cvText, jobText) {
   cvText = capText(cvText, MAX_CV_CHARS, 'Le CV');
   jobText = capText(jobText, MAX_JOB_CHARS, "Le texte de l'annonce");
-  const system = `Tu es un expert en recrutement et rédaction de CV. Tu adaptes un CV existant à une offre d'emploi en réutilisant un maximum de mots-clés pertinents de l'offre, SANS jamais inventer d'expérience, de diplôme ou de compétence absente du CV original. Tu reformules et réorganises pour mettre en avant ce qui correspond à l'offre. Tu réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises markdown, respectant exactement ce schéma :
+
+  const system = `Tu es un expert en recrutement et rédaction de CV. Tu reçois un CV existant (SOURCE DE VÉRITÉ ABSOLUE) et une offre d'emploi. Ta tâche : reformuler et réorganiser le CV pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à une expérience ou compétence déjà présente dans le CV.
+
+RÈGLES ABSOLUES, à ne jamais enfreindre :
+1. Le nom, l'email, le téléphone, le LinkedIn/l'adresse, les noms d'entreprises, les dates et les établissements de formation DOIVENT être recopiés EXACTEMENT tels qu'ils apparaissent dans le CV ORIGINAL. Ne les modifie jamais, ne les invente jamais, ne les déduis jamais de l'offre d'emploi.
+2. L'offre d'emploi sert UNIQUEMENT à choisir l'angle de présentation et le vocabulaire. Elle n'est JAMAIS une source d'informations factuelles sur le candidat. N'en recopie aucun nom propre, aucune coordonnée, aucune donnée dans les champs nom/contact/expériences/formations.
+3. Si une information n'existe pas dans le CV, mets null (champ simple) ou un tableau vide (liste). N'invente rien pour combler un vide.
+4. Si le poste visé est éloigné du parcours du candidat, ne fabrique pas de fausse cohérence : mets en avant honnêtement les compétences transférables réellement présentes dans le CV (ex: relation client, autonomie, organisation), sans prétendre à une expérience du secteur visé qui n'existe pas.
+5. Chaque élément de ta réponse (compétence, poste, description) doit être traçable à une phrase précise du CV original. Si tu ne peux pas le justifier par le texte du CV fourni, ne l'inclus pas.
+6. Avant de répondre, vérifie mentalement : le nom que je m'apprête à écrire apparaît-il littéralement dans le CV original ? Chaque entreprise citée apparaît-elle dans le CV original ? Si non, corrige-toi avant de répondre.
+
+Tu réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises markdown, respectant exactement ce schéma :
 {
   "nom": string,
   "titre_professionnel": string,
@@ -129,7 +140,7 @@ function buildPrompt(cvText, jobText) {
   "langues": string[],
   "autres": string|null
 }`;
-  const user = `--- CV ORIGINAL ---\n${cvText}\n\n--- OFFRE D'EMPLOI ---\n${jobText}\n\nAdapte ce CV à cette offre. Intègre naturellement le vocabulaire et les mots-clés de l'offre dans le résumé, les compétences et les descriptions d'expérience, uniquement quand c'est honnête par rapport au CV original. Réponds uniquement avec le JSON demandé.`;
+  const user = `--- CV ORIGINAL (seule source de vérité pour les faits) ---\n${cvText}\n\n--- OFFRE D'EMPLOI (uniquement pour le vocabulaire et l'angle) ---\n${jobText}\n\nAdapte ce CV à cette offre en respectant strictement les règles ci-dessus. Réponds uniquement avec le JSON demandé.`;
   return [
     { role: 'system', content: system },
     { role: 'user', content: user }
@@ -143,6 +154,38 @@ function extractJson(text) {
   const end = t.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de JSON trouvé).');
   return JSON.parse(t.slice(start, end + 1));
+}
+
+// Filet de sécurité anti-hallucination : le nom et les entreprises citées
+// doivent apparaître littéralement dans le CV original. Un modèle petit/faible
+// peut sinon "abandonner" et recopier des bouts de l'offre d'emploi à la place
+// (ex: prendre "Nouveau Collègue" dans l'annonce pour le nom du candidat).
+function normalize(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function checkForHallucination(data, cvText) {
+  const cvNorm = normalize(cvText);
+  const problems = [];
+
+  if (data.nom && !cvNorm.includes(normalize(data.nom))) {
+    problems.push(`le nom généré ("${data.nom}") n'apparaît pas dans le CV original`);
+  }
+  (data.experiences || []).forEach((exp) => {
+    if (exp.entreprise && !cvNorm.includes(normalize(exp.entreprise))) {
+      problems.push(`l'entreprise "${exp.entreprise}" n'apparaît pas dans le CV original`);
+    }
+  });
+
+  if (problems.length) {
+    log('⚠️ Alerte hallucination possible : ' + problems.join(' ; '));
+    setStatus(
+      "⚠️ Le résultat semble contenir des informations inventées (voir le journal technique). " +
+      "Ne l'utilise pas tel quel : vérifie chaque champ, ou réessaie avec un modèle plus grand (8B)."
+    );
+    return true;
+  }
+  return false;
 }
 
 // ==== 4. Mise en page aléatoire ====
@@ -273,13 +316,14 @@ runBtn.addEventListener('click', async () => {
     const messages = buildPrompt(originalCvText, jobTextEl.value.trim());
     const reply = await engine.chat.completions.create({
       messages,
-      temperature: 0.3,
+      temperature: 0.1,
       max_tokens: 2048,
     });
     const text = reply.choices[0].message.content;
     log(`Réponse reçue (${text.length} caractères).`);
 
     const data = extractJson(text);
+    const hasHallucination = checkForHallucination(data, originalCvText);
     setStatus('Construction du fichier .docx…');
     const blob = await buildDocx(data);
 
@@ -291,7 +335,9 @@ runBtn.addEventListener('click', async () => {
     a.className = 'download-link';
     downloadArea.appendChild(a);
 
-    setStatus('Terminé ✅');
+    if (!hasHallucination) {
+      setStatus('Terminé ✅');
+    }
   } catch (err) {
     console.error(err);
     const msg = err.message || '';

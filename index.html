@@ -41,11 +41,16 @@
       <section class="card">
         <h2>3. Modèle IA (téléchargé une seule fois, mis en cache)</h2>
         <select id="model-select">
-          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B — très léger, GPU limité (~700 Mo)</option>
-          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC" selected>Llama 3.2 3B — rapide (~2 Go)</option>
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B — très rapide mais peu fiable, invente parfois des infos (~700 Mo)</option>
+          <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC" selected>Llama 3.2 3B — bon compromis (~2 Go)</option>
           <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini — équilibré (~2,5 Go)</option>
-          <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">Llama 3.1 8B — meilleure qualité (~5 Go, GPU puissant requis)</option>
+          <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">Llama 3.1 8B — le plus fiable pour cette tâche (~5 Go, GPU puissant requis)</option>
         </select>
+        <p class="hint">
+          ⚠️ Cette tâche demande au modèle de bien comprendre et respecter ton CV. Les petits
+          modèles (1B) peuvent halluciner (inventer un nom, un employeur…) — préfère le 3B
+          voire le 8B si ton GPU le permet, et relis toujours le résultat.
+        </p>
         <p class="hint">
           Nécessite un navigateur avec WebGPU (Chrome/Edge récents). Le premier lancement
           télécharge le modèle ; les suivants sont instantanés grâce au cache du navigateur.
