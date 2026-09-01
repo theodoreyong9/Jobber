@@ -48,7 +48,7 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-const JOB_TEXT_WARN_THRESHOLD = 2000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
+const JOB_TEXT_WARN_THRESHOLD = 3000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
 
 jobTextEl.addEventListener('input', () => {
   updateRunButton();
@@ -110,7 +110,7 @@ async function ensureEngine(modelId) {
 // le délai que Windows accorde au driver avant de le tuer (device lost),
 // même sur un GPU qui gère très bien des prompts courts.
 const MAX_CV_CHARS = 3500;
-const MAX_JOB_CHARS = 2500;
+const MAX_JOB_CHARS = 3500;
 
 function capText(text, maxChars, label) {
   if (text.length <= maxChars) return text;
@@ -362,7 +362,7 @@ runBtn.addEventListener('click', async () => {
     const reply = await engine.chat.completions.create({
       messages,
       temperature: 0.1,
-      max_tokens: 900,
+      max_tokens: 1200,
     });
     const text = reply.choices[0].message.content;
     log(`Réponse reçue (${text.length} caractères).`);
