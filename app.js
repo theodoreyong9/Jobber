@@ -2,6 +2,7 @@
 const fileInput = document.getElementById('cv-file');
 const fileNameEl = document.getElementById('file-name');
 const jobTextEl = document.getElementById('job-text');
+const jobCountEl = document.getElementById('job-count');
 const modelSelect = document.getElementById('model-select');
 const runBtn = document.getElementById('run-btn');
 const statusEl = document.getElementById('status');
@@ -43,7 +44,19 @@ fileInput.addEventListener('change', async (e) => {
   }
 });
 
-jobTextEl.addEventListener('input', updateRunButton);
+const JOB_TEXT_WARN_THRESHOLD = 4000; // au-delà, on prévient : c'est probablement toute la page qui a été collée
+
+jobTextEl.addEventListener('input', () => {
+  updateRunButton();
+  const n = jobTextEl.value.length;
+  if (n > JOB_TEXT_WARN_THRESHOLD) {
+    jobCountEl.textContent = `⚠️ ${n} caractères — c'est beaucoup pour un texte d'annonce, tu as probablement collé toute la page. Garde uniquement la description du poste.`;
+    jobCountEl.style.color = '#e0a030';
+  } else {
+    jobCountEl.textContent = `${n} caractère${n > 1 ? 's' : ''}`;
+    jobCountEl.style.color = '';
+  }
+});
 
 function updateRunButton() {
   runBtn.disabled = !(originalCvText && jobTextEl.value.trim().length > 20);
@@ -81,7 +94,22 @@ async function ensureEngine(modelId) {
 }
 
 // ==== 3. Construction du prompt ====
+// On plafonne la taille du texte envoyé au modèle : un prompt trop long
+// se traduit par un seul très gros calcul GPU ("prefill") qui peut dépasser
+// le délai que Windows accorde au driver avant de le tuer (device lost),
+// même sur un GPU qui gère très bien des prompts courts.
+const MAX_CV_CHARS = 6000;
+const MAX_JOB_CHARS = 6000;
+
+function capText(text, maxChars, label) {
+  if (text.length <= maxChars) return text;
+  log(`⚠️ ${label} tronqué de ${text.length} à ${maxChars} caractères pour éviter un calcul trop long.`);
+  return text.slice(0, maxChars) + '\n[…texte tronqué…]';
+}
+
 function buildPrompt(cvText, jobText) {
+  cvText = capText(cvText, MAX_CV_CHARS, 'Le CV');
+  jobText = capText(jobText, MAX_JOB_CHARS, "Le texte de l'annonce");
   const system = `Tu es un expert en recrutement et rédaction de CV. Tu adaptes un CV existant à une offre d'emploi en réutilisant un maximum de mots-clés pertinents de l'offre, SANS jamais inventer d'expérience, de diplôme ou de compétence absente du CV original. Tu reformules et réorganises pour mettre en avant ce qui correspond à l'offre. Tu réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises markdown, respectant exactement ce schéma :
 {
   "nom": string,
@@ -129,7 +157,7 @@ function pickTheme() {
 
 // ==== 5. Génération du nouveau .docx (librairie "docx", 100% client) ====
 async function buildDocx(data) {
-  const docx = await import('https://cdn.jsdelivr.net/npm/docx@9.5.1/build/index.mjs');
+  const docx = await import('https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.mjs');
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = docx;
 
   const theme = pickTheme();
