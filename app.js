@@ -379,3 +379,56 @@ runBtn.addEventListener('click', async () => {
     updateRunButton();
   }
 });
+
+// ==== 9. Testeur WebLLM isolé (diagnostic) ====
+// Complètement indépendant de tout ce qui précède : pas de docx, pas de
+// JSON à parser, juste "charge le modèle, envoie une phrase courte,
+// regarde si ça plante". Sert à mesurer objectivement la fiabilité brute
+// de WebLLM sur cette machine, en isolant la variable "est-ce que c'est
+// spécifique aux prompts plus lourds du CV, ou un problème plus général ?"
+const diagPromptEl = document.getElementById('diag-prompt');
+const diagRunBtn = document.getElementById('diag-run-btn');
+const diagStatusEl = document.getElementById('diag-status');
+const diagScoreEl = document.getElementById('diag-score');
+const diagOutputEl = document.getElementById('diag-output');
+
+let diagEngine = null;
+let diagEngineModelId = null;
+let diagAttempts = 0;
+let diagSuccesses = 0;
+
+diagRunBtn.addEventListener('click', async () => {
+  diagRunBtn.disabled = true;
+  diagAttempts++;
+  const modelId = modelSelect.value;
+  const t0 = performance.now();
+  try {
+    if (!diagEngine || diagEngineModelId !== modelId) {
+      diagStatusEl.textContent = 'Chargement du modèle (diagnostic)…';
+      const webllm = await import(WEBLLM_URL);
+      diagEngine = await webllm.CreateMLCEngine(modelId, {
+        initProgressCallback: (p) => { diagStatusEl.textContent = p.text || 'Chargement…'; }
+      });
+      diagEngineModelId = modelId;
+    }
+    diagStatusEl.textContent = 'Génération en cours…';
+    const reply = await diagEngine.chat.completions.create({
+      messages: [{ role: 'user', content: diagPromptEl.value.trim() || 'Dis bonjour.' }],
+      temperature: 0.7,
+      max_tokens: 100,
+    });
+    const dt = Math.round(performance.now() - t0);
+    diagSuccesses++;
+    diagOutputEl.textContent = reply.choices[0].message.content;
+    diagStatusEl.innerHTML = `✅ Réussi en ${dt} ms — <span id="diag-score">${diagAttempts} essai(s), ${diagSuccesses} réussite(s)</span>`;
+  } catch (err) {
+    const dt = Math.round(performance.now() - t0);
+    diagOutputEl.textContent = 'ERREUR après ' + dt + ' ms :\n' + (err.stack || err.message);
+    diagStatusEl.innerHTML = `❌ Échec — <span id="diag-score">${diagAttempts} essai(s), ${diagSuccesses} réussite(s)</span>`;
+    // On jette le moteur diagnostic pour forcer un rechargement au prochain essai.
+    diagEngine = null;
+    diagEngineModelId = null;
+  } finally {
+    diagRunBtn.disabled = false;
+  }
+});
