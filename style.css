@@ -1,4 +1,4 @@
-*:root {
+:root {
   --bg: #0f1115;
   --card: #171a21;
   --border: #262b36;
@@ -60,7 +60,7 @@ header h1 {
 .file-drop input { display: none; }
 .file-drop:hover { border-color: var(--accent); color: var(--text); }
 
-textarea, select {
+textarea, select, input[type="text"] {
   width: 100%;
   background: #10131a;
   color: var(--text);
@@ -70,6 +70,20 @@ textarea, select {
   font-family: inherit;
   font-size: 0.95rem;
   resize: vertical;
+}
+
+.diagnostic-card {
+  border-style: dashed;
+  border-color: #e0a030;
+}
+.diagnostic-card h2 { color: #e0a030; }
+#diag-output {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  margin-top: 10px;
+  color: var(--text);
+  max-height: 150px;
+  overflow-y: auto;
 }
 
 .hint {
