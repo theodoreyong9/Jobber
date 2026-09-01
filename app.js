@@ -73,14 +73,21 @@ async function ensureEngine(modelId) {
   if (!('gpu' in navigator)) {
     throw new Error("WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge.");
   }
-  if (engine && currentModelId === modelId) return engine;
 
+  // Bug connu de web-llm : réutiliser un moteur déjà chargé pour une nouvelle
+  // génération corrompt parfois son état interne et déclenche
+  // "Object/Module has already been disposed" (voir mlc-ai/web-llm#486 et #560).
+  // On décharge donc systématiquement le moteur précédent et on repart d'un
+  // moteur neuf à chaque clic, même pour le même modèle. Le modèle reste en
+  // cache navigateur (IndexedDB) donc ça ne re-télécharge rien, juste
+  // ré-initialise proprement sur le GPU.
   if (engine) {
     try { await engine.unload(); } catch (_) { /* on ignore, on repart de zéro */ }
     engine = null;
+    currentModelId = null;
   }
 
-  setStatus('Chargement du modèle (1er lancement : téléchargement, plusieurs minutes)…');
+  setStatus('Initialisation du moteur…');
   const webllm = await import(WEBLLM_URL);
   engine = await webllm.CreateMLCEngine(modelId, {
     initProgressCallback: (p) => {
