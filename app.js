@@ -231,55 +231,62 @@ async function packageDocx() {
   });
 }
 
-// ==== 8. Un appel PAR SEGMENT, volontairement petit ====
-// Mesuré concrètement sur cette machine (tests progressifs plus bas) :
-// un plafond dur d'environ 10-12 secondes de calcul GPU continu, au-delà
-// duquel ça casse — indépendamment de la taille exacte du prompt ou du
-// modèle. Chaque appel ici reste donc largement sous ce plafond : un seul
-// segment de CV à la fois (pas la liste entière), un extrait court de
-// l'annonce, et une sortie limitée à 150 tokens — la combinaison qui a
-// été mesurée fiable dans le testeur de diagnostic plus bas sur la page.
-const MAX_JOB_CHARS_PER_CALL = 600;
-const PER_SEGMENT_MAX_TOKENS = 150;
+// ==== 7. Prompt unique pour toute la passe ====
+// Retour à un seul appel — c'est cette cadence, pas les petits appels
+// fragmentés, qui a concrètement produit un CV avec succès sur cette
+// machine. Ce qui reste des améliorations construites depuis : le tri des
+// segments modifiables est fait par le code (classifyRuns), donc le
+// modèle ne reçoit que les ~18 extraits pertinents, jamais le CV entier ni
+// les données factuelles — un prompt bien plus petit que si on lui envoyait
+// tout le texte brut, sans pour autant multiplier les appels.
+function buildEditPrompt(editableRuns, jobText) {
+  const listing = editableRuns
+    .map((r, i) => `[${i}] (${r.section}${r.role === 'headline' ? ", titre d'accroche" : ''}) ${r.text.trim()}`)
+    .join('\n');
 
-function buildSegmentPrompt(run, jobText) {
-  let job = jobText;
-  if (job.length > MAX_JOB_CHARS_PER_CALL) {
-    job = job.slice(0, MAX_JOB_CHARS_PER_CALL) + '…';
-  }
-  const system = `Tu es un expert en recrutement. On te donne un court extrait d'un CV (section "${run.section}") et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
-  const user = `--- OFFRE D'EMPLOI (extrait) ---\n${job}\n\n--- EXTRAIT DU CV ---\n${run.text.trim()}\n\nRéponds uniquement avec le texte reformulé.`;
+  const system = `Tu es un expert en recrutement et rédaction de CV. On te donne une liste NUMÉROTÉE d'extraits d'un CV — déjà triés pour ne contenir QUE du contenu rédigé modifiable (résumé, compétences, descriptions de missions, titre d'accroche). Aucun de ces extraits n'est une donnée factuelle (nom, date, entreprise, diplôme, coordonnées) : ce tri a déjà été fait, tu n'as pas à t'en soucier. On te donne aussi le texte d'une offre d'emploi.
+
+Ta tâche : reformuler les extraits pertinents pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT quand cela correspond réellement à ce que dit l'extrait original.
+
+RÈGLES ABSOLUES :
+1. N'invente aucun fait, aucune expérience, aucune compétence absente de l'extrait original — c'est une reformulation, pas une invention.
+2. Si le poste visé est éloigné du parcours, ne fabrique pas de fausse cohérence : reformule honnêtement avec ce qui existe réellement.
+3. Ne renvoie QUE les extraits que tu modifies réellement. Si un extrait n'a rien à gagner à être changé, ne le renvoie pas.
+
+Tu réponds UNIQUEMENT avec un tableau JSON valide, sans texte autour, sans balises markdown, de la forme :
+[{"index": 2, "text": "nouveau texte de l'extrait 2"}, {"index": 5, "text": "nouveau texte de l'extrait 5"}]`;
+
+  const user = `--- EXTRAITS DU CV (numérotés) ---\n${listing}\n\n--- OFFRE D'EMPLOI ---\n${jobText}\n\nRenvoie le tableau JSON des extraits à reformuler.`;
+
   return [
     { role: 'system', content: system },
     { role: 'user', content: user }
   ];
 }
 
-async function rewriteSegment(run, jobText, modelId) {
-  const messages = buildSegmentPrompt(run, jobText);
-  try {
-    const reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: PER_SEGMENT_MAX_TOKENS });
-    return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
-  } catch (err) {
-    const msg = err.message || '';
-    const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
-    log(`  ⚠️ Échec sur ce segment : ${msg}`);
-    discardEngine();
-    if (isDeviceLost) throw err;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    await ensureEngine(modelId);
-    try {
-      const reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: PER_SEGMENT_MAX_TOKENS });
-      return reply.choices[0].message.content.trim().replace(/^["«]|["»]$/g, '');
-    } catch (err2) {
-      log(`  ✗ Toujours en échec, segment laissé inchangé : ${err2.message}`);
-      discardEngine();
-      return null;
-    }
-  }
+function extractJsonArray(text) {
+  let t = text.trim();
+  t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
+  const start = t.indexOf('[');
+  const end = t.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('Réponse du modèle non exploitable (pas de tableau JSON trouvé).');
+  const arr = JSON.parse(t.slice(start, end + 1));
+  if (!Array.isArray(arr)) throw new Error('Réponse du modèle non exploitable (pas un tableau).');
+  return arr;
 }
 
-// ==== 9. Orchestration principale ====
+function applyEdits(editableRuns, edits) {
+  let applied = 0;
+  edits.forEach(({ index, text }) => {
+    const entry = editableRuns[index];
+    if (!entry || typeof text !== 'string' || !text.trim()) return;
+    setRunText(entry.node, text);
+    applied++;
+  });
+  return applied;
+}
+
+// ==== 8. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
   runBtn.disabled = true;
   downloadArea.innerHTML = '';
@@ -294,29 +301,37 @@ runBtn.addEventListener('click', async () => {
 
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
-    log(`${editable.length} segment(s) à reformuler, un par un (petits appels).`);
+    log(`${editable.length} segment(s) pré-filtré(s) envoyé(s) au modèle en un seul appel.`);
 
-    let applied = 0;
-    let failed = 0;
+    setStatus('Génération des reformulations (le modèle réfléchit, ça peut prendre 30-60s)…');
+    const messages = buildEditPrompt(editable, jobText);
 
-    for (let i = 0; i < editable.length; i++) {
-      const run = editable[i];
-      setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
-      const newText = await rewriteSegment(run, jobText, modelId);
-      if (newText && newText.length > 0) {
-        setRunText(run.node, newText);
-        applied++;
-        log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
-      } else {
-        failed++;
-        log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé.`);
-      }
+    let reply;
+    try {
+      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1200 });
+    } catch (err) {
+      const msg = err.message || '';
+      const isDeviceLost = /device_removed|device was lost|requestdevice/i.test(msg);
+      log(`⚠️ Échec du premier essai : ${msg}`);
+      discardEngine();
+      if (isDeviceLost) throw err;
+      log('Nouvel essai avec un moteur neuf…');
+      setStatus('Libération de la mémoire GPU avant de réessayer…');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await ensureEngine(modelId);
+      reply = await engine.chat.completions.create({ messages, temperature: 0.2, max_tokens: 1200 });
     }
 
-    log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s).`);
+    const text = reply.choices[0].message.content;
+    log(`Réponse reçue (${text.length} caractères).`);
+
+    const edits = extractJsonArray(text);
+    log(`Le modèle propose ${edits.length} segment(s) à reformuler.`);
+    const applied = applyEdits(editable, edits);
+    log(`${applied} segment(s) modifié(s).`);
 
     if (applied === 0) {
-      setStatus("Aucun segment n'a pu être reformulé — vérifie le journal technique.");
+      setStatus("Le modèle n'a proposé aucune reformulation exploitable — essaie un modèle plus grand.");
       return;
     }
 
@@ -345,10 +360,7 @@ runBtn.addEventListener('click', async () => {
     });
     downloadArea.appendChild(continueBtn);
 
-    const msg = failed > 0
-      ? `Terminé avec ${failed} segment(s) non modifié(s) (voir journal).`
-      : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
-    setStatus(msg);
+    setStatus("Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.");
   } catch (err) {
     console.error(err);
     const msg = err.message || '';
