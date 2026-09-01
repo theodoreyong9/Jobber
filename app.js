@@ -306,14 +306,15 @@ runBtn.addEventListener('click', async () => {
 
     for (let i = 0; i < editable.length; i++) {
       const run = editable[i];
-      // Moteur entièrement neuf pour CHAQUE segment : on a constaté qu'un
-      // deuxième appel enchaîné sur le même moteur juste après un premier
-      // réussi provoque le crash GPU — la mémoire du premier appel n'a
-      // visiblement pas le temps d'être libérée. C'est plus lent (le
-      // modèle reste en cache donc pas de re-téléchargement, mais il y a
-      // une réinitialisation à chaque fois), mais chaque génération repart
-      // d'un état garanti propre.
-      await ensureEngine(modelId, true);
+      // Un seul chargement du moteur pour toute la passe (pas un par
+      // segment) : la mémoire GPU utilisée, c'est essentiellement le poids
+      // du modèle lui-même, constant quelle que soit la taille du texte
+      // généré. Recharger le modèle entier avant chaque segment multiplie
+      // l'opération la plus lourde (charger ~2 Go en mémoire GPU) au lieu
+      // de la faire une fois — ça a empiré les choses à l'usage, on
+      // revient donc à la réutilisation, avec rechargement uniquement en
+      // cas d'échec réel (voir rewriteRunWithRetry).
+      await ensureEngine(modelId);
       setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
       const newText = await rewriteRunWithRetry(run, jobText);
       if (newText && newText.length > 0) {
@@ -323,6 +324,11 @@ runBtn.addEventListener('click', async () => {
       } else {
         failed++;
         log(`  ✗ [${i + 1}/${editable.length}] segment laissé inchangé après échec.`);
+      }
+      // Petite pause entre deux appels : laisse la file de commandes GPU
+      // se vider un peu avant d'enchaîner sur la génération suivante.
+      if (i < editable.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
     }
 
