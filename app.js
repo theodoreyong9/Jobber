@@ -185,6 +185,7 @@ async function initWebLLM(_isRetry) {
 
   webllmLoading = true;
   if (!_isRetry) webllmModelId = resolveModelChoice();
+  modelSelect.disabled = true;
   engineStatusEl.textContent = 'Initialisation…';
   await acquireWakeLock();
 
@@ -207,9 +208,11 @@ async function initWebLLM(_isRetry) {
     webllmReady = true;
     engineStatusEl.textContent = '✅ Modèle chargé (' + webllmModelId + ') — prêt.';
     modelLoadBar.style.width = '100%';
+    modelSelect.disabled = false;
     return engine;
   } catch (e) {
     engineStatusEl.textContent = '❌ Échec du chargement : ' + e.message;
+    modelSelect.disabled = false;
     throw e;
   } finally {
     webllmLoading = false;
@@ -305,16 +308,8 @@ async function loadCvFromArrayBuffer(arrayBuffer, displayName) {
     const editable = runs.filter((r) => r.editable);
     log(`CV chargé : ${runs.length} segments détectés, ${editable.length} identifiés comme du contenu modifiable.`);
     editable.forEach((r) => log(`  → [${r.role}] "${r.text.trim().slice(0, 60)}${r.text.trim().length > 60 ? '…' : ''}"`));
-    setStatus("CV chargé. Colle l'annonce puis lance l'adaptation.");
+    setStatus("CV chargé. Choisis ton modèle ci-dessus si besoin, colle l'offre puis lance l'adaptation.");
     updateRunButton();
-
-    // Préchargement du modèle en tâche de fond : pendant que l'utilisateur
-    // colle l'offre d'emploi, le modèle se télécharge déjà. C'est le plus
-    // gros gain de "performance perçue" par rapport à un chargement lancé
-    // au clic sur "Adapter mon CV".
-    if (!webllmReady && !webllmLoading) {
-      initWebLLM().catch((e) => log('⚠️ Préchargement du modèle échoué : ' + e.message));
-    }
     return true;
   } catch (err) {
     console.error(err);
@@ -427,17 +422,23 @@ function looksLikeContactInfo(text) {
 // d'historique cumulé) — ce qui reste correct pour un modèle local : ça
 // garde chaque prompt court, donc le "prefill" (lecture du prompt avant de
 // pouvoir générer le premier token) reste rapide à chaque segment.
-async function generateText(messages, maxTokens, stopSignal) {
-  const engine = await initWebLLM();
-  const stream = await engine.chat.completions.create({
-    messages,
-    temperature: 0.3,
-    max_tokens: maxTokens,
-    stream: true,
-  });
+// Les erreurs qui remontent d'un Worker (postMessage) ne sont pas toujours
+// de vraies instances Error — certaines implémentations perdent .message
+// en cours de route (structured clone d'un DOMException / erreur WebGPU
+// custom), ce qui donnait "undefined" au lieu du vrai problème. On force
+// systématiquement un message exploitable, et on logge l'objet brut en
+// console pour pouvoir inspecter (F12) ce qu'il contenait vraiment.
+function normalizeError(e, context) {
+  console.error('[WebLLM] erreur brute (' + context + ') :', e);
+  if (e instanceof Error && e.message) return e;
+  let detail;
+  try { detail = JSON.stringify(e); } catch { detail = null; }
+  if (!detail || detail === '{}') detail = String(e);
+  return new Error(context + ' — ' + detail + ' (détails complets dans la console F12)');
+}
 
-  let out = '';
-  const it = stream[Symbol.asyncIterator]();
+async function* withStopSignal(gen, stopSignal) {
+  const it = gen[Symbol.asyncIterator] ? gen[Symbol.asyncIterator]() : gen;
   while (true) {
     let result;
     if (stopSignal) {
@@ -448,10 +449,38 @@ async function generateText(messages, maxTokens, stopSignal) {
     } else {
       result = await it.next();
     }
-    if (result.done) break;
-    const d = result.value.choices?.[0]?.delta?.content || '';
-    out += d;
+    if (result.done) return;
+    yield result.value;
   }
+}
+
+async function generateText(messages, maxTokens, stopSignal) {
+  const engine = await initWebLLM();
+  dlog('chat.completions.create — ' + messages.length + ' messages, max_tokens=' + maxTokens);
+
+  let stream;
+  try {
+    stream = await engine.chat.completions.create({
+      messages,
+      temperature: 0.3,
+      max_tokens: maxTokens,
+      stream: true,
+    });
+  } catch (e) {
+    throw normalizeError(e, 'Échec à la création du flux de génération');
+  }
+
+  let out = '';
+  try {
+    for await (const chunk of withStopSignal(stream, stopSignal)) {
+      const d = chunk.choices?.[0]?.delta?.content || '';
+      out += d;
+    }
+  } catch (e) {
+    if (e && e.message === '__STOPPED_BY_USER__') throw e;
+    throw normalizeError(e, 'Échec pendant le streaming de la réponse');
+  }
+  dlog('segment terminé, ' + out.length + ' caractères générés');
   return out;
 }
 
@@ -516,7 +545,7 @@ runBtn.addEventListener('click', async () => {
   const stopSignal = newStopSignal();
 
   try {
-    await initWebLLM(); // no-op si déjà chargé (préchargé au dépôt du CV)
+    await initWebLLM(); // charge le modèle maintenant si ce n'est pas déjà fait
 
     const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = allRuns.filter((r) => r.editable);
