@@ -158,19 +158,53 @@ async function loadWebllmLib() {
   });
 }
 
-function resolveModelKey() {
+let webllmGpuTierPromise = null;
+
+// Estime une "capacité GPU" réelle à partir des limites WebGPU de
+// l'adaptateur, plutôt que de la RAM système (navigator.deviceMemory —
+// plafonnée à 8 par les navigateurs et SANS AUCUN rapport avec la VRAM
+// réellement disponible pour le GPU). Un laptop avec 16 Go de RAM et une
+// puce graphique intégrée/partagée peut très bien avoir moins de VRAM
+// utilisable qu'un vieux desktop à 8 Go de RAM avec carte dédiée. Se
+// tromper dans ce sens choisit un modèle trop gros ("large", ~5 Go) sur du
+// matériel qui ne peut pas le tenir — ce qui est très probablement la cause
+// des "device lost" / "already disposed" observés : la doc officielle
+// WebLLM indique explicitement que ces erreurs sont "mostly due to OOM" et
+// recommande de recharger avec un modèle plus petit.
+async function detectGpuTier() {
+  if (webllmGpuTierPromise) return webllmGpuTierPromise;
+  webllmGpuTierPromise = (async () => {
+    try {
+      if (!navigator.gpu) return 'small';
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) return 'small';
+      const maxBuffer = adapter.limits?.maxBufferSize || 0;
+      const maxStorage = adapter.limits?.maxStorageBufferBindingSize || 0;
+      dlog(`GPU détecté — maxBufferSize=${(maxBuffer / 1e9).toFixed(2)} Go, maxStorageBufferBindingSize=${(maxStorage / 1e9).toFixed(2)} Go`);
+      // Seuils volontairement conservateurs : mieux vaut un modèle plus
+      // petit mais fiable qu'un modèle plus gros qui fait planter le GPU.
+      if (maxBuffer >= 4e9 && maxStorage >= 2e9) return 'large';
+      if (maxBuffer >= 1.8e9 && maxStorage >= 1e9) return 'medium';
+      return 'small';
+    } catch (e) {
+      dlog('Échec de la détection des capacités GPU (' + (e && e.message) + ') — repli prudent sur "medium".');
+      return 'medium';
+    }
+  })();
+  return webllmGpuTierPromise;
+}
+
+async function resolveModelKey() {
   const choice = modelSelect.value; // 'auto' | 'small' | 'medium' | 'large'
   if (choice !== 'auto') return choice;
 
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-  const mem = navigator.deviceMemory; // plafonné à 8 par les navigateurs, indicatif seulement
   if (isMobile) return 'small';
-  if (typeof mem === 'number' && mem >= 8) return 'large';
-  return 'medium';
+  return detectGpuTier();
 }
 
-function resolveModelChoice() {
-  return MODELS[resolveModelKey()] || MODELS.medium;
+async function resolveModelChoice() {
+  return MODELS[await resolveModelKey()] || MODELS.medium;
 }
 
 // Budget de tokens (entrée + sortie) qu'on s'autorise à utiliser dans un
@@ -228,7 +262,7 @@ async function initWebLLM(_isRetry) {
   if (!gpu.supported) throw new Error(gpu.reason);
 
   webllmLoading = true;
-  if (!_isRetry) { webllmModelKey = resolveModelKey(); webllmModelId = MODELS[webllmModelKey] || resolveModelChoice(); }
+  if (!_isRetry) { webllmModelKey = await resolveModelKey(); webllmModelId = MODELS[webllmModelKey] || MODELS.medium; }
   modelSelect.disabled = true;
   engineStatusEl.textContent = 'Initialisation…';
   await acquireWakeLock();
@@ -565,24 +599,75 @@ function buildSegmentPrompt(run, jobText) {
   ];
 }
 
+const MODEL_TIER_ORDER = ['large', 'medium', 'small'];
+function downgradeModelTier(fromKey) {
+  const idx = MODEL_TIER_ORDER.indexOf(fromKey);
+  if (idx === -1 || idx === MODEL_TIER_ORDER.length - 1) return null; // déjà le plus léger, ou inconnu
+  return MODEL_TIER_ORDER[idx + 1];
+}
+
 // Tente de récupérer un moteur cassé (contexte GPU perdu) — au maximum une
 // fois par passe d'adaptation (voir webllmRecoveryAttemptedThisPass). Les
 // appels suivants dans la même passe réutilisent le résultat de cette
 // unique tentative au lieu de relancer un rechargement complet à chaque
 // segment, ce qui évite d'épuiser les devices WebGPU disponibles.
 async function attemptEngineRecovery() {
-  if (webllmRecoveryAttemptedThisPass) return webllmReady;
+  if (webllmRecoveryAttemptedThisPass) return webllmReady && !webllmIrrecoverable;
   webllmRecoveryAttemptedThisPass = true;
 
   log('  ⚠️ Contexte GPU perdu — rechargement du moteur (une seule tentative pour toute cette passe)…');
   await resetWebllmState();
   updateRunButton();
   try {
-    await initWebLLM();
+    const engine = await initWebLLM();
+    // initWebLLM() peut "réussir" côté JS (CreateWebWorkerMLCEngine résout
+    // sans erreur) alors que le device WebGPU sous-jacent est en réalité
+    // instable au niveau du navigateur/pilote (processus GPU du navigateur
+    // en crash-loop, courant après une première perte de contexte) et
+    // replante dès la toute première vraie inférence. On le vérifie tout de
+    // suite avec un appel minimal, plutôt que de laisser chaque segment
+    // suivant redécouvrir individuellement la même panne (c'est exactement
+    // ce qui produisait des échecs en boucle, quasi instantanés, sur
+    // chaque segment).
+    await engine.chat.completions.create({
+      messages: [{ role: 'user', content: 'ok' }],
+      max_tokens: 1,
+      stream: false,
+    });
     return true;
   } catch (e2) {
-    log('  ⚠️ Échec du rechargement du moteur : ' + e2.message);
-    log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
+    const normalized = normalizeError(e2, 'Échec du rechargement du moteur');
+    log('  ⚠️ Échec du rechargement du moteur (' + webllmModelKey + ') : ' + normalized.message);
+
+    // La doc officielle WebLLM est explicite : un "device lost" est le plus
+    // souvent un problème de VRAM insuffisante ("mostly due to OOM"), et la
+    // recommandation des auteurs est de recharger avec un modèle plus
+    // petit. On applique cette recommandation directement au lieu de
+    // simplement abandonner : un dernier essai avec le palier de modèle en
+    // dessous, avant de déclarer le moteur irrécupérable pour cette passe.
+    const smaller = downgradeModelTier(webllmModelKey);
+    if (smaller) {
+      log(`  ℹ️ Nouvel essai avec un modèle plus léger (${smaller}, ${MODELS[smaller]}) — recommandation officielle de WebLLM après un device-lost.`);
+      webllmModelKey = smaller;
+      webllmModelId = MODELS[smaller];
+      await resetWebllmState();
+      updateRunButton();
+      try {
+        const engine2 = await initWebLLM(true); // true : réutilise webllmModelKey/webllmModelId qu'on vient de fixer
+        await engine2.chat.completions.create({
+          messages: [{ role: 'user', content: 'ok' }],
+          max_tokens: 1,
+          stream: false,
+        });
+        log(`  ✓ Moteur rechargé avec succès avec le modèle plus léger (${smaller}).`);
+        return true;
+      } catch (e3) {
+        const normalized3 = normalizeError(e3, 'Échec du rechargement (modèle allégé)');
+        log('  ⚠️ Échec même avec un modèle plus léger : ' + normalized3.message);
+      }
+    }
+
+    log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet (processus GPU du navigateur probablement instable) — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
     webllmIrrecoverable = true;
     return false;
   }
@@ -611,10 +696,21 @@ async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
     // arrière-plan, veille…). Comme documenté dans le README (mlc-ai/web-llm
     // #486, #560) : on tente UNE récupération pour toute la passe (voir
     // attemptEngineRecovery) et on retente uniquement ce segment.
-    if (isGpuContextLostError(err) && !_isRetry) {
-      const recovered = await attemptEngineRecovery();
-      if (!recovered) return null;
-      return rewriteSegment(run, jobText, stopSignal, true);
+    if (isGpuContextLostError(err)) {
+      if (!_isRetry) {
+        const recovered = await attemptEngineRecovery();
+        if (!recovered) return null; // attemptEngineRecovery a déjà loggé et posé webllmIrrecoverable
+        return rewriteSegment(run, jobText, stopSignal, true);
+      }
+      // Même après une récupération validée (voir attemptEngineRecovery),
+      // ce segment précis replante à nouveau avec une erreur de type
+      // "contexte GPU perdu". Inutile de laisser chaque segment suivant
+      // redécouvrir individuellement la même panne : on arrête les
+      // tentatives pour le reste de cette passe, tout de suite.
+      log(`  ⚠️ Échec sur ce segment (même après rechargement) : ${err.message}`);
+      log('  ℹ️ Le moteur rechargé replante à nouveau — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
+      webllmIrrecoverable = true;
+      return null;
     }
 
     log(`  ⚠️ Échec sur ce segment : ${err.message}`);
