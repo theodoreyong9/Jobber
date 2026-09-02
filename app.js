@@ -59,6 +59,7 @@ const MODELS = {
 };
 
 let webllmModelId = null; // résolu par resolveModelChoice()
+let webllmModelKey = null; // 'small' | 'medium' | 'large' — sert à estimer la fenêtre de contexte
 let webllmWorker = null;
 let webllmEngine = null;
 let webllmReady = false;
@@ -132,15 +133,33 @@ async function loadWebllmLib() {
   });
 }
 
-function resolveModelChoice() {
+function resolveModelKey() {
   const choice = modelSelect.value; // 'auto' | 'small' | 'medium' | 'large'
-  if (choice !== 'auto') return MODELS[choice] || MODELS.medium;
+  if (choice !== 'auto') return choice;
 
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
   const mem = navigator.deviceMemory; // plafonné à 8 par les navigateurs, indicatif seulement
-  if (isMobile) return MODELS.small;
-  if (typeof mem === 'number' && mem >= 8) return MODELS.large;
-  return MODELS.medium;
+  if (isMobile) return 'small';
+  if (typeof mem === 'number' && mem >= 8) return 'large';
+  return 'medium';
+}
+
+function resolveModelChoice() {
+  return MODELS[resolveModelKey()] || MODELS.medium;
+}
+
+// Budget de tokens (entrée + sortie) qu'on s'autorise à utiliser dans un
+// seul appel groupé, par modèle. Volontairement conservateur : c'est une
+// estimation grossière (pas de vrai tokenizer côté app), pour rester loin
+// de la fenêtre de contexte réelle du modèle plutôt que de la frôler.
+const CONTEXT_BUDGET_TOKENS = { small: 1600, medium: 3000, large: 6000 };
+function getContextBudget() {
+  return CONTEXT_BUDGET_TOKENS[webllmModelKey] || 2000;
+}
+
+// Estimation grossière : ~4 caractères par token pour du texte latin.
+function estimateTokens(text) {
+  return Math.ceil((text || '').length / 4);
 }
 
 async function checkWebGpuSupport() {
@@ -184,7 +203,7 @@ async function initWebLLM(_isRetry) {
   if (!gpu.supported) throw new Error(gpu.reason);
 
   webllmLoading = true;
-  if (!_isRetry) webllmModelId = resolveModelChoice();
+  if (!_isRetry) { webllmModelKey = resolveModelKey(); webllmModelId = MODELS[webllmModelKey] || resolveModelChoice(); }
   modelSelect.disabled = true;
   engineStatusEl.textContent = 'Initialisation…';
   await acquireWakeLock();
@@ -209,6 +228,7 @@ async function initWebLLM(_isRetry) {
     engineStatusEl.textContent = '✅ Modèle chargé (' + webllmModelId + ') — prêt.';
     modelLoadBar.style.width = '100%';
     modelSelect.disabled = false;
+    updateRunButton();
     return engine;
   } catch (e) {
     engineStatusEl.textContent = '❌ Échec du chargement : ' + e.message;
@@ -236,6 +256,7 @@ modelSelect.addEventListener('change', () => {
     resetWebllmState();
     engineStatusEl.textContent = 'Modèle changé — recharge-le avant de lancer une adaptation.';
     modelLoadBar.style.width = '0%';
+    updateRunButton();
   }
 });
 
@@ -348,7 +369,7 @@ jobTextEl.addEventListener('input', () => {
 });
 
 function updateRunButton() {
-  runBtn.disabled = !docState || jobTextEl.value.trim().length === 0;
+  runBtn.disabled = !docState || jobTextEl.value.trim().length === 0 || !webllmReady;
 }
 
 // ==== 2. Extraction des "runs" (segments) du document.xml ====
@@ -495,16 +516,143 @@ function buildSegmentPrompt(run, jobText) {
   ];
 }
 
-async function rewriteSegment(run, jobText, stopSignal) {
+async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
   const messages = buildSegmentPrompt(run, jobText);
   try {
     const text = await generateText(messages, 200, stopSignal);
     return text.trim().replace(/^["«]|["»]$/g, '');
   } catch (err) {
     if (err.message === '__STOPPED_BY_USER__') throw err;
+
+    // "Object has already been disposed" / device lost : le contexte GPU a
+    // pu être coupé entre le chargement du modèle et cet appel (onglet en
+    // arrière-plan, veille…). Comme documenté dans le README (mlc-ai/web-llm
+    // #486, #560) : on recrée un moteur neuf et on retente UNIQUEMENT ce
+    // segment, une fois — pas toute la passe.
+    if (isGpuContextLostError(err) && !_isRetry) {
+      log('  ⚠️ Contexte GPU perdu sur ce segment — rechargement du moteur et nouvelle tentative…');
+      resetWebllmState();
+      updateRunButton();
+      try {
+        await initWebLLM();
+      } catch (e2) {
+        log('  ⚠️ Échec du rechargement du moteur : ' + e2.message);
+        return null;
+      }
+      return rewriteSegment(run, jobText, stopSignal, true);
+    }
+
     log(`  ⚠️ Échec sur ce segment : ${err.message}`);
     return null;
   }
+}
+
+// ==== 5bis. Reformulation groupée (un seul appel pour plusieurs segments) ==
+// Au lieu d'un appel par segment, on envoie plusieurs extraits numérotés
+// dans un seul prompt et on demande une réponse avec un marqueur simple
+// (###N###) par extrait — plus robuste à parser qu'un JSON pour un petit
+// modèle local quantifié. Le code garde la main sur le mapping (quel texte
+// va dans quel run XML) via ce numéro, jamais via l'ordre "au jugé".
+const BATCH_REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne une offre d'emploi et plusieurs extraits numérotés d'un CV. Pour CHAQUE extrait, reformule-le pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer un extrait, renvoie-le tel quel.
+
+Réponds en respectant EXACTEMENT ce format, un bloc par extrait, dans le même ordre, sans aucun texte avant, après, ni entre les blocs à part le marqueur :
+###1###
+texte reformulé de l'extrait 1
+###2###
+texte reformulé de l'extrait 2
+(un bloc ###N### pour chaque extrait fourni, aucun extrait omis, aucun extrait ajouté)`;
+
+function buildBatchPrompt(batch, jobText) {
+  const body = batch.map((r, i) => `###${i + 1}### [section "${r.section}"]\n${r.text.trim()}`).join('\n\n');
+  const user = `--- OFFRE D'EMPLOI ---\n${jobText}\n\n--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
+  return [
+    { role: 'system', content: BATCH_REWRITE_SYSTEM_PROMPT },
+    { role: 'user', content: user },
+  ];
+}
+
+function parseBatchResponse(raw, expectedCount) {
+  const parts = String(raw || '').split(/###\s*(\d+)\s*###/).slice(1);
+  const map = {};
+  for (let i = 0; i < parts.length; i += 2) {
+    const num = parseInt(parts[i], 10);
+    const text = (parts[i + 1] || '').trim().replace(/^["«]|["»]$/g, '');
+    if (num >= 1 && text) map[num] = text;
+  }
+  const results = [];
+  for (let i = 1; i <= expectedCount; i++) results.push(map[i] || null);
+  return results;
+}
+
+// Découpe la liste d'extraits en lots qui tiennent dans le budget de
+// contexte estimé du modèle choisi. Pour un CV normal avec un modèle
+// medium/large, tout tient en général dans un seul lot.
+function buildBatches(editable, jobText) {
+  const budget = getContextBudget();
+  const reserved = estimateTokens(jobText) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
+  const perBatchBudget = Math.max(budget - reserved, 400);
+
+  const batches = [];
+  let current = [];
+  let currentTokens = 0;
+  for (const run of editable) {
+    // Un extrait consomme environ (texte en entrée) + (texte en sortie, ~même longueur).
+    const segTokens = estimateTokens(run.text) * 2 + 20;
+    if (current.length > 0 && currentTokens + segTokens > perBatchBudget) {
+      batches.push(current);
+      current = [];
+      currentTokens = 0;
+    }
+    current.push(run);
+    currentTokens += segTokens;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+// Reformule tous les segments modifiables. Essaie de grouper en un minimum
+// d'appels LLM (idéalement un seul) ; tout ce qui manque ou échoue dans un
+// lot repasse automatiquement en appel individuel (rewriteSegment), pour
+// ne jamais perdre un segment à cause d'un souci de format de réponse.
+async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
+  const results = new Array(editable.length).fill(null);
+  const batches = buildBatches(editable, jobText);
+  log(`Découpage en ${batches.length} appel(s) groupé(s) pour ${editable.length} segment(s) (au lieu d'un appel par segment).`);
+
+  let offset = 0;
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    setStatus(`Reformulation groupée ${b + 1}/${batches.length} (${batch.length} extrait(s))…`);
+    try {
+      const messages = buildBatchPrompt(batch, jobText);
+      const maxTokens = Math.min(batch.reduce((n, r) => n + estimateTokens(r.text) * 2 + 20, 0), 3800);
+      const raw = await generateText(messages, maxTokens, stopSignal);
+      const parsed = parseBatchResponse(raw, batch.length);
+      parsed.forEach((text, i) => { results[offset + i] = text; });
+      const missing = parsed.filter((t) => !t).length;
+      if (missing > 0) {
+        log(`  ⚠️ Réponse groupée incomplète (${missing}/${batch.length} extrait(s) manquant(s)) — repli individuel pour ceux-là.`);
+      } else {
+        log(`  ✓ Lot ${b + 1}/${batches.length} : ${batch.length} extrait(s) reformulé(s) en un seul appel.`);
+      }
+    } catch (err) {
+      if (err.message === '__STOPPED_BY_USER__') throw err;
+      log(`  ⚠️ Échec de l'appel groupé (lot ${b + 1}/${batches.length}) : ${err.message} — repli individuel pour ce lot.`);
+    }
+    offset += batch.length;
+    if (onProgress) onProgress(offset, editable.length);
+  }
+
+  // Filet de sécurité : tout ce qui n'a pas été rempli par un appel groupé
+  // repasse en appel individuel classique (rewriteSegment), y compris son
+  // propre retry sur perte de contexte GPU.
+  for (let i = 0; i < editable.length; i++) {
+    if (results[i]) continue;
+    setStatus(`Reformulation individuelle ${i + 1}/${editable.length} (repli)…`);
+    results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
+    if (onProgress) onProgress(i + 1, editable.length);
+  }
+  return results;
 }
 
 // ==== 6. Application d'une réécriture dans le XML ====
@@ -554,12 +702,13 @@ runBtn.addEventListener('click', async () => {
     let applied = 0;
     let failed = 0;
 
+    const results = await rewriteAllSegments(editable, jobText, stopSignal, (done, total) => {
+      progressBar.style.width = Math.round((done / total) * 100) + '%';
+    });
+
     for (let i = 0; i < editable.length; i++) {
       const run = editable[i];
-      const pct = Math.round((i / editable.length) * 100);
-      progressBar.style.width = pct + '%';
-      setStatus(`Reformulation ${i + 1}/${editable.length} (${run.section})…`);
-      const newText = await rewriteSegment(run, jobText, stopSignal);
+      const newText = results[i];
       if (newText && newText.length > 0) {
         setRunText(run.node, newText);
         applied++;
