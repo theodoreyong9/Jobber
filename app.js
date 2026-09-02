@@ -71,6 +71,9 @@ let webllmLoading = false;
 // du modèle (coûteux) sur chacun des segments restants : on l'affiche
 // clairement une seule fois et on laisse le reste inchangé rapidement.
 let webllmIrrecoverable = false;
+// Verrou dédié à la durée totale d'une passe d'adaptation (clic sur
+// "Adapter mon CV" jusqu'au bout, succès ou échec) — voir updateRunButton().
+let adaptationInProgress = false;
 // Garantit UN SEUL rechargement complet du moteur par passe d'adaptation,
 // même si plusieurs segments échouent d'affilée à cause du même contexte
 // GPU perdu. Avant ce garde-fou, chaque segment en échec déclenchait sa
@@ -78,11 +81,13 @@ let webllmIrrecoverable = false;
 // WebGPU), et ces rechargements en rafale épuisaient les devices WebGPU
 // disponibles au lieu de simplement récupérer un seul contexte perdu.
 let webllmRecoveryAttemptsThisPass = 0;
-// Certains GPU/pilotes (observé notamment sur Windows) peuvent perdre le
-// contexte WebGPU plusieurs fois au cours d'une même passe, pas qu'une
-// seule. On autorise un budget généreux de rechargements par "sweep" (voir
-// MAX_SWEEPS dans rewriteAllSegments : chaque sweep reçoit son propre
-// budget neuf) plutôt que de plafonner tout court à 1 ou 2 tentatives.
+// Budget GLOBAL de rechargements de moteur pour TOUTE l'adaptation (voir
+// rewriteAllSegments : ce budget n'est plus jamais remis à neuf en cours de
+// route). Chaque rechargement consomme un "device" WebGPU auprès du
+// navigateur ; en accorder trop finit par épuiser le pool disponible
+// ("Unable to find a compatible GPU"), un état qui ne se résout ensuite
+// qu'en rechargeant la page entière. 6 recharges complètes pour une seule
+// adaptation est déjà généreux.
 const MAX_ENGINE_RECOVERIES_PER_PASS = 6;
 let wakeLock = null;
 let stopSignalResolve = null;
@@ -111,7 +116,7 @@ function releaseWakeLock() {
 
 function isGpuContextLostError(e) {
   const msg = String(e && e.message || e || '');
-  return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed/i.test(msg);
+  return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed|compatible GPU|doesn't have a GPU|Unable to find a compatible/i.test(msg);
 }
 
 // Petit utilitaire d'attente, utilisé comme "backoff" entre deux tentatives
@@ -454,7 +459,12 @@ jobTextEl.addEventListener('input', () => {
 });
 
 function updateRunButton() {
-  runBtn.disabled = !docState || jobTextEl.value.trim().length === 0 || !webllmReady;
+  // adaptationInProgress prime sur tout le reste : sans ce verrou dédié, le
+  // bouton se réactivait dès qu'un rechargement interne du moteur GPU
+  // réussissait (webllmReady redevient true), y compris EN PLEIN MILIEU
+  // d'une passe d'adaptation — un ré-clic pendant ce court instant relance
+  // une 2e passe en parallèle sur le même docState, ce qui corrompt tout.
+  runBtn.disabled = adaptationInProgress || !docState || jobTextEl.value.trim().length === 0 || !webllmReady;
 }
 
 // ==== 2. Extraction des "runs" (segments) du document.xml ====
@@ -629,13 +639,13 @@ function downgradeModelTier(fromKey) {
 // irrécupérable.
 async function attemptEngineRecovery() {
   if (webllmRecoveryAttemptsThisPass >= MAX_ENGINE_RECOVERIES_PER_PASS) {
-    log(`  ⚠️ Contexte GPU reperdu, mais le plafond de ${MAX_ENGINE_RECOVERIES_PER_PASS} rechargements pour cette passe est atteint — abandon pour les segments restants.`);
+    log(`  ⚠️ Contexte GPU reperdu, mais le plafond de ${MAX_ENGINE_RECOVERIES_PER_PASS} rechargements pour toute l'adaptation est atteint — abandon pour les segments restants (recharge la page pour repartir à neuf).`);
     webllmIrrecoverable = true;
     return false;
   }
   webllmRecoveryAttemptsThisPass++;
 
-  log(`  ⚠️ Contexte GPU perdu — rechargement du moteur (tentative ${webllmRecoveryAttemptsThisPass}/${MAX_ENGINE_RECOVERIES_PER_PASS} pour cette passe)…`);
+  log(`  ⚠️ Contexte GPU perdu — rechargement du moteur (tentative ${webllmRecoveryAttemptsThisPass}/${MAX_ENGINE_RECOVERIES_PER_PASS} pour toute l'adaptation)…`);
   await resetWebllmState();
   updateRunButton();
   // Laisse le pilote GPU quelques instants pour vraiment libérer le device
@@ -733,7 +743,7 @@ async function rewriteSegment(run, jobText, stopSignal, _attempt) {
     if (isGpuContextLostError(err)) {
       if (attempt < MAX_SEGMENT_ATTEMPTS) {
         const recovered = await attemptEngineRecovery();
-        if (!recovered) return null; // budget de récupération épuisé pour cette passe — la prochaine reprise réessaiera avec un budget neuf
+        if (!recovered) return null; // budget de récupération épuisé pour toute l'adaptation — plus aucune reprise ne sera tentée
         await sleep(800); // laisse le device tout juste rechargé se stabiliser avant une vraie inférence
         return rewriteSegment(run, jobText, stopSignal, attempt + 1);
       }
@@ -878,17 +888,27 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     for (let i = 0; i < editable.length; i++) if (!results[i]) pendingIdx.push(i);
     if (pendingIdx.length === 0) break;
 
-    sweep++;
-    log(`↻ Reprise ${sweep}/${MAX_SWEEPS} : ${pendingIdx.length} segment(s) encore en échec — nouvelle tentative avec un moteur neuf.`);
-    setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — ${pendingIdx.length} segment(s) restant(s)…`);
+    // Le budget de rechargement GPU (voir MAX_ENGINE_RECOVERIES_PER_PASS)
+    // est volontairement GLOBAL pour toute l'adaptation, pas remis à neuf à
+    // chaque reprise : chaque rechargement de moteur consomme un "device"
+    // WebGPU, et en accorder un budget neuf à chaque reprise peut en
+    // demander des dizaines au total sur une même page, ce qui épuise le
+    // pool de devices du navigateur ("Unable to find a compatible GPU") —
+    // un état qui ne se résout ensuite qu'en rechargeant la page entière.
+    // Si le budget global est épuisé, inutile de faire tourner encore des
+    // reprises à vide : on s'arrête net, tout de suite.
+    if (webllmIrrecoverable) {
+      log('↻ Budget de rechargement GPU épuisé pour cette adaptation — arrêt des reprises (recharge la page pour repartir à neuf).');
+      break;
+    }
 
-    // Budget de récupération GPU neuf pour cette reprise : un plantage lors
-    // d'une reprise précédente ne doit pas condamner celle-ci d'avance.
-    webllmIrrecoverable = false;
-    webllmRecoveryAttemptsThisPass = 0;
+    sweep++;
+    log(`↻ Reprise ${sweep}/${MAX_SWEEPS} : ${pendingIdx.length} segment(s) encore en échec — nouvelle tentative.`);
+    setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — ${pendingIdx.length} segment(s) restant(s)…`);
     await sleep(1500 * sweep); // backoff croissant : laisse le pilote GPU respirer entre les reprises
 
     for (const i of pendingIdx) {
+      if (webllmIrrecoverable) break; // le budget a pu s'épuiser en cours de reprise
       setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — segment ${pendingIdx.indexOf(i) + 1}/${pendingIdx.length}…`);
       results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
       reportProgress();
@@ -938,6 +958,8 @@ async function packageDocx() {
 
 // ==== 8. Orchestration principale ====
 runBtn.addEventListener('click', async () => {
+  if (adaptationInProgress) return; // garde-fou : un double-clic ne doit jamais lancer 2 passes en parallèle
+  adaptationInProgress = true;
   runBtn.disabled = true;
   stopBtn.hidden = false;
   downloadArea.innerHTML = '';
@@ -985,8 +1007,14 @@ runBtn.addEventListener('click', async () => {
     log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s).`);
 
     if (applied === 0) {
-      setStatus("Aucun segment n'a pu être reformulé — vérifie le journal technique.");
-      return;
+      // Même si rien n'a pu être reformulé (ex. GPU épuisé en cours de
+      // route), on propose quand même le fichier : au pire il est identique
+      // à l'original (inoffensif), au mieux l'utilisateur peut relancer
+      // "Adapter mon CV" sur ce même document pour retenter. Ne rien
+      // produire du tout est la pire expérience possible après une longue
+      // attente.
+      log('⚠️ Aucun segment reformulé — le .docx proposé ci-dessous est identique au CV original.');
+      setStatus("Aucun segment n'a pu être reformulé (voir journal) — le CV original reste néanmoins disponible ci-dessous. Tu peux relancer « Adapter mon CV » pour retenter.");
     }
 
     setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
@@ -1028,6 +1056,7 @@ runBtn.addEventListener('click', async () => {
       setStatus('Erreur : ' + err.message);
     }
   } finally {
+    adaptationInProgress = false;
     runBtn.disabled = false;
     stopBtn.hidden = true;
     updateRunButton();
