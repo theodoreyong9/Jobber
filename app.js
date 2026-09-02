@@ -843,12 +843,7 @@ function setRunText(rNode, newText) {
 
 // ==== 7. Génération du fichier .docx modifié ====
 async function packageDocx() {
-  let serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
-  // Certains moteurs (Firefox notamment) réintroduisent déjà une déclaration
-  // XML en tête quand on sérialise un Document entier. On la retire pour ne
-  // jamais en avoir deux, ce qui corromprait le document.xml (Word refuse
-  // alors d'ouvrir le fichier ou propose une réparation).
-  serialized = serialized.replace(/^\uFEFF?<\?xml[^>]*\?>\s*/i, '');
+  const serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
   const withDeclaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' + serialized;
   docState.zip.file('word/document.xml', withDeclaration);
   return docState.zip.generateAsync({
