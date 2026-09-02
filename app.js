@@ -116,7 +116,7 @@ function releaseWakeLock() {
 
 function isGpuContextLostError(e) {
   const msg = String(e && e.message || e || '');
-  return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed|compatible GPU|doesn't have a GPU|Unable to find a compatible/i.test(msg);
+  return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed|compatible GPU|doesn't have a GPU|Unable to find a compatible|ModelNotLoadedError|not loaded before/i.test(msg);
 }
 
 // Petit utilitaire d'attente, utilisé comme "backoff" entre deux tentatives
@@ -668,6 +668,14 @@ async function attemptEngineRecovery() {
       max_tokens: 1,
       stream: false,
     });
+    // Petit délai de stabilisation : sur certaines machines, le Worker
+    // répond "prêt" et ce tout premier appel minimal réussit, mais un vrai
+    // appel (prompt système + extrait de CV, quelques centaines de tokens)
+    // lancé immédiatement après échoue encore avec "ModelNotLoadedError" —
+    // signe que l'état interne du moteur n'est pas encore complètement
+    // stabilisé juste après un rechargement. Cette pause réduit nettement
+    // le risque de retomber dessus dès le tout prochain segment.
+    await sleep(600);
     return true;
   } catch (e2) {
     const normalized = normalizeError(e2, 'Échec du rechargement du moteur');
@@ -934,6 +942,7 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
       setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — segment ${pendingIdx.indexOf(i) + 1}/${pendingIdx.length}…`);
       results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
       reportProgress();
+      await sleep(300); // même pause proactive que les autres boucles d'appels
     }
   }
 
