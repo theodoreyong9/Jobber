@@ -71,6 +71,13 @@ let webllmLoading = false;
 // du modèle (coûteux) sur chacun des segments restants : on l'affiche
 // clairement une seule fois et on laisse le reste inchangé rapidement.
 let webllmIrrecoverable = false;
+// Garantit UN SEUL rechargement complet du moteur par passe d'adaptation,
+// même si plusieurs segments échouent d'affilée à cause du même contexte
+// GPU perdu. Avant ce garde-fou, chaque segment en échec déclenchait sa
+// propre tentative de rechargement complet (nouveau Worker + nouveau device
+// WebGPU), et ces rechargements en rafale épuisaient les devices WebGPU
+// disponibles au lieu de simplement récupérer un seul contexte perdu.
+let webllmRecoveryAttemptedThisPass = false;
 let wakeLock = null;
 let stopSignalResolve = null;
 
@@ -101,11 +108,22 @@ function isGpuContextLostError(e) {
   return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed/i.test(msg);
 }
 
-function resetWebllmState() {
+async function resetWebllmState() {
   webllmReady = false;
+  const engine = webllmEngine;
+  const worker = webllmWorker;
   webllmEngine = null;
-  try { webllmWorker?.terminate(); } catch {}
   webllmWorker = null;
+  // Libère proprement la mémoire GPU du modèle AVANT de couper le Worker.
+  // Un simple worker.terminate() ne garantit pas que le driver WebGPU
+  // récupère immédiatement les buffers du modèle (potentiellement plusieurs
+  // centaines de Mo à quelques Go de VRAM) — la libération peut être
+  // asynchrone/différée. Sans ce unload() explicite, des rechargements
+  // répétés en succession rapide finissent par épuiser les devices WebGPU
+  // disponibles ("Unable to find a compatible GPU"), ce qui est exactement
+  // le symptôme observé après plusieurs tentatives de récupération.
+  try { await engine?.unload(); } catch {}
+  try { worker?.terminate(); } catch {}
 }
 
 // Le Worker dédié est essentiel : sans lui, l'inférence WebGPU bloque le
@@ -223,7 +241,7 @@ async function initWebLLM(_isRetry) {
     } catch (e) {
       if (isGpuContextLostError(e) && !_isRetry) {
         console.warn('Contexte GPU perdu pendant le chargement, nouvelle tentative…');
-        resetWebllmState();
+        await resetWebllmState();
         engineStatusEl.textContent = 'Contexte GPU perdu — nouvelle tentative…';
         webllmLoading = false;
         return await initWebLLM(true);
@@ -269,10 +287,12 @@ modelSelect.addEventListener('change', () => {
   localStorage.setItem('cvAdapterModelChoice', modelSelect.value);
   // Un changement de modèle après coup nécessite de recharger le moteur.
   if (webllmReady) {
-    resetWebllmState();
-    engineStatusEl.textContent = 'Modèle changé — recharge-le avant de lancer une adaptation.';
+    engineStatusEl.textContent = 'Modèle changé — libération du précédent…';
     modelLoadBar.style.width = '0%';
-    updateRunButton();
+    resetWebllmState().then(() => {
+      engineStatusEl.textContent = 'Modèle changé — recharge-le avant de lancer une adaptation.';
+      updateRunButton();
+    });
   }
 });
 
@@ -545,6 +565,29 @@ function buildSegmentPrompt(run, jobText) {
   ];
 }
 
+// Tente de récupérer un moteur cassé (contexte GPU perdu) — au maximum une
+// fois par passe d'adaptation (voir webllmRecoveryAttemptedThisPass). Les
+// appels suivants dans la même passe réutilisent le résultat de cette
+// unique tentative au lieu de relancer un rechargement complet à chaque
+// segment, ce qui évite d'épuiser les devices WebGPU disponibles.
+async function attemptEngineRecovery() {
+  if (webllmRecoveryAttemptedThisPass) return webllmReady;
+  webllmRecoveryAttemptedThisPass = true;
+
+  log('  ⚠️ Contexte GPU perdu — rechargement du moteur (une seule tentative pour toute cette passe)…');
+  await resetWebllmState();
+  updateRunButton();
+  try {
+    await initWebLLM();
+    return true;
+  } catch (e2) {
+    log('  ⚠️ Échec du rechargement du moteur : ' + e2.message);
+    log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
+    webllmIrrecoverable = true;
+    return false;
+  }
+}
+
 async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
   if (webllmIrrecoverable) {
     // Le moteur a déjà échoué à se relancer sur un segment précédent de
@@ -566,20 +609,11 @@ async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
     // "Object has already been disposed" / device lost : le contexte GPU a
     // pu être coupé entre le chargement du modèle et cet appel (onglet en
     // arrière-plan, veille…). Comme documenté dans le README (mlc-ai/web-llm
-    // #486, #560) : on recrée un moteur neuf et on retente UNIQUEMENT ce
-    // segment, une fois — pas toute la passe.
+    // #486, #560) : on tente UNE récupération pour toute la passe (voir
+    // attemptEngineRecovery) et on retente uniquement ce segment.
     if (isGpuContextLostError(err) && !_isRetry) {
-      log('  ⚠️ Contexte GPU perdu sur ce segment — rechargement du moteur et nouvelle tentative…');
-      resetWebllmState();
-      updateRunButton();
-      try {
-        await initWebLLM();
-      } catch (e2) {
-        log('  ⚠️ Échec du rechargement du moteur : ' + e2.message);
-        log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
-        webllmIrrecoverable = true;
-        return null;
-      }
+      const recovered = await attemptEngineRecovery();
+      if (!recovered) return null;
       return rewriteSegment(run, jobText, stopSignal, true);
     }
 
@@ -729,6 +763,12 @@ runBtn.addEventListener('click', async () => {
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
+
+  // Chaque nouvelle passe repart avec son propre "droit" à une tentative de
+  // récupération GPU — sinon un souci définitivement réglé (page rechargée,
+  // modèle re-choisi...) resterait bloqué par l'état d'une passe précédente.
+  webllmIrrecoverable = false;
+  webllmRecoveryAttemptedThisPass = false;
 
   const jobText = jobTextEl.value.trim();
   const stopSignal = newStopSignal();
