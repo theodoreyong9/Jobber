@@ -77,7 +77,13 @@ let webllmIrrecoverable = false;
 // propre tentative de rechargement complet (nouveau Worker + nouveau device
 // WebGPU), et ces rechargements en rafale épuisaient les devices WebGPU
 // disponibles au lieu de simplement récupérer un seul contexte perdu.
-let webllmRecoveryAttemptedThisPass = false;
+let webllmRecoveryAttemptsThisPass = 0;
+// Certains GPU/pilotes (observé notamment sur Windows) peuvent perdre le
+// contexte WebGPU plusieurs fois au cours d'une même passe, pas qu'une
+// seule. On autorise un budget généreux de rechargements par "sweep" (voir
+// MAX_SWEEPS dans rewriteAllSegments : chaque sweep reçoit son propre
+// budget neuf) plutôt que de plafonner tout court à 1 ou 2 tentatives.
+const MAX_ENGINE_RECOVERIES_PER_PASS = 6;
 let wakeLock = null;
 let stopSignalResolve = null;
 
@@ -106,6 +112,15 @@ function releaseWakeLock() {
 function isGpuContextLostError(e) {
   const msg = String(e && e.message || e || '');
   return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed/i.test(msg);
+}
+
+// Petit utilitaire d'attente, utilisé comme "backoff" entre deux tentatives
+// de rechargement du moteur : retenter instantanément juste après un
+// device-lost retombe souvent sur le même souci (pilote GPU pas encore
+// stabilisé) — laisser quelques centaines de ms/secondes au navigateur
+// augmente nettement les chances qu'un rechargement tienne.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function resetWebllmState() {
@@ -606,18 +621,27 @@ function downgradeModelTier(fromKey) {
   return MODEL_TIER_ORDER[idx + 1];
 }
 
-// Tente de récupérer un moteur cassé (contexte GPU perdu) — au maximum une
-// fois par passe d'adaptation (voir webllmRecoveryAttemptedThisPass). Les
-// appels suivants dans la même passe réutilisent le résultat de cette
-// unique tentative au lieu de relancer un rechargement complet à chaque
-// segment, ce qui évite d'épuiser les devices WebGPU disponibles.
+// Tente de récupérer un moteur cassé (contexte GPU perdu) — jusqu'à
+// MAX_ENGINE_RECOVERIES_PER_PASS fois par passe d'adaptation. Au-delà de ce
+// plafond, les appels suivants dans la même passe abandonnent directement
+// au lieu de relancer un rechargement complet à chaque segment, ce qui
+// évite d'épuiser les devices WebGPU disponibles si le GPU est vraiment
+// irrécupérable.
 async function attemptEngineRecovery() {
-  if (webllmRecoveryAttemptedThisPass) return webllmReady && !webllmIrrecoverable;
-  webllmRecoveryAttemptedThisPass = true;
+  if (webllmRecoveryAttemptsThisPass >= MAX_ENGINE_RECOVERIES_PER_PASS) {
+    log(`  ⚠️ Contexte GPU reperdu, mais le plafond de ${MAX_ENGINE_RECOVERIES_PER_PASS} rechargements pour cette passe est atteint — abandon pour les segments restants.`);
+    webllmIrrecoverable = true;
+    return false;
+  }
+  webllmRecoveryAttemptsThisPass++;
 
-  log('  ⚠️ Contexte GPU perdu — rechargement du moteur (une seule tentative pour toute cette passe)…');
+  log(`  ⚠️ Contexte GPU perdu — rechargement du moteur (tentative ${webllmRecoveryAttemptsThisPass}/${MAX_ENGINE_RECOVERIES_PER_PASS} pour cette passe)…`);
   await resetWebllmState();
   updateRunButton();
+  // Laisse le pilote GPU quelques instants pour vraiment libérer le device
+  // avant de tenter d'en recréer un — retenter à chaud, immédiatement après
+  // un device-lost, retombe souvent sur le même souci.
+  await sleep(1200);
   try {
     const engine = await initWebLLM();
     // initWebLLM() peut "réussir" côté JS (CreateWebWorkerMLCEngine résout
@@ -673,14 +697,23 @@ async function attemptEngineRecovery() {
   }
 }
 
-async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
+// Nombre de tentatives internes à UN appel de rewriteSegment (indépendant
+// des "reprises" globales de rewriteAllSegments, voir MAX_SWEEPS). Comme il
+// n'y a pas de contrainte de temps/quota, on est volontairement généreux :
+// mieux vaut quelques secondes de plus que perdre un segment pour de bon.
+const MAX_SEGMENT_ATTEMPTS = 3;
+
+async function rewriteSegment(run, jobText, stopSignal, _attempt) {
+  const attempt = _attempt || 1;
   if (webllmIrrecoverable) {
     // Le moteur a déjà échoué à se relancer sur un segment précédent de
     // cette même passe : inutile de retenter un rechargement complet du
     // modèle (potentiellement plusieurs centaines de Mo) qui échouera à
     // nouveau — on le dit une fois clairement plutôt que de faire perdre du
-    // temps à l'utilisateur sur chaque segment restant.
-    log('  ⚠️ Moteur GPU indisponible (échec précédent) — segment laissé inchangé sans nouvelle tentative.');
+    // temps à l'utilisateur sur chaque segment restant. Ce segment sera
+    // retenté lors de la prochaine reprise globale (voir MAX_SWEEPS), avec
+    // un budget de récupération neuf.
+    log('  ⚠️ Moteur GPU indisponible (échec précédent) — segment laissé en attente pour la prochaine reprise.');
     return null;
   }
 
@@ -694,22 +727,17 @@ async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
     // "Object has already been disposed" / device lost : le contexte GPU a
     // pu être coupé entre le chargement du modèle et cet appel (onglet en
     // arrière-plan, veille…). Comme documenté dans le README (mlc-ai/web-llm
-    // #486, #560) : on tente UNE récupération pour toute la passe (voir
-    // attemptEngineRecovery) et on retente uniquement ce segment.
+    // #486, #560) : on tente une récupération (voir attemptEngineRecovery,
+    // budgétée par passe) et on retente ce même segment, jusqu'à
+    // MAX_SEGMENT_ATTEMPTS fois avant de le laisser à la reprise suivante.
     if (isGpuContextLostError(err)) {
-      if (!_isRetry) {
+      if (attempt < MAX_SEGMENT_ATTEMPTS) {
         const recovered = await attemptEngineRecovery();
-        if (!recovered) return null; // attemptEngineRecovery a déjà loggé et posé webllmIrrecoverable
-        return rewriteSegment(run, jobText, stopSignal, true);
+        if (!recovered) return null; // budget de récupération épuisé pour cette passe — la prochaine reprise réessaiera avec un budget neuf
+        await sleep(800); // laisse le device tout juste rechargé se stabiliser avant une vraie inférence
+        return rewriteSegment(run, jobText, stopSignal, attempt + 1);
       }
-      // Même après une récupération validée (voir attemptEngineRecovery),
-      // ce segment précis replante à nouveau avec une erreur de type
-      // "contexte GPU perdu". Inutile de laisser chaque segment suivant
-      // redécouvrir individuellement la même panne : on arrête les
-      // tentatives pour le reste de cette passe, tout de suite.
-      log(`  ⚠️ Échec sur ce segment (même après rechargement) : ${err.message}`);
-      log('  ℹ️ Le moteur rechargé replante à nouveau — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
-      webllmIrrecoverable = true;
+      log(`  ⚠️ Échec persistant sur ce segment après ${attempt} tentatives : ${err.message} — laissé en attente pour la prochaine reprise.`);
       return null;
     }
 
@@ -785,10 +813,24 @@ function buildBatches(editable, jobText) {
 // d'appels LLM (idéalement un seul) ; tout ce qui manque ou échoue dans un
 // lot repasse automatiquement en appel individuel (rewriteSegment), pour
 // ne jamais perdre un segment à cause d'un souci de format de réponse.
+//
+// Pas de contrainte de temps/quota ici : au lieu d'abandonner définitivement
+// dès qu'un budget de récupération GPU (voir attemptEngineRecovery) est
+// épuisé, on refait des "reprises" complètes sur les segments encore en
+// échec, chacune avec un moteur et un budget de récupération neufs, jusqu'à
+// ce que tout soit fait — ou jusqu'à MAX_SWEEPS reprises infructueuses
+// (garde-fou pour ne jamais boucler littéralement à l'infini si le
+// GPU/pilote est réellement mort en permanence sur cette machine).
+const MAX_SWEEPS = 6;
+
 async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
   const results = new Array(editable.length).fill(null);
   const batches = buildBatches(editable, jobText);
   log(`Découpage en ${batches.length} appel(s) groupé(s) pour ${editable.length} segment(s) (au lieu d'un appel par segment).`);
+
+  const reportProgress = () => {
+    if (onProgress) onProgress(results.filter((t) => t).length, editable.length);
+  };
 
   let offset = 0;
   for (let b = 0; b < batches.length; b++) {
@@ -811,7 +853,7 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
       log(`  ⚠️ Échec de l'appel groupé (lot ${b + 1}/${batches.length}) : ${err.message} — repli individuel pour ce lot.`);
     }
     offset += batch.length;
-    if (onProgress) onProgress(offset, editable.length);
+    reportProgress();
   }
 
   // Filet de sécurité : tout ce qui n'a pas été rempli par un appel groupé
@@ -821,8 +863,45 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     if (results[i]) continue;
     setStatus(`Reformulation individuelle ${i + 1}/${editable.length} (repli)…`);
     results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
-    if (onProgress) onProgress(i + 1, editable.length);
+    reportProgress();
   }
+
+  // ==== Reprises persistantes ====
+  // Tant qu'il reste des segments en échec, on refait des passes complètes
+  // dessus avec un moteur et un budget de récupération GPU neufs — au lieu
+  // de considérer l'échec comme définitif. C'est exactement ce qui
+  // manquait : un plantage GPU en cours de route ne doit coûter que du
+  // temps, jamais un segment perdu pour de bon.
+  let sweep = 0;
+  while (sweep < MAX_SWEEPS) {
+    const pendingIdx = [];
+    for (let i = 0; i < editable.length; i++) if (!results[i]) pendingIdx.push(i);
+    if (pendingIdx.length === 0) break;
+
+    sweep++;
+    log(`↻ Reprise ${sweep}/${MAX_SWEEPS} : ${pendingIdx.length} segment(s) encore en échec — nouvelle tentative avec un moteur neuf.`);
+    setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — ${pendingIdx.length} segment(s) restant(s)…`);
+
+    // Budget de récupération GPU neuf pour cette reprise : un plantage lors
+    // d'une reprise précédente ne doit pas condamner celle-ci d'avance.
+    webllmIrrecoverable = false;
+    webllmRecoveryAttemptsThisPass = 0;
+    await sleep(1500 * sweep); // backoff croissant : laisse le pilote GPU respirer entre les reprises
+
+    for (const i of pendingIdx) {
+      setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — segment ${pendingIdx.indexOf(i) + 1}/${pendingIdx.length}…`);
+      results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
+      reportProgress();
+    }
+  }
+
+  const stillFailed = results.filter((t) => !t).length;
+  if (stillFailed > 0) {
+    log(`⚠️ ${stillFailed} segment(s) restent inchangés malgré ${sweep} reprise(s) complète(s) — le GPU/pilote semble réellement irrécupérable sur cette machine pour cette session. Ces segments gardent leur texte d'origine dans le CV final.`);
+  } else if (sweep > 0) {
+    log(`✓ Tous les segments ont finalement été reformulés après ${sweep} reprise(s).`);
+  }
+
   return results;
 }
 
@@ -865,11 +944,12 @@ runBtn.addEventListener('click', async () => {
   progressBar.style.width = '0%';
   log('--- Nouvelle adaptation ---');
 
-  // Chaque nouvelle passe repart avec son propre "droit" à une tentative de
-  // récupération GPU — sinon un souci définitivement réglé (page rechargée,
-  // modèle re-choisi...) resterait bloqué par l'état d'une passe précédente.
+  // Chaque nouvelle passe repart avec son propre "droit" à plusieurs
+  // tentatives de récupération GPU — sinon un souci définitivement réglé
+  // (page rechargée, modèle re-choisi...) resterait bloqué par l'état d'une
+  // passe précédente.
   webllmIrrecoverable = false;
-  webllmRecoveryAttemptedThisPass = false;
+  webllmRecoveryAttemptsThisPass = 0;
 
   const jobText = jobTextEl.value.trim();
   const stopSignal = newStopSignal();
