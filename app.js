@@ -796,6 +796,16 @@ function parseBatchResponse(raw, expectedCount) {
 // Découpe la liste d'extraits en lots qui tiennent dans le budget de
 // contexte estimé du modèle choisi. Pour un CV normal avec un modèle
 // medium/large, tout tient en général dans un seul lot.
+//
+// MAX_SEGMENTS_PER_BATCH plafonne aussi la taille d'un lot en NOMBRE
+// d'extraits, indépendamment du budget de tokens : un appel groupé avec
+// beaucoup de sortie à générer garde le GPU occupé en continu plus
+// longtemps, ce qui augmente le risque de déclencher un TDR Windows
+// (DXGI_ERROR_DEVICE_HUNG — le pilote graphique tue le device s'il reste
+// occupé trop longtemps sans rendre la main à l'affichage). Des appels plus
+// courts et plus nombreux sont plus lents mais bien plus fiables.
+const MAX_SEGMENTS_PER_BATCH = 3;
+
 function buildBatches(editable, jobText) {
   const budget = getContextBudget();
   const reserved = estimateTokens(jobText) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
@@ -807,7 +817,7 @@ function buildBatches(editable, jobText) {
   for (const run of editable) {
     // Un extrait consomme environ (texte en entrée) + (texte en sortie, ~même longueur).
     const segTokens = estimateTokens(run.text) * 2 + 20;
-    if (current.length > 0 && currentTokens + segTokens > perBatchBudget) {
+    if (current.length > 0 && (currentTokens + segTokens > perBatchBudget || current.length >= MAX_SEGMENTS_PER_BATCH)) {
       batches.push(current);
       current = [];
       currentTokens = 0;
@@ -848,7 +858,13 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     setStatus(`Reformulation groupée ${b + 1}/${batches.length} (${batch.length} extrait(s))…`);
     try {
       const messages = buildBatchPrompt(batch, jobText);
-      const maxTokens = Math.min(batch.reduce((n, r) => n + estimateTokens(r.text) * 2 + 20, 0), 3800);
+      // Plafond dur volontairement réduit (900, au lieu de 3800) : plus la
+      // sortie générée en un seul appel est longue, plus le GPU reste
+      // occupé en continu — et donc plus le risque de TDR (voir
+      // MAX_SEGMENTS_PER_BATCH ci-dessus) est élevé. Un plafond bas force
+      // des appels plus courts et plus nombreux, moins rapides mais bien
+      // plus fiables sur un GPU/pilote instable.
+      const maxTokens = Math.min(batch.reduce((n, r) => n + estimateTokens(r.text) * 2 + 20, 0), 900);
       const raw = await generateText(messages, maxTokens, stopSignal);
       const parsed = parseBatchResponse(raw, batch.length);
       parsed.forEach((text, i) => { results[offset + i] = text; });
@@ -864,6 +880,11 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     }
     offset += batch.length;
     reportProgress();
+    // Pause proactive entre deux appels (pas seulement après un plantage) :
+    // laisse le pilote GPU "respirer" entre deux sollicitations soutenues,
+    // ce qui réduit le risque cumulatif de TDR sur une longue série
+    // d'appels consécutifs.
+    if (b < batches.length - 1) await sleep(400);
   }
 
   // Filet de sécurité : tout ce qui n'a pas été rempli par un appel groupé
@@ -874,6 +895,7 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     setStatus(`Reformulation individuelle ${i + 1}/${editable.length} (repli)…`);
     results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
     reportProgress();
+    await sleep(300); // pause proactive, même logique que pour les appels groupés
   }
 
   // ==== Reprises persistantes ====
