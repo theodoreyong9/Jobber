@@ -64,6 +64,13 @@ let webllmWorker = null;
 let webllmEngine = null;
 let webllmReady = false;
 let webllmLoading = false;
+// Disjoncteur : passe à true quand une perte de contexte GPU survient ET que
+// la tentative de rechargement du moteur échoue elle-même. Dans ce cas, le
+// device WebGPU est en général irrécupérable dans le même onglet (voir
+// mlc-ai/web-llm#486 / #560) — inutile de retenter un rechargement complet
+// du modèle (coûteux) sur chacun des segments restants : on l'affiche
+// clairement une seule fois et on laisse le reste inchangé rapidement.
+let webllmIrrecoverable = false;
 let wakeLock = null;
 let stopSignalResolve = null;
 
@@ -225,15 +232,24 @@ async function initWebLLM(_isRetry) {
     }
     webllmEngine = engine;
     webllmReady = true;
+    // Un rechargement réussi (ex. clic manuel sur "Charger le modèle" après
+    // un souci résolu) doit pouvoir sortir du mode "irrécupérable".
+    webllmIrrecoverable = false;
     engineStatusEl.textContent = '✅ Modèle chargé (' + webllmModelId + ') — prêt.';
     modelLoadBar.style.width = '100%';
     modelSelect.disabled = false;
     updateRunButton();
     return engine;
   } catch (e) {
-    engineStatusEl.textContent = '❌ Échec du chargement : ' + e.message;
+    // On passe systématiquement par normalizeError() : les erreurs qui
+    // traversent la frontière du Worker WebLLM ne sont pas toujours de
+    // vraies instances Error (parfois un objet ou une chaîne sans
+    // `.message`). Sans ça, tout code appelant qui lit `.message` sur
+    // l'erreur relancée ici récupère `undefined` au lieu du vrai motif.
+    const normalized = normalizeError(e, 'Échec du chargement du moteur');
+    engineStatusEl.textContent = '❌ Échec du chargement : ' + normalized.message;
     modelSelect.disabled = false;
-    throw e;
+    throw normalized;
   } finally {
     webllmLoading = false;
     releaseWakeLock();
@@ -476,7 +492,20 @@ async function* withStopSignal(gen, stopSignal) {
 }
 
 async function generateText(messages, maxTokens, stopSignal) {
-  const engine = await initWebLLM();
+  if (webllmIrrecoverable) {
+    throw new Error('Moteur GPU indisponible après un échec précédent — recharge la page pour réessayer.');
+  }
+
+  let engine;
+  try {
+    engine = await initWebLLM();
+  } catch (e) {
+    // initWebLLM() peut être appelé ici pour la toute première fois d'un
+    // segment (moteur pas encore chargé) : si ça échoue, il faut que
+    // l'erreur remontée ait un `.message` exploitable, sinon
+    // isGpuContextLostError() plus haut dans la pile ne peut rien détecter.
+    throw normalizeError(e, 'Échec du (re)chargement du moteur');
+  }
   dlog('chat.completions.create — ' + messages.length + ' messages, max_tokens=' + maxTokens);
 
   let stream;
@@ -517,6 +546,16 @@ function buildSegmentPrompt(run, jobText) {
 }
 
 async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
+  if (webllmIrrecoverable) {
+    // Le moteur a déjà échoué à se relancer sur un segment précédent de
+    // cette même passe : inutile de retenter un rechargement complet du
+    // modèle (potentiellement plusieurs centaines de Mo) qui échouera à
+    // nouveau — on le dit une fois clairement plutôt que de faire perdre du
+    // temps à l'utilisateur sur chaque segment restant.
+    log('  ⚠️ Moteur GPU indisponible (échec précédent) — segment laissé inchangé sans nouvelle tentative.');
+    return null;
+  }
+
   const messages = buildSegmentPrompt(run, jobText);
   try {
     const text = await generateText(messages, 200, stopSignal);
@@ -537,6 +576,8 @@ async function rewriteSegment(run, jobText, stopSignal, _isRetry) {
         await initWebLLM();
       } catch (e2) {
         log('  ⚠️ Échec du rechargement du moteur : ' + e2.message);
+        log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
+        webllmIrrecoverable = true;
         return null;
       }
       return rewriteSegment(run, jobText, stopSignal, true);
