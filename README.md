@@ -88,7 +88,11 @@ classification par rôle                              │
    - **éditable**, avec un rôle précis qui détermine la consigne donnée au
      modèle : `headline` (titre du CV, 5 mots max), `profile` (résumé, ton
      affirmatif et enthousiaste, 4 phrases max), `job-description`
-     (description de mission, ton factuel, longueur équivalente).
+     (description de mission, ton factuel, longueur équivalente). Chaque
+     consigne inclut un exemple concret (extrait → réponse), pas
+     seulement une règle de style abstraite — un petit modèle local suit
+     un exemple bien plus fiablement qu'une description ("5 mots
+     maximum") qu'il doit s'auto-évaluer.
 
 3. **Extraction des mots-clés de l'offre (déterministe, sans LLM)** —
    `extractJobKeywords()` : fréquence pondérée des termes de l'annonce

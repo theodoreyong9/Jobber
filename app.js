@@ -1246,10 +1246,33 @@ const REWRITE_SYSTEM_PROMPT = `Reformule l'extrait de CV donné pour coller à l
 // Instruction complémentaire selon le rôle du segment (voir classifyRuns) :
 // un titre, un profil et une description de poste n'appellent pas le même
 // traitement, ni la même longueur de réponse.
+//
+// Chaque consigne inclut maintenant un EXEMPLE CONCRET (extrait → réponse),
+// pas seulement une règle abstraite ("5 mots maximum", "ton enthousiaste").
+// C'est le vrai point faible qu'on avait : un modèle de 1 milliard de
+// paramètres suit un exemple concret bien plus fiablement qu'une
+// description de style qu'il doit s'auto-évaluer ("est-ce que je fais
+// vraiment 5 mots ?"). Observé concrètement sans exemple : titre devenu
+// "Réponse : Travail", profil devenu du remplissage générique sans rapport
+// avec l'original. Coûte un peu plus de tokens par appel, mais réduit le
+// taux de rejet par le validateur — donc MOINS de nouvelles tentatives au
+// total, pas plus de calcul GPU cumulé.
 const ROLE_INSTRUCTIONS = {
-  headline: "Ce segment est le TITRE/ACCROCHE du CV. Réponds par une phrase de 5 MOTS MAXIMUM, percutante, dans le même esprit que l'original. Pas de ponctuation finale, pas de guillemets.",
-  profile: "Ce segment fait partie du PROFIL/RÉSUMÉ du CV. Reformule sur un ton UNIQUEMENT AFFIRMATIF ET ENTHOUSIASTE (jamais négatif, jamais hésitant), en 4 PHRASES MAXIMUM.",
-  'job-description': "Ce segment est une description de poste/mission. Reformule-le de façon factuelle et professionnelle, en gardant sa longueur d'origine à peu près équivalente.",
+  headline: `Ce segment est le TITRE/ACCROCHE du CV. Réponds par une phrase de 5 MOTS MAXIMUM, dans la MÊME LANGUE que l'extrait, percutante, dans le même esprit que l'original. Pas de ponctuation finale, pas de guillemets, pas de préfixe du type "Réponse :".
+
+Exemple :
+Extrait : "Marketing Manager"
+Réponse : Growth Marketing Lead`,
+  profile: `Ce segment fait partie du PROFIL/RÉSUMÉ du CV. Reformule sur un ton UNIQUEMENT AFFIRMATIF ET ENTHOUSIASTE (jamais négatif, jamais hésitant), dans la MÊME LANGUE que l'extrait, en 4 PHRASES MAXIMUM. Garde les faits et le sens précis de l'extrait original — ne le remplace JAMAIS par un texte générique sans rapport avec ce qu'il dit vraiment.
+
+Exemple :
+Extrait : "Five years leading backend teams and building scalable APIs."
+Réponse : With five years leading backend teams, I build scalable, reliable APIs that drive real business growth.`,
+  'job-description': `Ce segment est une description de poste/mission. Reformule-le de façon factuelle et professionnelle, dans la MÊME LANGUE que l'extrait, en gardant sa longueur d'origine à peu près équivalente et tous ses faits précis.
+
+Exemple :
+Extrait : "Managed a team of 5 developers building REST APIs."
+Réponse : Led a team of 5 developers, delivering well-documented REST APIs.`,
 };
 function roleInstruction(role) {
   return ROLE_INSTRUCTIONS[role] || ROLE_INSTRUCTIONS['job-description'];
