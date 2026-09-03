@@ -8,11 +8,13 @@ d'origine (styles, polices, couleurs, tableaux, photo) est conservée à
 l'identique — seuls certains textes sont reformulés.
 
 Deux modèles locaux, deux rôles bien séparés : **WebLLM** rédige (le seul
-endroit où un texte est généré), **[Transformers.js](https://github.com/huggingface/transformers.js)**
-calcule des embeddings pour affiner le matching CV ↔ offre (un simple
-passage avant par texte, pas de génération — beaucoup moins coûteux en
-calcul GPU). Les embeddings sont optionnels : si leur chargement échoue,
-tout le pipeline continue avec le matching par mots-clés seul.
+endroit où un texte est généré, sur WebGPU), **[Transformers.js](https://github.com/huggingface/transformers.js)**
+calcule des embeddings pour affiner le matching CV ↔ offre — toujours en
+WASM/CPU, jamais en WebGPU, pour ne jamais entrer en concurrence avec
+WebLLM sur le pool de devices GPU du navigateur (déjà fragile sur
+certaines machines, voir plus bas). Les embeddings sont optionnels : si
+leur chargement échoue, tout le pipeline continue avec le matching par
+mots-clés seul.
 
 ## Le principe : le code décide ce qui est autorisé, le modèle rédige
 
@@ -135,15 +137,17 @@ classification par rôle                              │
    `LIGHT_REWRITE` (budget de sortie réduit — le texte n'a de toute façon
    pas vocation à beaucoup changer) ou `STRONG_REWRITE` (plein budget).
 
-   La pertinence est calculée de deux façons, avec repli automatique :
-   si un modèle d'**embeddings** (Transformers.js, voir plus haut) a pu se
-   charger, un vrai score de similarité cosinus entre chaque description
-   et l'offre pilote la décision ; sinon (échec de chargement, WebGPU
-   indisponible pour ce modèle...) le nombre de mots-clés en commun (voir
-   étape 4) sert de repli — le pipeline entier continue de fonctionner
-   sans interruption dans les deux cas. C'est la seule source de vérité
-   utilisée ensuite par les prompts et le validateur — plus aucune
-   décision dispersée à la volée dans chaque appel.
+   La pertinence combine deux signaux plutôt que de faire reposer la
+   décision sur un seul : le nombre de mots-clés en commun (voir étape 4)
+   est toujours calculé, et si un modèle d'**embeddings** (Transformers.js,
+   voir plus haut) a pu se charger, un score de similarité cosinus vient
+   s'y ajouter — la décision retenue est la plus "forte" des deux
+   (`KEEP` < `LIGHT_REWRITE` < `STRONG_REWRITE`), jamais la plus faible.
+   Ce choix protège contre un seuil de similarité mal calé qui
+   sous-évaluerait la pertinence et ferait passer en KEEP des segments que
+   le matching par mots-clés avait pourtant repérés à raison. Si les
+   embeddings sont indisponibles (échec de chargement...), le matching par
+   mots-clés fonctionne seul, exactement comme avant leur ajout.
 
 6. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
    homogènes (même rôle) pour limiter le nombre d'appels au modèle, avec
@@ -237,14 +241,17 @@ directement dans le navigateur.
   (`SYNONYM_CLUSTERS`, une vingtaine d'entrées) — sert surtout à choisir
   le vocabulaire suggéré dans les prompts, pas à mesurer la pertinence
   elle-même (voir embeddings ci-dessous).
-- **Embeddings optionnels, seuils non calibrés en conditions réelles** :
-  quand ils sont disponibles, la décision KEEP/LIGHT/STRONG s'appuie sur
-  une vraie similarité cosinus plutôt que sur un comptage de mots-clés —
-  mais les seuils (`0.35`/`0.55`) sont un point de départ raisonnable, pas
-  une valeur calibrée sur un grand nombre de CV réels. Ils pourront avoir
-  besoin d'ajustement avec l'usage. Si le modèle d'embeddings ne se charge
-  pas (délai dépassé, réseau, navigateur), tout continue avec le matching
-  par mots-clés seul, sans interruption.
+- **Embeddings optionnels, seuils encore approximatifs** : quand ils sont
+  disponibles, un score de similarité cosinus vient s'ajouter au comptage
+  de mots-clés (la décision retient le plus "fort" des deux, jamais le
+  plus faible — voir étape 5). Un premier test réel a montré les seuils
+  de départ (`0.35`/`0.55`) plutôt stricts (beaucoup de `KEEP`) ; la
+  combinaison avec le matching par mots-clés compense en grande partie,
+  mais les seuils eux-mêmes pourront encore avoir besoin d'ajustement.
+  Toujours tourné en WASM/CPU, jamais en WebGPU — ne rentre jamais en
+  concurrence avec WebLLM pour le device GPU. Si le modèle d'embeddings ne
+  se charge pas (délai dépassé, réseau, navigateur), tout continue avec le
+  matching par mots-clés seul, sans interruption.
 - **Modèle local, donc plus faible qu'un modèle cloud** : même avec le
   garde-fou anti-invention, un petit modèle peut produire une
   reformulation maladroite ou décider de ne pas changer un segment

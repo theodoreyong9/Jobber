@@ -294,13 +294,18 @@ async function loadEmbedder() {
         setTimeout(() => reject(new Error('Chargement de Transformers.js (CDN) trop long.')), 20000);
       });
     }
-    // WebGPU d'abord (rapide), repli WASM automatique si indisponible pour
-    // ce modèle précis — Transformers.js gère cette bascule lui-même.
-    let device = 'webgpu';
-    try {
-      const gpu = await checkWebGpuSupport();
-      if (!gpu.supported) device = 'wasm';
-    } catch { device = 'wasm'; }
+    // TOUJOURS en WASM (CPU), jamais en WebGPU — volontaire, pas un repli
+    // par défaut. WebLLM tient déjà difficilement UN SEUL device WebGPU
+    // stable sur les machines à GPU/pilote fragile (voir tout le travail
+    // sur "Unable to find a compatible GPU" — le pool de devices WebGPU du
+    // navigateur s'épuise vite). Faire tourner AUSSI les embeddings en
+    // WebGPU crée un second consommateur permanent de ce même pool limité
+    // — observé concrètement : le rechargement du moteur WebLLM a échoué
+    // dès la 1ère tentative (au lieu de ~6 d'habitude) juste après l'ajout
+    // des embeddings. Un modèle d'embeddings est un simple passage avant
+    // (pas de génération token par token), donc largement assez rapide en
+    // CPU/WASM pour ne jamais justifier ce risque.
+    const device = 'wasm';
     return await window.transformersjs.pipeline('feature-extraction', EMBEDDINGS_MODEL_ID, { device });
   })();
   return embedderPromise;
@@ -1540,6 +1545,8 @@ async function buildAdaptationPlan(editable, job) {
     }
   }
 
+  const ACTION_RANK = { keep: 0, 'light-rewrite': 1, 'strong-rewrite': 2 };
+
   return editable.map((run) => {
     if (run.role !== 'job-description') {
       // Titre et profil ne bénéficient pas d'un matching bullet par
@@ -1549,19 +1556,26 @@ async function buildAdaptationPlan(editable, job) {
       return { run, action: 'rewrite', matched: [] };
     }
     const matched = segmentKeywordMatches(run.text, job.keywords);
-    let action;
+    // Décision par mots-clés (stem + synonymes) — calculée dans tous les
+    // cas, pas seulement en repli : sert de plancher de sécurité pour ne
+    // jamais perdre une opportunité déjà identifiée par ce signal-là si
+    // le seuil des embeddings s'avère trop strict (les deux sont des
+    // approximations, aucune des deux n'est "la vérité").
+    const kwAction = matched.length === 0 ? 'keep' : matched.length <= 2 ? 'light-rewrite' : 'strong-rewrite';
+    let action = kwAction;
     if (similarities && similarities.has(run)) {
       const sim = similarities.get(run);
       run._planSimilarity = sim; // pour le journal, voir describePlanAction
       // Seuils de départ pour une similarité cosinus entre phrases courtes
       // — raisonnables mais empiriques, à affiner avec des retours réels
       // plutôt que devinés dans l'absolu.
-      action = sim < 0.35 ? 'keep' : sim < 0.55 ? 'light-rewrite' : 'strong-rewrite';
-    } else {
-      // Repli : décision par nombre de mots-clés correspondants (stem +
-      // synonymes, voir segmentKeywordMatches) — c'est ce qui tournait
-      // seul avant l'ajout des embeddings, toujours pleinement valable.
-      action = matched.length === 0 ? 'keep' : matched.length <= 2 ? 'light-rewrite' : 'strong-rewrite';
+      const embAction = sim < 0.35 ? 'keep' : sim < 0.55 ? 'light-rewrite' : 'strong-rewrite';
+      // On retient le plus "fort" des deux signaux plutôt que de laisser
+      // les embeddings écraser complètement le matching par mots-clés :
+      // un seuil mal calé qui sous-évalue la pertinence coûterait des
+      // reformulations utiles pour rien, alors que l'inverse (un peu trop
+      // de reformulations légères) reste sans risque grâce au validateur.
+      if (ACTION_RANK[embAction] > ACTION_RANK[action]) action = embAction;
     }
     return { run, action, matched };
   });
