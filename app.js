@@ -806,12 +806,31 @@ function buildJobContext(jobText) {
   return {
     raw,
     keywords: extractJobKeywords(raw),
-    gist: raw.slice(0, 220).trim(),
+    gist: raw.slice(0, 120).trim(),
   };
 }
 
-function formatJobContextForPrompt(job) {
-  const kw = job.keywords.length ? job.keywords.join(', ') : '(aucun mot-clé notable détecté)';
+// Format du contexte d'offre envoyé dans CHAQUE prompt — donc le premier
+// poste de "surcharge fixe" par appel (~280 tokens mesurés avant cette
+// optimisation, avant même d'atteindre le texte du CV). Sur un GPU lent,
+// cette surcharge peut à elle seule faire dépasser le seuil de patience du
+// pilote (TDR) même pour le plus petit segment. On adapte donc la
+// quantité de contexte au RÔLE du segment plutôt que d'envoyer le même
+// bloc complet partout :
+// - job-description : le matching par segment (voir buildMatchNote) est
+//   DÉJÀ plus ciblé et plus court qu'une liste générique — on n'envoie
+//   donc PAS ce contexte générique en plus, il ferait double emploi.
+// - headline : un titre de 5 mots n'a besoin que d'un signal minimal
+//   (quelques mots-clés), pas d'un extrait de l'annonce.
+// - profile : seul rôle qui bénéficie vraiment d'une vue d'ensemble du
+//   poste (ton, domaine) — contexte complet mais réduit (120 caractères
+//   au lieu de 220, top 10 mots-clés au lieu de 25).
+function formatJobContextForPrompt(job, role) {
+  if (role === 'headline') {
+    const kw = job.keywords.slice(0, 6).join(', ') || '(aucun mot-clé notable détecté)';
+    return `Mots-clés de l'offre : ${kw}`;
+  }
+  const kw = job.keywords.slice(0, 10).join(', ') || '(aucun mot-clé notable détecté)';
   return `Mots-clés de l'offre : ${kw}\nContexte (début de l'annonce) : ${job.gist}${job.raw.length > job.gist.length ? '…' : ''}`;
 }
 
@@ -976,7 +995,7 @@ function describeValidationFailure(validation) {
 }
 
 // ==== 5. Reformulation d'un segment ====
-const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et les mots-clés + le contexte d'une offre d'emploi (PAS le texte complet — n'invente pas de phrases d'annonce, tu ne les as pas). Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en utilisant ces mots-clés UNIQUEMENT quand ça correspond vraiment à ce que dit l'extrait — il s'agit d'adapter sémantiquement l'extrait, jamais de recopier une phrase d'annonce. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
+const REWRITE_SYSTEM_PROMPT = `Reformule l'extrait de CV donné pour coller à l'offre. Règles strictes : n'invente aucun fait absent de l'extrait ; n'utilise un mot-clé que s'il correspond vraiment ; renvoie l'extrait tel quel si rien à gagner. Réponds uniquement avec le texte reformulé, sans guillemets ni préambule.`;
 
 // Instruction complémentaire selon le rôle du segment (voir classifyRuns) :
 // un titre, un profil et une description de poste n'appellent pas le même
@@ -991,7 +1010,7 @@ function roleInstruction(role) {
 }
 // Limite de sortie par rôle : un titre tient en quelques mots, un profil en
 // 4 phrases, une description de poste peut légitimement rester plus longue.
-const ROLE_MAX_TOKENS = { headline: 30, profile: 220, 'job-description': 260 };
+const ROLE_MAX_TOKENS = { headline: 30, profile: 180, 'job-description': 200 };
 function roleMaxTokens(role) {
   return ROLE_MAX_TOKENS[role] || ROLE_MAX_TOKENS['job-description'];
 }
@@ -999,13 +1018,15 @@ function roleMaxTokens(role) {
 function buildSegmentPrompt(run, job) {
   // Le matching par mots-clés ne s'applique qu'aux descriptions de poste :
   // c'est là qu'on a observé le recopiage de l'offre sur des bullets sans
-  // rapport (voir buildMatchNote). Un titre ou un profil restent guidés
-  // par le contexte général de l'offre, pas par une correspondance bullet
-  // par bullet.
-  const matchNote = run.role === 'job-description'
-    ? `\n\n${buildMatchNote(segmentKeywordMatches(run.text, job.keywords))}`
-    : '';
-  const user = `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job)}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role)}${matchNote}\n\nRéponds uniquement avec le texte reformulé.`;
+  // rapport (voir buildMatchNote). Pour ce rôle, cette note ciblée
+  // REMPLACE le bloc générique d'offre (plus courte, plus pertinente,
+  // moins de tokens à traiter — voir formatJobContextForPrompt). Titre et
+  // profil gardent le contexte général, réduit selon le rôle.
+  const isJobDesc = run.role === 'job-description';
+  const jobBlock = isJobDesc
+    ? buildMatchNote(segmentKeywordMatches(run.text, job.keywords))
+    : `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job, run.role)}`;
+  const user = `${jobBlock}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role)}\n\nRéponds uniquement avec le texte reformulé.`;
   return [
     { role: 'system', content: REWRITE_SYSTEM_PROMPT },
     { role: 'user', content: user }
@@ -1178,23 +1199,29 @@ async function rewriteSegment(run, job, stopSignal, _attempt) {
 // (###N###) par extrait — plus robuste à parser qu'un JSON pour un petit
 // modèle local quantifié. Le code garde la main sur le mapping (quel texte
 // va dans quel run XML) via ce numéro, jamais via l'ordre "au jugé".
-const BATCH_REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne une offre d'emploi et plusieurs extraits numérotés d'un CV, chacun avec sa propre consigne. Pour CHAQUE extrait, reformule-le en suivant SA consigne, en utilisant les MOTS-CLÉS et le vocabulaire de l'offre UNIQUEMENT quand ça correspond vraiment à ce que dit l'extrait — il s'agit d'adapter sémantiquement l'extrait, jamais de recopier des phrases de l'offre elle-même. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer un extrait, renvoie-le tel quel.
+const BATCH_REWRITE_SYSTEM_PROMPT = `Plusieurs extraits de CV numérotés, chacun avec sa consigne. Reformule CHAQUE extrait selon SA consigne. Règles strictes : n'invente aucun fait absent de l'extrait ; n'utilise un mot-clé que s'il correspond vraiment ; renvoie un extrait tel quel si rien à gagner.
 
-Réponds en respectant EXACTEMENT ce format, un bloc par extrait, dans le même ordre, sans aucun texte avant, après, ni entre les blocs à part le marqueur :
+Format de réponse EXACT, un bloc par extrait, même ordre, rien d'autre :
 ###1###
 texte reformulé de l'extrait 1
 ###2###
 texte reformulé de l'extrait 2
-(un bloc ###N### pour chaque extrait fourni, aucun extrait omis, aucun extrait ajouté)`;
+(un bloc ###N### par extrait fourni, aucun omis, aucun ajouté)`;
 
 function buildBatchPrompt(batch, job) {
+  // Les lots sont homogènes en rôle (voir rewriteAllSegments/buildBatches),
+  // donc soit TOUS les items sont des descriptions de poste (matching
+  // ciblé par item, pas besoin du bloc générique), soit AUCUN ne l'est
+  // (contexte générique une seule fois, réduit selon le rôle commun).
+  const isJobDescBatch = batch[0] && batch[0].role === 'job-description';
   const body = batch.map((r, i) => {
     const matchNote = r.role === 'job-description'
       ? ` ${buildMatchNote(segmentKeywordMatches(r.text, job.keywords))}`
       : '';
     return `###${i + 1}### [section "${r.section}"] ${roleInstruction(r.role)}${matchNote}\n${r.text.trim()}`;
   }).join('\n\n');
-  const user = `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job)}\n\n--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
+  const jobBlock = isJobDescBatch ? '' : `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job, batch[0] && batch[0].role)}\n\n`;
+  const user = `${jobBlock}--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
   return [
     { role: 'system', content: BATCH_REWRITE_SYSTEM_PROMPT },
     { role: 'user', content: user },
@@ -1238,11 +1265,15 @@ function parseBatchResponse(raw, batch, job) {
 // (DXGI_ERROR_DEVICE_HUNG — le pilote graphique tue le device s'il reste
 // occupé trop longtemps sans rendre la main à l'affichage). Des appels plus
 // courts et plus nombreux sont plus lents mais bien plus fiables.
-const MAX_SEGMENTS_PER_BATCH = 3;
+const MAX_SEGMENTS_PER_BATCH = 2;
 
 function buildBatches(editable, job) {
   const budget = getContextBudget();
-  const reserved = estimateTokens(formatJobContextForPrompt(job)) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
+  // Estimation prudente du budget réservé : le pire cas est le bloc de
+  // contexte "profile" (le plus complet, voir formatJobContextForPrompt) —
+  // un lot de descriptions de poste consommera en réalité moins puisqu'il
+  // n'envoie pas ce bloc générique du tout (voir buildBatchPrompt).
+  const reserved = estimateTokens(formatJobContextForPrompt(job, 'profile')) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
   const perBatchBudget = Math.max(budget - reserved, 400);
 
   // Regroupe d'abord par rôle (voir classifyRuns) : mélanger un titre (5
@@ -1334,13 +1365,13 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
     setStatus(`Reformulation groupée ${b + 1}/${batches.length} (${batch.length} extrait(s))…`);
     try {
       const messages = buildBatchPrompt(batch, job);
-      // Plafond dur volontairement réduit (900, au lieu de 3800) : plus la
-      // sortie générée en un seul appel est longue, plus le GPU reste
+      // Plafond dur volontairement réduit (700, au lieu de 3800 à l'origine) :
+      // plus la sortie générée en un seul appel est longue, plus le GPU reste
       // occupé en continu — et donc plus le risque de TDR (voir
       // MAX_SEGMENTS_PER_BATCH ci-dessus) est élevé. Un plafond bas force
       // des appels plus courts et plus nombreux, moins rapides mais bien
       // plus fiables sur un GPU/pilote instable.
-      const maxTokens = Math.min(batch.reduce((n, r) => n + roleMaxTokens(r.role) + 20, 0), 900);
+      const maxTokens = Math.min(batch.reduce((n, r) => n + roleMaxTokens(r.role) + 20, 0), 700);
       const raw = await generateText(messages, maxTokens, stopSignal);
       const { results: parsed, rejections } = parseBatchResponse(raw, batch, job);
       parsed.forEach((text, i) => { results[batch[i]._idx] = text; });

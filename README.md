@@ -96,7 +96,19 @@ classification par rôle                              │
    morphologiques simples). Une description de poste sans **aucune**
    correspondance n'est même pas envoyée au modèle (décision *KEEP*) :
    zéro risque d'invention, zéro calcul GPU perdu dessus. Les autres
-   reçoivent une consigne proportionnée à la force de la correspondance.
+   reçoivent une consigne proportionnée à la force de la correspondance —
+   cette note ciblée remplace même le bloc générique de contexte d'offre
+   pour ce rôle (plus courte et plus pertinente qu'une liste de mots-clés
+   identique envoyée à chaque appel).
+
+   La quantité de contexte envoyée est volontairement minimisée et
+   adaptée au rôle du segment (`formatJobContextForPrompt()`) : un titre
+   (5 mots max) n'a besoin que d'un signal minimal, un profil d'un
+   contexte réduit, une description de poste de sa seule note de
+   correspondance. Mesuré : la surcharge fixe par appel (hors texte du CV
+   lui-même) est passée d'environ 290 tokens à 70-140 selon le rôle — sur
+   un GPU lent, chaque token de moins réduit le temps de calcul continu et
+   donc le risque de dépasser le seuil de patience du pilote (TDR).
 
 5. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
    homogènes (même rôle) pour limiter le nombre d'appels au modèle, avec
