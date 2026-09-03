@@ -49,7 +49,12 @@
           (WebGPU) — rien n'est envoyé à un serveur. Le premier chargement télécharge le
           modèle (plusieurs centaines de Mo à quelques Go), puis il reste en cache.
         </p>
-        <button id="load-model-btn" type="button" class="secondary-btn">⬇️ Charger le modèle maintenant</button>
+        <button id="load-model-btn" type="button" class="secondary-btn">⬇️ Pré-charger le modèle (facultatif)</button>
+        <p class="hint">
+          Facultatif : télécharge et prépare le modèle à l'avance, pendant que tu rédiges ou
+          relis l'offre. Sinon, il se charge automatiquement dès que tu cliques sur
+          « Adapter mon CV » — pas besoin de cliquer ici d'abord.
+        </p>
         <div class="progress-outer"><div id="model-load-bar" class="progress-inner"></div></div>
         <p id="engine-status" class="hint">Modèle non chargé.</p>
       </section>
@@ -58,7 +63,7 @@
         <button id="run-btn" disabled>✨ Adapter mon CV</button>
         <button id="stop-btn" type="button" class="secondary-btn" hidden>⏹ Stop</button>
         <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
-        <p id="status" class="status">Charge un CV, colle une offre et charge le modèle pour activer l'adaptation.</p>
+        <p id="status" class="status">Charge un CV et colle une offre pour activer l'adaptation — le modèle choisi ci-dessus se charge automatiquement au premier clic sur « Adapter mon CV ».</p>
         <div id="download-area"></div>
         <details>
           <summary>Journal technique</summary>

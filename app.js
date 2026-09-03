@@ -114,6 +114,24 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 
+// Détecte une sortie "dégénérée" : le modèle recopie/hallucine le gabarit
+// du prompt (ex. le marqueur "--- EXTRAIT DU CV ---") au lieu de vraiment
+// reformuler le texte. Observé surtout juste après un rechargement forcé
+// (modèle "pas encore chaud") ou sous stress GPU. Sans cette détection, ce
+// texte parasite est accepté tel quel et finit littéralement dans le CV
+// final — pire qu'un segment simplement laissé inchangé.
+function isDegenerateOutput(text) {
+  if (!text) return true;
+  const t = text.toLowerCase();
+  return (
+    /extraits? du cv/.test(t) ||
+    t.includes("offre d'emploi") ||
+    t.includes('réponds uniquement avec le texte reformulé') ||
+    t.includes('réponds avec le format demandé') ||
+    /^---/.test(text.trim())
+  );
+}
+
 function isGpuContextLostError(e) {
   const msg = String(e && e.message || e || '');
   return /Instance reference no longer exists|device.*lost|GPUDevice|lost.*context|already.*disposed|object.*disposed|compatible GPU|doesn't have a GPU|Unable to find a compatible|ModelNotLoadedError|not loaded before/i.test(msg);
@@ -464,7 +482,15 @@ function updateRunButton() {
   // réussissait (webllmReady redevient true), y compris EN PLEIN MILIEU
   // d'une passe d'adaptation — un ré-clic pendant ce court instant relance
   // une 2e passe en parallèle sur le même docState, ce qui corrompt tout.
-  runBtn.disabled = adaptationInProgress || !docState || jobTextEl.value.trim().length === 0 || !webllmReady;
+  //
+  // webllmReady n'est PLUS une condition ici : le clic sur "Adapter mon CV"
+  // charge lui-même le modèle s'il ne l'est pas déjà (voir le handler,
+  // await initWebLLM()) — obliger l'utilisateur à cliquer d'abord sur
+  // "Charger le modèle" puis sur "Adapter mon CV" était une étape
+  // superflue. Le bouton "Charger le modèle maintenant" reste disponible
+  // pour qui veut pré-télécharger le modèle à l'avance, mais n'est plus
+  // obligatoire.
+  runBtn.disabled = adaptationInProgress || !docState || jobTextEl.value.trim().length === 0;
 }
 
 // ==== 2. Extraction des "runs" (segments) du document.xml ====
@@ -646,6 +672,10 @@ async function attemptEngineRecovery() {
   webllmRecoveryAttemptsThisPass++;
 
   log(`  ⚠️ Contexte GPU perdu — rechargement du moteur (tentative ${webllmRecoveryAttemptsThisPass}/${MAX_ENGINE_RECOVERIES_PER_PASS} pour toute l'adaptation)…`);
+  // Statut visible (pas seulement le journal technique replié) : sans ça,
+  // l'utilisateur voit la ligne de statut rester figée pendant de longues
+  // secondes de rechargement, sans indice que quelque chose se passe.
+  setStatus(`🔄 Reconnexion au GPU (tentative ${webllmRecoveryAttemptsThisPass}/${MAX_ENGINE_RECOVERIES_PER_PASS})… le reste de l'adaptation continuera juste après.`);
   await resetWebllmState();
   updateRunButton();
   // Laisse le pilote GPU quelques instants pour vraiment libérer le device
@@ -738,7 +768,21 @@ async function rewriteSegment(run, jobText, stopSignal, _attempt) {
   const messages = buildSegmentPrompt(run, jobText);
   try {
     const text = await generateText(messages, 200, stopSignal);
-    return text.trim().replace(/^["«]|["»]$/g, '');
+    const cleaned = text.trim().replace(/^["«]|["»]$/g, '');
+    if (isDegenerateOutput(cleaned)) {
+      // Le modèle a recopié/halluciné le gabarit du prompt au lieu de
+      // reformuler — accepter ce texte le mettrait littéralement dans le
+      // CV final. On retente une génération fraîche (sans recharger le
+      // moteur, ce n'est pas un souci GPU) avant d'abandonner ce segment.
+      if (attempt < MAX_SEGMENT_ATTEMPTS) {
+        log(`  ⚠️ Sortie invalide sur ce segment (le modèle a recopié le gabarit du prompt) — nouvelle génération (tentative ${attempt + 1}/${MAX_SEGMENT_ATTEMPTS}).`);
+        await sleep(300);
+        return rewriteSegment(run, jobText, stopSignal, attempt + 1);
+      }
+      log(`  ⚠️ Sortie invalide persistante sur ce segment après ${attempt} tentatives — laissé inchangé plutôt que d'injecter du texte parasite.`);
+      return null;
+    }
+    return cleaned;
   } catch (err) {
     if (err.message === '__STOPPED_BY_USER__') throw err;
 
@@ -794,7 +838,11 @@ function parseBatchResponse(raw, expectedCount) {
   for (let i = 0; i < parts.length; i += 2) {
     const num = parseInt(parts[i], 10);
     const text = (parts[i + 1] || '').trim().replace(/^["«]|["»]$/g, '');
-    if (num >= 1 && text) map[num] = text;
+    // Un bloc qui recopie le gabarit du prompt (voir isDegenerateOutput)
+    // est traité comme manquant plutôt qu'accepté tel quel — il repassera
+    // par le filet de sécurité individuel (rewriteSegment), qui a sa
+    // propre validation + nouvelle tentative.
+    if (num >= 1 && text && !isDegenerateOutput(text)) map[num] = text;
   }
   const results = [];
   for (let i = 1; i <= expectedCount; i++) results.push(map[i] || null);
@@ -1029,6 +1077,11 @@ runBtn.addEventListener('click', async () => {
 
     const results = await rewriteAllSegments(editable, jobText, stopSignal, (done, total) => {
       progressBar.style.width = Math.round((done / total) * 100) + '%';
+      // Indicateur d'avancement global, lisible sans ouvrir le journal
+      // technique — remplace la ligne de statut précédente (qui pouvait
+      // rester bloquée sur un message de rechargement pendant de longues
+      // secondes) dès qu'un nouveau segment aboutit.
+      setStatus(`Adaptation en cours… ${done}/${total} segment(s) adapté(s).`);
     });
 
     for (let i = 0; i < editable.length; i++) {
