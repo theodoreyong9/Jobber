@@ -25,27 +25,39 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-// Pendant une adaptation, l'indicateur visible reste volontairement simple
-// (des points qui avancent) — tout le détail (rechargements GPU, reprises,
+// Pendant une adaptation, l'indicateur visible reste simple (un compteur +
+// des points qui avancent) — tout le détail (rechargements GPU, reprises,
 // segment par segment...) continue d'exister mais uniquement dans le
 // journal technique replié. setStatus() devient silencieux pendant ce
 // temps plutôt que d'avoir à retirer un par un les nombreux appels
 // setStatus() disséminés dans le moteur (récupération GPU, reprises...).
+//
+// Le texte de base n'est PAS figé au démarrage : dotTickerBaseText peut
+// être mis à jour en direct (voir updateTickerBase()) pour refléter la
+// progression réelle ("segment 7/16"), sinon un traitement un peu long
+// (plusieurs offres, modèle lent) donne l'impression d'être bloqué alors
+// qu'il avance normalement.
 let dotTickerInterval = null;
 let dotTickerActive = false;
+let dotTickerBaseText = 'Adaptation en cours';
 
 function setStatus(msg) {
   if (dotTickerActive) return;
   statusEl.textContent = msg;
 }
 
+function updateTickerBase(text) {
+  dotTickerBaseText = text;
+}
+
 function startDotTicker(baseText) {
   stopDotTicker();
   dotTickerActive = true;
+  dotTickerBaseText = baseText;
   let n = 0;
   const tick = () => {
     n = (n + 1) % 4;
-    statusEl.textContent = baseText + '.'.repeat(n) + '\u00a0'.repeat(3 - n);
+    statusEl.textContent = dotTickerBaseText + '.'.repeat(n) + '\u00a0'.repeat(3 - n);
   };
   tick();
   dotTickerInterval = setInterval(tick, 500);
@@ -1464,10 +1476,11 @@ async function attemptEngineRecovery() {
 }
 
 // Nombre de tentatives internes à UN appel de rewriteSegment (indépendant
-// des "reprises" globales de rewriteAllSegments, voir MAX_SWEEPS). Comme il
-// n'y a pas de contrainte de temps/quota, on est volontairement généreux :
-// mieux vaut quelques secondes de plus que perdre un segment pour de bon.
-const MAX_SEGMENT_ATTEMPTS = 3;
+// des "reprises" globales de rewriteAllSegments, voir MAX_SWEEPS). Combiné
+// aux reprises, un budget trop généreux ici peut faire grimper un seul
+// segment récalcitrant à 15-20 appels — observé concrètement : 37 appels
+// réels pour un CV de 16 segments. Réduit pour rester raisonnable.
+const MAX_SEGMENT_ATTEMPTS = 2;
 
 async function rewriteSegment(run, job, stopSignal, _attempt) {
   const attempt = _attempt || 1;
@@ -1539,15 +1552,13 @@ async function rewriteSegment(run, job, stopSignal, _attempt) {
 
 // Reformule tous les segments modifiables, un appel au modèle par segment,
 // dans l'ordre.
-//
-// Pas de contrainte de temps/quota ici : au lieu d'abandonner définitivement
-// dès qu'un budget de récupération GPU (voir attemptEngineRecovery) est
-// épuisé, on refait des "reprises" complètes sur les segments encore en
-// échec, chacune avec un moteur et un budget de récupération neufs, jusqu'à
-// ce que tout soit fait — ou jusqu'à MAX_SWEEPS reprises infructueuses
-// (garde-fou pour ne jamais boucler littéralement à l'infini si le
-// GPU/pilote est réellement mort en permanence sur cette machine).
-const MAX_SWEEPS = 6;
+// Reprises complètes sur ce qui échoue encore, chacune avec un moteur
+// neuf, jusqu'à ce que tout soit fait — ou jusqu'à MAX_SWEEPS reprises
+// infructueuses (garde-fou pour ne jamais boucler littéralement à l'infini
+// si le GPU/pilote est réellement mort en permanence sur cette machine, et
+// pour ne pas faire grimper un segment récalcitrant à 15-20 appels
+// cumulés — observé concrètement : 37 appels réels pour 16 segments).
+const MAX_SWEEPS = 3;
 
 // ==== 4quinquies. Plan d'adaptation (déterministe, sans LLM) ================
 // Pièce qui manquait entre le matching et la réécriture : au lieu de
@@ -1669,6 +1680,7 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
     const done = results.filter((t) => t).length + skippedIdx.size;
     if (onProgress) onProgress(Math.min(done, editable.length), editable.length);
   };
+  reportProgress(); // affiche tout de suite un vrai compteur (KEEP déjà comptés), avant même le premier appel au modèle qui peut prendre du temps
 
   // Un appel = un segment, dans l'ordre. Chaque segment garde son propre
   // cycle complet de tentatives + récupération GPU (voir rewriteSegment) ;
@@ -1875,6 +1887,8 @@ runBtn.addEventListener('click', async () => {
       const { results, skippedIdx } = await rewriteAllSegments(editable, job, stopSignal, (done, total) => {
         const overallDone = jobIdx + (total ? done / total : 0);
         progressBar.style.width = Math.round((overallDone / jobs.length) * 100) + '%';
+        const offerTag = jobs.length > 1 ? `offre ${jobIdx + 1}/${jobs.length} · ` : '';
+        updateTickerBase(`${offerTag}segment ${Math.min(done + 1, total)}/${total}`);
       });
 
       for (let i = 0; i < editable.length; i++) {

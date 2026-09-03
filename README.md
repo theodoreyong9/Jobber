@@ -170,9 +170,10 @@ peuvent perdre le contexte en cours d'inférence (`DXGI_ERROR_DEVICE_HUNG`,
   pilote (TDR — les GPU intégrés y sont particulièrement sensibles) ;
 - rechargement automatique du moteur avec un budget de tentatives global
   pour toute la série, réellement utilisé jusqu'au bout ;
-- "reprises" complètes en fin de série sur tout ce qui a échoué, avec un
-  moteur neuf, jusqu'à ce que tout soit traité ou qu'un plafond de
-  sécurité soit atteint ;
+- "reprises" complètes en fin de série sur tout ce qui a échoué (2
+  tentatives par segment, jusqu'à 3 reprises), jusqu'à ce que tout soit
+  traité ou qu'un plafond de sécurité soit atteint — plafonné pour éviter
+  qu'un segment récalcitrant ne cumule des dizaines d'appels à lui seul ;
 - verrou d'interface dédié : le bouton "Adapter mon CV" reste désactivé du
   premier au dernier instant, même pendant les rechargements internes,
   pour empêcher un double-clic de lancer deux séries en parallèle.
