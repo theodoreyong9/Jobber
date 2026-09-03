@@ -711,29 +711,88 @@ const STOPWORDS_JOB_EXTRACTION = new Set([
   'that', 'from', 'as', 'it', 'its',
 ]);
 
+// "Fluff" typique d'annonce — souvent en majuscule initiale (donc surnoté
+// par erreur par la seule heuristique de casse) mais sans valeur de
+// mot-clé réel : qualificatifs génériques, formules de politesse
+// d'annonce, etc. Sans ce filtre, "Senior", "Strong", "Excellent",
+// "Looking" ressortaient au même niveau qu'une vraie technologie.
+const JOB_FLUFF_WORDS = new Set([
+  'senior', 'junior', 'strong', 'excellent', 'great', 'looking', 'join', 'team', 'role',
+  'position', 'opportunity', 'opportunities', 'passionate', 'motivated', 'dynamic',
+  'candidate', 'candidates', 'company', 'environment', 'working', 'work', 'required',
+  'preferred', 'plus', 'must', 'ideal', 'ideally', 'responsibilities', 'requirements',
+  'description', 'qualifications', 'benefits', 'about', 'we', 'you', 'our', 'client',
+  'clients', 'someone', 'people', 'person', 'looking', 'apply', 'application', 'experience',
+  'poste', 'profil', 'recherche', 'recherchons', 'rejoindre', 'équipe', 'entreprise',
+  'mission', 'missions', 'expérience', 'excellent', 'motivé', 'motivée', 'dynamique',
+  'candidat', 'candidate', 'souhait', 'souhaite', 'souhaitez', 'idéal', 'idéale',
+  'avantages', 'salaire', 'contrat', 'poste', 'type',
+]);
+
+// Quelques phrases techniques usuelles à 2 mots qu'une extraction mot-à-mot
+// casserait (ex. "REST" + "API" séparément, en perdant le sens du couple).
+// Repérées explicitement plutôt que par une vraie analyse syntaxique
+// (pas de LLM à ce stade) — liste volontairement courte et ciblée sur les
+// patterns les plus fréquents des offres tech/business.
+const KNOWN_TECHNICAL_BIGRAMS = [
+  /machine learning/i, /deep learning/i, /rest(?:ful)? api/i, /ci\/cd/i,
+  /data science/i, /product owner/i, /product manager/i, /business analyst/i,
+  /full[- ]stack/i, /back[- ]end/i, /front[- ]end/i, /cloud computing/i,
+  /version control/i, /agile methodology/i, /scrum master/i, /service client/i,
+  /gestion de projet/i, /travail d'équipe/i, /esprit d'équipe/i,
+];
+
 // Mots-clés dominants d'une offre d'emploi, par fréquence pondérée (les
 // mots avec majuscule interne/initiale — acronymes, technologies, noms
 // propres comme "Salesforce", "SQL", "B2B" — comptent double, car ce sont
-// typiquement les termes les plus discriminants d'une annonce).
+// typiquement les termes les plus discriminants d'une annonce), moins le
+// "fluff" générique d'annonce (voir JOB_FLUFF_WORDS) qui faussait le
+// classement avant ce filtre.
 function extractJobKeywords(jobText, maxKeywords) {
   maxKeywords = maxKeywords || 25;
   if (!jobText) return [];
+
+  // Bigrammes techniques connus d'abord, pour ne pas les casser en deux
+  // mots-clés séparés qui perdraient leur sens ("REST" et "API" isolés
+  // valent moins que "REST API").
+  const bigramHits = [];
+  const bigramComponentWords = new Set();
+  for (const pattern of KNOWN_TECHNICAL_BIGRAMS) {
+    const m = jobText.match(pattern);
+    if (m) {
+      bigramHits.push(m[0]);
+      m[0].toLowerCase().split(/[^\p{L}0-9]+/u).forEach((w) => { if (w) bigramComponentWords.add(w); });
+    }
+  }
+
   const tokens = jobText.match(/[\p{L}][\p{L}0-9+#.\-]{1,}/gu) || [];
   const counts = new Map(); // lowerKey -> { count, original }
-  for (const tok of tokens) {
+  for (let tok of tokens) {
+    tok = tok.replace(/\.+$/, ''); // ponctuation de fin de phrase collée au mot ("AWS." → "AWS")
     if (tok.length < 3) continue;
     const lower = tok.toLowerCase();
-    if (STOPWORDS_JOB_EXTRACTION.has(lower)) continue;
+    if (STOPWORDS_JOB_EXTRACTION.has(lower) || JOB_FLUFF_WORDS.has(lower)) continue;
+    if (bigramComponentWords.has(lower)) continue; // déjà capturé dans un bigramme technique
     const looksProperOrAcronym = /^[A-ZÀ-Ü]/.test(tok) || tok === tok.toUpperCase();
     const weight = looksProperOrAcronym ? 2 : 1;
     const entry = counts.get(lower);
     if (entry) entry.count += weight;
     else counts.set(lower, { count: weight, original: tok });
   }
-  return Array.from(counts.values())
+  const unigrams = Array.from(counts.values())
     .sort((a, b) => b.count - a.count)
-    .slice(0, maxKeywords)
     .map((e) => e.original);
+
+  // Les bigrammes techniques passent en premier (plus informatifs qu'un
+  // mot isolé), puis les meilleurs unigrammes comblent le reste du quota.
+  const seen = new Set(bigramHits.map((b) => b.toLowerCase()));
+  const merged = [...bigramHits];
+  for (const u of unigrams) {
+    if (merged.length >= maxKeywords) break;
+    if (seen.has(u.toLowerCase())) continue;
+    merged.push(u);
+  }
+  return merged.slice(0, maxKeywords);
 }
 
 // Contexte d'offre compact envoyé au modèle : une liste de mots-clés (voir
@@ -848,14 +907,28 @@ function extractFactsStrict(text) {
 }
 
 // Compare les facts du texte généré à ceux autorisés : ceux de l'extrait
-// D'ORIGINE, plus les mots-clés explicitement suggérés pour CE segment
-// (voir buildMatchNote — ceux-là sont légitimes puisqu'on les a nous-mêmes
-// proposés). Tout fait NOUVEAU en dehors de cet ensemble est une
-// invention, même si le texte "sonne bien" — c'est précisément ce qui
-// avait produit des CV avec du contenu halluciné.
-function validateFactsPreserved(originalText, newText, allowedExtra) {
+// D'ORIGINE, plus les mots-clés SUGGÉRÉS pour CE segment (voir
+// buildMatchNote) — mais seulement si ces mots-clés ont eux-mêmes une
+// présence (même approximative) dans le texte D'ORIGINE.
+//
+// Règle absolue de l'application : UN MOT-CLÉ DE L'OFFRE NE DEVIENT JAMAIS
+// UN FAIT DU CANDIDAT. Le matching (segmentKeywordMatches) garantit déjà
+// ça aujourd'hui, mais on le revérifie ici, EN LOCAL et INDÉPENDAMMENT de
+// l'appelant — en défense en profondeur. Si le matching évolue un jour
+// vers quelque chose de plus "intelligent" (synonymes sémantiques,
+// vocabulaire secondaire), cette double vérification reste la dernière
+// ligne de défense contre l'ajout d'une compétence que le CV n'a jamais
+// revendiquée.
+function validateFactsPreserved(originalText, newText, suggestedKeywords) {
   const allowedStems = new Set(Array.from(extractFactsLenient(originalText)).map(stem));
-  (allowedExtra || []).forEach((k) => allowedStems.add(stem(k)));
+  const originalWordStems = new Set(
+    (originalText.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem)
+  );
+  (suggestedKeywords || []).forEach((k) => {
+    if (originalWordStems.has(stem(k))) allowedStems.add(stem(k));
+    // sinon : mot-clé présent UNIQUEMENT dans l'offre → jamais autorisé,
+    // quel que soit ce que l'appelant a suggéré.
+  });
   const newFacts = extractFactsStrict(newText);
   const invented = Array.from(newFacts).filter((f) => !allowedStems.has(stem(f)));
   return { ok: invented.length === 0, invented };
