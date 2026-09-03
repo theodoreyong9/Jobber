@@ -885,6 +885,16 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     } catch (err) {
       if (err.message === '__STOPPED_BY_USER__') throw err;
       log(`  ⚠️ Échec de l'appel groupé (lot ${b + 1}/${batches.length}) : ${err.message} — repli individuel pour ce lot.`);
+
+      // webllmReady ne repasse JAMAIS à false tout seul quand un appel
+      // plante en cours de route (voir resetWebllmState) — sans cet appel
+      // explicite, tous les lots suivants retombent instantanément sur le
+      // même moteur mort (c'est exactement ce qui produisait une rafale
+      // d'échecs "ModelNotLoadedError" à quelques centaines de ms
+      // d'intervalle, sans aucun rechargement entre eux).
+      if (isGpuContextLostError(err)) {
+        await attemptEngineRecovery();
+      }
     }
     offset += batch.length;
     reportProgress();
