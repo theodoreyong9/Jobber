@@ -10,9 +10,6 @@ const progressBar = document.getElementById('progress-bar');
 const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 const modelSelect = document.getElementById('model-select');
-const loadModelBtn = document.getElementById('load-model-btn');
-const modelLoadBar = document.getElementById('model-load-bar');
-const engineStatusEl = document.getElementById('engine-status');
 
 // État du document en cours d'édition, gardé EN MÉMOIRE et modifié en place :
 // tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page, images,
@@ -120,16 +117,40 @@ function releaseWakeLock() {
 // (modèle "pas encore chaud") ou sous stress GPU. Sans cette détection, ce
 // texte parasite est accepté tel quel et finit littéralement dans le CV
 // final — pire qu'un segment simplement laissé inchangé.
-function isDegenerateOutput(text) {
+//
+// jobText (optionnel) permet en plus de détecter un cas encore plus
+// trompeur : le modèle recopie un MORCEAU DE L'OFFRE D'EMPLOI elle-même en
+// guise de "reformulation" (ex. un extrait "Managed ERP/CRM Salesforce…"
+// remplacé par "Excellente opportunité de carrière !" tiré mot pour mot de
+// l'annonce collée). Ce n'est pas une reformulation du CV, c'est un
+// morceau d'une tout autre source injecté à la place — potentiellement
+// très gênant si l'offre décrit un poste ou une entreprise différents.
+function isDegenerateOutput(text, jobText) {
   if (!text) return true;
   const t = text.toLowerCase();
-  return (
+  if (
     /extraits? du cv/.test(t) ||
     t.includes("offre d'emploi") ||
     t.includes('réponds uniquement avec le texte reformulé') ||
     t.includes('réponds avec le format demandé') ||
     /^---/.test(text.trim())
-  );
+  ) return true;
+
+  if (jobText && looksLeakedFromJobText(text, jobText)) return true;
+
+  return false;
+}
+
+function looksLeakedFromJobText(text, jobText) {
+  const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const t = norm(text);
+  const j = norm(jobText);
+  if (t.length < 40 || j.length < 40) return false; // trop court pour juger fiablement
+  const CHUNK = 40;
+  for (let i = 0; i + CHUNK <= t.length; i += CHUNK) {
+    if (j.includes(t.slice(i, i + CHUNK))) return true;
+  }
+  return false;
 }
 
 function isGpuContextLostError(e) {
@@ -273,20 +294,18 @@ async function createEngine() {
   const engine = await window.webllm.CreateWebWorkerMLCEngine(webllmWorker, webllmModelId, {
     initProgressCallback: (p) => {
       const pct = Math.round((p.progress || 0) * 100);
-      modelLoadBar.style.width = pct + '%';
-      engineStatusEl.textContent = (p.text || 'Chargement…') + ' (' + pct + '%)';
+      progressBar.style.width = pct + '%';
+      setStatus('⬇️ ' + (p.text || 'Chargement du modèle…') + ' (' + pct + '%)');
     },
   });
   dlog('Moteur prêt après ' + (((performance.now ? performance.now() : Date.now()) - t0) / 1000).toFixed(1) + 's');
   return engine;
 }
 
-// Initialise (ou réutilise) le moteur. Appelé explicitement au clic sur
-// "Charger le modèle", ET en préchargement dès qu'un CV est déposé — pour
-// que le téléchargement du modèle se fasse PENDANT que l'utilisateur colle
-// l'offre d'emploi, au lieu d'attendre le clic sur "Adapter mon CV". C'est
-// le principal gain perçu : le modèle est déjà chaud quand on lance la
-// génération.
+// Initialise (ou réutilise) le moteur. Un seul point d'entrée : le clic sur
+// "Adapter mon CV" (voir plus bas, await initWebLLM()) — plus besoin d'un
+// bouton "Charger le modèle" séparé, le modèle choisi dans la liste se
+// charge automatiquement au moment où on lance l'adaptation.
 async function initWebLLM(_isRetry) {
   if (webllmReady && webllmEngine) return webllmEngine;
   if (webllmLoading && !_isRetry) {
@@ -302,7 +321,7 @@ async function initWebLLM(_isRetry) {
   webllmLoading = true;
   if (!_isRetry) { webllmModelKey = await resolveModelKey(); webllmModelId = MODELS[webllmModelKey] || MODELS.medium; }
   modelSelect.disabled = true;
-  engineStatusEl.textContent = 'Initialisation…';
+  setStatus('Initialisation du modèle…');
   await acquireWakeLock();
 
   try {
@@ -314,7 +333,7 @@ async function initWebLLM(_isRetry) {
       if (isGpuContextLostError(e) && !_isRetry) {
         console.warn('Contexte GPU perdu pendant le chargement, nouvelle tentative…');
         await resetWebllmState();
-        engineStatusEl.textContent = 'Contexte GPU perdu — nouvelle tentative…';
+        setStatus('Contexte GPU perdu — nouvelle tentative de chargement…');
         webllmLoading = false;
         return await initWebLLM(true);
       }
@@ -322,12 +341,9 @@ async function initWebLLM(_isRetry) {
     }
     webllmEngine = engine;
     webllmReady = true;
-    // Un rechargement réussi (ex. clic manuel sur "Charger le modèle" après
-    // un souci résolu) doit pouvoir sortir du mode "irrécupérable".
+    // Un rechargement réussi doit pouvoir sortir du mode "irrécupérable".
     webllmIrrecoverable = false;
-    engineStatusEl.textContent = '✅ Modèle chargé (' + webllmModelId + ') — prêt.';
-    modelLoadBar.style.width = '100%';
-    modelSelect.disabled = false;
+    setStatus('✅ Modèle chargé (' + webllmModelId + ') — adaptation en cours…');
     updateRunButton();
     return engine;
   } catch (e) {
@@ -337,7 +353,7 @@ async function initWebLLM(_isRetry) {
     // `.message`). Sans ça, tout code appelant qui lit `.message` sur
     // l'erreur relancée ici récupère `undefined` au lieu du vrai motif.
     const normalized = normalizeError(e, 'Échec du chargement du moteur');
-    engineStatusEl.textContent = '❌ Échec du chargement : ' + normalized.message;
+    setStatus('❌ Échec du chargement du modèle : ' + normalized.message);
     modelSelect.disabled = false;
     throw normalized;
   } finally {
@@ -351,18 +367,13 @@ async function initWebLLM(_isRetry) {
 window.addEventListener('pagehide', resetWebllmState);
 window.addEventListener('beforeunload', resetWebllmState);
 
-loadModelBtn.addEventListener('click', () => {
-  initWebLLM().catch((e) => log('⚠️ ' + e.message));
-});
-
 modelSelect.addEventListener('change', () => {
   localStorage.setItem('cvAdapterModelChoice', modelSelect.value);
   // Un changement de modèle après coup nécessite de recharger le moteur.
   if (webllmReady) {
-    engineStatusEl.textContent = 'Modèle changé — libération du précédent…';
-    modelLoadBar.style.width = '0%';
+    setStatus('Modèle changé — libération du précédent… (se rechargera automatiquement au prochain clic sur « Adapter mon CV »)');
+    progressBar.style.width = '0%';
     resetWebllmState().then(() => {
-      engineStatusEl.textContent = 'Modèle changé — recharge-le avant de lancer une adaptation.';
       updateRunButton();
     });
   }
@@ -484,12 +495,8 @@ function updateRunButton() {
   // une 2e passe en parallèle sur le même docState, ce qui corrompt tout.
   //
   // webllmReady n'est PLUS une condition ici : le clic sur "Adapter mon CV"
-  // charge lui-même le modèle s'il ne l'est pas déjà (voir le handler,
-  // await initWebLLM()) — obliger l'utilisateur à cliquer d'abord sur
-  // "Charger le modèle" puis sur "Adapter mon CV" était une étape
-  // superflue. Le bouton "Charger le modèle maintenant" reste disponible
-  // pour qui veut pré-télécharger le modèle à l'avance, mais n'est plus
-  // obligatoire.
+  // charge lui-même le modèle choisi dans la liste s'il ne l'est pas déjà
+  // (voir le handler, await initWebLLM()) — un seul bouton, un seul clic.
   runBtn.disabled = adaptationInProgress || !docState || jobTextEl.value.trim().length === 0;
 }
 
@@ -497,8 +504,21 @@ function updateRunButton() {
 function getTextRuns(xmlDoc) {
   const rNodes = Array.from(xmlDoc.getElementsByTagNameNS(W_NS, 'r'));
   return rNodes.map((rNode) => {
-    const tNodes = Array.from(rNode.getElementsByTagNameNS(W_NS, 't'));
-    const text = tNodes.map((t) => t.textContent).join('');
+    // Reconstruit le texte du run en respectant l'ORDRE réel de ses
+    // enfants, pas seulement ses <w:t> : un <w:br/> ou <w:cr/> à
+    // l'intérieur d'un même run (ex. liste de compétences tapée avec
+    // Maj+Entrée plutôt qu'en paragraphes séparés, ou plusieurs <w:t>
+    // laissés par le correcteur orthographique de Word) représente un
+    // vrai saut de ligne visuel. En les ignorant, "Rust", "JavaScript",
+    // "SQL"… devenait un seul bloc illisible "RustJavaScriptSQL…" envoyé
+    // tel quel au modèle (voir setRunText pour la réécriture symétrique).
+    let text = '';
+    for (const child of Array.from(rNode.childNodes)) {
+      if (child.nodeType !== 1) continue;
+      const local = child.localName;
+      if (local === 't') text += child.textContent;
+      else if (local === 'br' || local === 'cr') text += '\n';
+    }
     const rPr = rNode.getElementsByTagNameNS(W_NS, 'rPr')[0] || null;
     const bold = rPr ? isRunPropertyOn(rPr, 'b') : false;
     return { node: rNode, text, bold };
@@ -517,7 +537,25 @@ function isRunPropertyOn(rPr, tag) {
 // modèle ne voit donc jamais un nom, une date, un employeur, un diplôme
 // ou des coordonnées.
 const MIN_EDITABLE_RUN_LENGTH = 25;
-const FROZEN_SECTION_PATTERN = /\b(education|formation|dipl[oô]me|langue|language|divers|autre)/i;
+
+// Sections qu'on ne touche jamais, quel que soit leur contenu : formation,
+// langues parlées, centres d'intérêt/loisirs, et désormais les listes de
+// compétences/technologies — ce ne sont pas des phrases à reformuler, ce
+// sont des données factuelles à préserver telles quelles.
+const FROZEN_SECTION_PATTERN = /\b(education|formation|dipl[oô]me|langue|language|divers|autre|loisir|hobby|hobbies|int[ée]r[êe]t|interest|skill|comp[ée]tence|expertise|stack|outils?|tools?|technolog)/i;
+
+// Sections dont le contenu (non gras) est un vrai résumé/profil — ton
+// différent d'une description de poste : uniquement affirmatif et
+// enthousiaste, très court. Le nom de section par défaut avant tout
+// marqueur ('Profil / en-tête') matche déjà ce motif, ce qui couvre aussi
+// une éventuelle accroche/tagline juste sous le titre.
+const PROFILE_SECTION_PATTERN = /profil|profile|summary|r[ée]sum[ée]|about|propos/i;
+
+// Sections d'expérience professionnelle : c'est là que vivent les
+// descriptions de poste (role 'job-description'), à distinguer des lignes
+// de poste elles-mêmes (titre — entreprise — dates), qui restent gelées
+// car en gras (voir 'frozen-bold' ci-dessous).
+const EXPERIENCE_SECTION_PATTERN = /exp[ée]rience|parcours|career|emploi|professionnel/i;
 
 function classifyRuns(runs) {
   const firstBoldIndex = runs.findIndex((r) => r.bold);
@@ -532,9 +570,16 @@ function classifyRuns(runs) {
       currentSectionFrozen = FROZEN_SECTION_PATTERN.test(trimmed);
       return { ...r, editable: false, role: 'section', section: currentSection };
     }
+    // Le tout premier passage en gras est le titre/accroche du CV — le
+    // seul segment de type "titre" (contrainte : 5 mots maximum, voir
+    // buildSegmentPrompt/buildBatchPrompt).
     if (i === firstBoldIndex) {
       return { ...r, editable: true, role: 'headline', section: currentSection };
     }
+    // Tout le reste du gras est gelé : nom, lignes "poste — entreprise —
+    // dates", sous-titres de catégories ("Core", "Technicals"…), diplômes.
+    // Ce sont des données factuelles/structurelles, pas des phrases à
+    // reformuler.
     if (r.bold) {
       return { ...r, editable: false, role: 'frozen-bold', section: currentSection };
     }
@@ -547,7 +592,16 @@ function classifyRuns(runs) {
     if (looksLikeContactInfo(trimmed)) {
       return { ...r, editable: false, role: 'frozen-contact', section: currentSection };
     }
-    return { ...r, editable: true, role: 'content', section: currentSection };
+    if (PROFILE_SECTION_PATTERN.test(currentSection)) {
+      return { ...r, editable: true, role: 'profile', section: currentSection };
+    }
+    if (EXPERIENCE_SECTION_PATTERN.test(currentSection)) {
+      return { ...r, editable: true, role: 'job-description', section: currentSection };
+    }
+    // Ni "profil" ni "expérience" reconnus (mise en page inhabituelle) :
+    // traité comme une description de poste par défaut — plus prudent
+    // qu'un ton "profil" appliqué à tort à du contenu factuel.
+    return { ...r, editable: true, role: 'job-description', section: currentSection };
   });
 }
 
@@ -639,11 +693,246 @@ async function generateText(messages, maxTokens, stopSignal) {
   return out;
 }
 
-// ==== 5. Reformulation d'un segment ====
-const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et le texte d'une offre d'emploi. Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
+// ==== 4bis. Extraction déterministe de l'offre (pas de LLM) =================
+// C'est l'étage qui manquait : plutôt que de renvoyer le texte BRUT et
+// complet de l'offre à CHAQUE appel (lourd pour le prompt, et surtout ce
+// qui permettait au modèle de recopier des phrases entières de l'annonce
+// au lieu de reformuler le CV), on extrait une fois pour toute une liste de
+// mots-clés — un vrai "job extraction" déterministe, gratuit en calcul
+// GPU, reproductible, et qui réduit mécaniquement le risque de fuite de
+// texte puisque le modèle ne voit plus l'annonce en entier.
+const STOPWORDS_JOB_EXTRACTION = new Set([
+  'le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'et', 'ou', 'à', 'en', 'dans', 'pour',
+  'sur', 'avec', 'par', 'au', 'aux', 'ce', 'cette', 'ces', 'est', 'sont', 'être', 'avoir',
+  'nous', 'vous', 'votre', 'notre', 'nos', 'vos', 'tu', 'te', 'ton', 'ta', 'tes', 'que', 'qui',
+  'dont', 'où', 'se', 'sa', 'son', 'ses', 'leur', 'leurs', 'plus', 'très', 'tout', 'tous',
+  'toute', 'toutes', 'the', 'and', 'or', 'of', 'to', 'in', 'for', 'with', 'on', 'at', 'by',
+  'a', 'an', 'is', 'are', 'be', 'have', 'has', 'will', 'you', 'your', 'we', 'our', 'this',
+  'that', 'from', 'as', 'it', 'its',
+]);
 
-function buildSegmentPrompt(run, jobText) {
-  const user = `--- OFFRE D'EMPLOI ---\n${jobText}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\nRéponds uniquement avec le texte reformulé.`;
+// Mots-clés dominants d'une offre d'emploi, par fréquence pondérée (les
+// mots avec majuscule interne/initiale — acronymes, technologies, noms
+// propres comme "Salesforce", "SQL", "B2B" — comptent double, car ce sont
+// typiquement les termes les plus discriminants d'une annonce).
+function extractJobKeywords(jobText, maxKeywords) {
+  maxKeywords = maxKeywords || 25;
+  if (!jobText) return [];
+  const tokens = jobText.match(/[\p{L}][\p{L}0-9+#.\-]{1,}/gu) || [];
+  const counts = new Map(); // lowerKey -> { count, original }
+  for (const tok of tokens) {
+    if (tok.length < 3) continue;
+    const lower = tok.toLowerCase();
+    if (STOPWORDS_JOB_EXTRACTION.has(lower)) continue;
+    const looksProperOrAcronym = /^[A-ZÀ-Ü]/.test(tok) || tok === tok.toUpperCase();
+    const weight = looksProperOrAcronym ? 2 : 1;
+    const entry = counts.get(lower);
+    if (entry) entry.count += weight;
+    else counts.set(lower, { count: weight, original: tok });
+  }
+  return Array.from(counts.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, maxKeywords)
+    .map((e) => e.original);
+}
+
+// Contexte d'offre compact envoyé au modèle : une liste de mots-clés (voir
+// ci-dessus) + un court extrait ("gist") pour donner le ton/domaine général
+// sans jamais exposer l'annonce complète. Calculé UNE SEULE FOIS par
+// adaptation (pas à chaque segment) — c'est le seul endroit qui garde le
+// texte brut complet (job.raw), utilisé uniquement pour la détection de
+// fuite (voir isDegenerateOutput), jamais envoyé tel quel au modèle.
+function buildJobContext(jobText) {
+  const raw = jobText || '';
+  return {
+    raw,
+    keywords: extractJobKeywords(raw),
+    gist: raw.slice(0, 220).trim(),
+  };
+}
+
+function formatJobContextForPrompt(job) {
+  const kw = job.keywords.length ? job.keywords.join(', ') : '(aucun mot-clé notable détecté)';
+  return `Mots-clés de l'offre : ${kw}\nContexte (début de l'annonce) : ${job.gist}${job.raw.length > job.gist.length ? '…' : ''}`;
+}
+
+// ==== 4ter. Semantic matching (déterministe, sans LLM) =======================
+// Étage qui manquait entre "job extraction" et "LLM rewriting" : au lieu de
+// donner la MÊME liste de mots-clés à tous les segments, on calcule pour
+// CHAQUE segment lesquels de ces mots-clés lui sont réellement pertinents.
+// Un "stem" grossier (5 premiers caractères, accents retirés) capture les
+// variantes morphologiques simples (vente/vendu/vendeur,
+// gestion/gérer/gestionnaire) sans avoir besoin d'embeddings — imparfait
+// mais gratuit en calcul et 100% déterministe.
+function stem(word) {
+  return word.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 5);
+}
+
+// Ne renvoie que les mots-clés qui ont un vrai écho thématique dans le
+// texte du segment (variante déjà présente) — PAS les mots-clés absents.
+// C'est volontaire : suggérer un mot-clé totalement absent du sujet du
+// segment revient à pousser le modèle à l'inventer, ce qui est exactement
+// le recopiage d'offre qu'on cherche à éviter. On ne met en avant que le
+// vocabulaire de l'offre pour des thèmes DÉJÀ présents dans l'extrait.
+function segmentKeywordMatches(segmentText, keywords) {
+  const segStems = new Set((segmentText.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem));
+  return keywords.filter((kw) => segStems.has(stem(kw)));
+}
+
+// Le score de correspondance module directement l'agressivité de la
+// consigne : 0 mot-clé pertinent → rester très proche de l'original (pas
+// de lien forcé) ; correspondance forte → license d'utiliser davantage le
+// vocabulaire de l'offre. C'est la partie "sélection" du pipeline pour ce
+// produit — on ne choisit pas QUELS segments garder (tout le CV reste,
+// contrainte du produit), mais QUELLE INTENSITÉ d'adaptation appliquer.
+function buildMatchNote(matched) {
+  if (matched.length === 0) {
+    return "Aucun mot-clé de l'offre ne correspond à ce que dit cet extrait : NE FORCE AUCUN lien avec l'offre — reformule légèrement dans le même esprit, ou renvoie-le tel quel si rien à gagner.";
+  }
+  if (matched.length <= 2) {
+    return `Correspondance partielle avec l'offre sur : ${matched.join(', ')}. Tu peux réutiliser ce vocabulaire précis si ça correspond vraiment, sans forcer sur le reste.`;
+  }
+  return `Forte correspondance avec l'offre sur : ${matched.join(', ')}. Mets clairement ce vocabulaire en avant, tout en restant fidèle aux faits de l'extrait original.`;
+}
+
+// ==== 4quater. Facts verrouillés + validateur local (garde-fou) =============
+// "Le code décide ce qui est autorisé, le LLM décide comment l'exprimer."
+// On extrait les "facts" d'un extrait — technologies, noms propres,
+// acronymes, chiffres/métriques — et après génération, le PC (pas le LLM)
+// vérifie qu'aucun fait n'a été inventé. C'est un vrai garde-fou
+// déterministe, pas une simple consigne dans le prompt qu'un petit modèle
+// peut ignorer.
+//
+// Deux variantes volontairement différentes :
+// - "Lenient" pour le texte D'ORIGINE (liste des faits AUTORISÉS) : capture
+//   large, une sur-détection ici est inoffensive (on autorise juste un peu
+//   plus que nécessaire).
+// - "Strict" pour le texte GÉNÉRÉ (recherche d'inventions) : ignore la
+//   majuscule d'un mot en tout DÉBUT DE PHRASE, qui ne prouve rien (un
+//   modèle qui restructure une phrase pour commencer par "Led" ou "Managed"
+//   ne "invente" pas un nom propre) — seule une majuscule ailleurs dans la
+//   phrase, un acronyme, une capitale interne (PostgreSQL) ou un chiffre
+//   sont des signaux fiables.
+function extractFactsLenient(text) {
+  const facts = new Set();
+  (text.match(/\d+[%+]?/g) || []).forEach((n) => facts.add(n));
+  const tokens = text.match(/[\p{L}][\p{L}0-9+#.\-]{1,}/gu) || [];
+  for (const tok of tokens) {
+    if (tok.length < 3) continue;
+    if (/^[A-ZÀ-Ü]/.test(tok) || tok === tok.toUpperCase()) facts.add(tok);
+  }
+  return facts;
+}
+
+function extractFactsStrict(text) {
+  const facts = new Set();
+  (text.match(/\d+[%+]?/g) || []).forEach((n) => facts.add(n));
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const sentence of sentences) {
+    const tokens = sentence.match(/[\p{L}][\p{L}0-9+#.\-]{1,}/gu) || [];
+    tokens.forEach((tok, idx) => {
+      if (tok.length < 3) return;
+      const isAllCaps = tok === tok.toUpperCase() && /[A-ZÀ-Ü]/.test(tok);
+      const hasDigit = /\d/.test(tok);
+      const hasInternalCap = /[A-Z]/.test(tok.slice(1));
+      const isCapitalized = /^[A-ZÀ-Ü]/.test(tok);
+      if (isAllCaps || hasDigit || hasInternalCap || (isCapitalized && idx !== 0)) {
+        facts.add(tok);
+      }
+    });
+  }
+  return facts;
+}
+
+// Compare les facts du texte généré à ceux autorisés : ceux de l'extrait
+// D'ORIGINE, plus les mots-clés explicitement suggérés pour CE segment
+// (voir buildMatchNote — ceux-là sont légitimes puisqu'on les a nous-mêmes
+// proposés). Tout fait NOUVEAU en dehors de cet ensemble est une
+// invention, même si le texte "sonne bien" — c'est précisément ce qui
+// avait produit des CV avec du contenu halluciné.
+function validateFactsPreserved(originalText, newText, allowedExtra) {
+  const allowedStems = new Set(Array.from(extractFactsLenient(originalText)).map(stem));
+  (allowedExtra || []).forEach((k) => allowedStems.add(stem(k)));
+  const newFacts = extractFactsStrict(newText);
+  const invented = Array.from(newFacts).filter((f) => !allowedStems.has(stem(f)));
+  return { ok: invented.length === 0, invented };
+}
+
+// Contrainte de longueur RÉELLEMENT vérifiée (pas juste suggérée dans le
+// prompt, que le modèle peut ignorer) : un titre qui dépasse largement 5
+// mots, ou un profil qui dépasse largement 4 phrases, n'est pas "presque
+// bon" — c'est rejeté et retenté, sinon laissé inchangé.
+function violatesLengthConstraint(role, text) {
+  if (role === 'headline') {
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    return words > 7; // 5 mots visés, un peu de marge avant rejet
+  }
+  if (role === 'profile') {
+    const sentences = (text.match(/[.!?]+(\s|$)/g) || []).length || 1;
+    return sentences > 5; // 4 phrases visées, un peu de marge avant rejet
+  }
+  return false; // pas de contrainte stricte pour les descriptions de poste
+}
+
+// Combine les 3 gardes-fous locaux (gabarit/fuite, longueur, faits
+// inventés) en une seule vérification, utilisée aussi bien pour un appel
+// individuel que pour chaque bloc d'un appel groupé. Retourne une raison
+// explicite pour un journal utile, pas juste "invalide".
+function validateSegmentOutput(run, cleaned, job) {
+  if (isDegenerateOutput(cleaned, job.raw)) {
+    return { ok: false, reason: 'gabarit_ou_fuite' };
+  }
+  if (violatesLengthConstraint(run.role, cleaned)) {
+    return { ok: false, reason: 'longueur' };
+  }
+  if (run.role === 'job-description') {
+    const matched = segmentKeywordMatches(run.text, job.keywords);
+    const check = validateFactsPreserved(run.text, cleaned, matched);
+    if (!check.ok) return { ok: false, reason: 'faits_inventes', invented: check.invented };
+  }
+  return { ok: true };
+}
+
+function describeValidationFailure(validation) {
+  if (validation.reason === 'faits_inventes') return `invente des éléments absents de l'original (${validation.invented.join(', ')})`;
+  if (validation.reason === 'longueur') return 'dépasse largement la longueur demandée';
+  return 'recopie le gabarit du prompt ou un passage de l\'offre';
+}
+
+// ==== 5. Reformulation d'un segment ====
+const REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne un court extrait d'un CV et les mots-clés + le contexte d'une offre d'emploi (PAS le texte complet — n'invente pas de phrases d'annonce, tu ne les as pas). Reformule cet extrait pour mettre en avant ce qui correspond à l'offre, en utilisant ces mots-clés UNIQUEMENT quand ça correspond vraiment à ce que dit l'extrait — il s'agit d'adapter sémantiquement l'extrait, jamais de recopier une phrase d'annonce. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer, renvoie l'extrait tel quel. Réponds UNIQUEMENT avec le texte reformulé, sans guillemets ni préambule.`;
+
+// Instruction complémentaire selon le rôle du segment (voir classifyRuns) :
+// un titre, un profil et une description de poste n'appellent pas le même
+// traitement, ni la même longueur de réponse.
+const ROLE_INSTRUCTIONS = {
+  headline: "Ce segment est le TITRE/ACCROCHE du CV. Réponds par une phrase de 5 MOTS MAXIMUM, percutante, dans le même esprit que l'original. Pas de ponctuation finale, pas de guillemets.",
+  profile: "Ce segment fait partie du PROFIL/RÉSUMÉ du CV. Reformule sur un ton UNIQUEMENT AFFIRMATIF ET ENTHOUSIASTE (jamais négatif, jamais hésitant), en 4 PHRASES MAXIMUM.",
+  'job-description': "Ce segment est une description de poste/mission. Reformule-le de façon factuelle et professionnelle, en gardant sa longueur d'origine à peu près équivalente.",
+};
+function roleInstruction(role) {
+  return ROLE_INSTRUCTIONS[role] || ROLE_INSTRUCTIONS['job-description'];
+}
+// Limite de sortie par rôle : un titre tient en quelques mots, un profil en
+// 4 phrases, une description de poste peut légitimement rester plus longue.
+const ROLE_MAX_TOKENS = { headline: 30, profile: 220, 'job-description': 260 };
+function roleMaxTokens(role) {
+  return ROLE_MAX_TOKENS[role] || ROLE_MAX_TOKENS['job-description'];
+}
+
+function buildSegmentPrompt(run, job) {
+  // Le matching par mots-clés ne s'applique qu'aux descriptions de poste :
+  // c'est là qu'on a observé le recopiage de l'offre sur des bullets sans
+  // rapport (voir buildMatchNote). Un titre ou un profil restent guidés
+  // par le contexte général de l'offre, pas par une correspondance bullet
+  // par bullet.
+  const matchNote = run.role === 'job-description'
+    ? `\n\n${buildMatchNote(segmentKeywordMatches(run.text, job.keywords))}`
+    : '';
+  const user = `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job)}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role)}${matchNote}\n\nRéponds uniquement avec le texte reformulé.`;
   return [
     { role: 'system', content: REWRITE_SYSTEM_PROMPT },
     { role: 'user', content: user }
@@ -751,7 +1040,7 @@ async function attemptEngineRecovery() {
 // mieux vaut quelques secondes de plus que perdre un segment pour de bon.
 const MAX_SEGMENT_ATTEMPTS = 3;
 
-async function rewriteSegment(run, jobText, stopSignal, _attempt) {
+async function rewriteSegment(run, job, stopSignal, _attempt) {
   const attempt = _attempt || 1;
   if (webllmIrrecoverable) {
     // Le moteur a déjà échoué à se relancer sur un segment précédent de
@@ -765,21 +1054,23 @@ async function rewriteSegment(run, jobText, stopSignal, _attempt) {
     return null;
   }
 
-  const messages = buildSegmentPrompt(run, jobText);
+  const messages = buildSegmentPrompt(run, job);
   try {
-    const text = await generateText(messages, 200, stopSignal);
+    const text = await generateText(messages, roleMaxTokens(run.role), stopSignal);
     const cleaned = text.trim().replace(/^["«]|["»]$/g, '');
-    if (isDegenerateOutput(cleaned)) {
-      // Le modèle a recopié/halluciné le gabarit du prompt au lieu de
-      // reformuler — accepter ce texte le mettrait littéralement dans le
-      // CV final. On retente une génération fraîche (sans recharger le
-      // moteur, ce n'est pas un souci GPU) avant d'abandonner ce segment.
+    const validation = validateSegmentOutput(run, cleaned, job);
+    if (!validation.ok) {
+      // Le modèle a produit une sortie invalide (gabarit recopié, longueur
+      // hors contrainte, ou fait inventé — voir validateSegmentOutput).
+      // Accepter ce texte le mettrait littéralement dans le CV final. On
+      // retente une génération fraîche (sans recharger le moteur, ce n'est
+      // pas un souci GPU) avant d'abandonner ce segment.
       if (attempt < MAX_SEGMENT_ATTEMPTS) {
-        log(`  ⚠️ Sortie invalide sur ce segment (le modèle a recopié le gabarit du prompt) — nouvelle génération (tentative ${attempt + 1}/${MAX_SEGMENT_ATTEMPTS}).`);
+        log(`  ⚠️ Sortie invalide sur ce segment (${describeValidationFailure(validation)}) — nouvelle génération (tentative ${attempt + 1}/${MAX_SEGMENT_ATTEMPTS}).`);
         await sleep(300);
-        return rewriteSegment(run, jobText, stopSignal, attempt + 1);
+        return rewriteSegment(run, job, stopSignal, attempt + 1);
       }
-      log(`  ⚠️ Sortie invalide persistante sur ce segment après ${attempt} tentatives — laissé inchangé plutôt que d'injecter du texte parasite.`);
+      log(`  ⚠️ Sortie invalide persistante sur ce segment après ${attempt} tentatives (${describeValidationFailure(validation)}) — laissé inchangé plutôt que d'injecter du texte incorrect.`);
       return null;
     }
     return cleaned;
@@ -797,7 +1088,7 @@ async function rewriteSegment(run, jobText, stopSignal, _attempt) {
         const recovered = await attemptEngineRecovery();
         if (!recovered) return null; // budget de récupération épuisé pour toute l'adaptation — plus aucune reprise ne sera tentée
         await sleep(800); // laisse le device tout juste rechargé se stabiliser avant une vraie inférence
-        return rewriteSegment(run, jobText, stopSignal, attempt + 1);
+        return rewriteSegment(run, job, stopSignal, attempt + 1);
       }
       log(`  ⚠️ Échec persistant sur ce segment après ${attempt} tentatives : ${err.message} — laissé en attente pour la prochaine reprise.`);
       return null;
@@ -814,7 +1105,7 @@ async function rewriteSegment(run, jobText, stopSignal, _attempt) {
 // (###N###) par extrait — plus robuste à parser qu'un JSON pour un petit
 // modèle local quantifié. Le code garde la main sur le mapping (quel texte
 // va dans quel run XML) via ce numéro, jamais via l'ordre "au jugé".
-const BATCH_REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne une offre d'emploi et plusieurs extraits numérotés d'un CV. Pour CHAQUE extrait, reformule-le pour mettre en avant ce qui correspond à l'offre, en réutilisant son vocabulaire UNIQUEMENT si ça correspond vraiment à ce que dit l'extrait. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer un extrait, renvoie-le tel quel.
+const BATCH_REWRITE_SYSTEM_PROMPT = `Tu es un expert en recrutement. On te donne une offre d'emploi et plusieurs extraits numérotés d'un CV, chacun avec sa propre consigne. Pour CHAQUE extrait, reformule-le en suivant SA consigne, en utilisant les MOTS-CLÉS et le vocabulaire de l'offre UNIQUEMENT quand ça correspond vraiment à ce que dit l'extrait — il s'agit d'adapter sémantiquement l'extrait, jamais de recopier des phrases de l'offre elle-même. N'invente aucun fait absent de l'extrait original — c'est une reformulation, pas une invention. Si rien à gagner à changer un extrait, renvoie-le tel quel.
 
 Réponds en respectant EXACTEMENT ce format, un bloc par extrait, dans le même ordre, sans aucun texte avant, après, ni entre les blocs à part le marqueur :
 ###1###
@@ -823,30 +1114,44 @@ texte reformulé de l'extrait 1
 texte reformulé de l'extrait 2
 (un bloc ###N### pour chaque extrait fourni, aucun extrait omis, aucun extrait ajouté)`;
 
-function buildBatchPrompt(batch, jobText) {
-  const body = batch.map((r, i) => `###${i + 1}### [section "${r.section}"]\n${r.text.trim()}`).join('\n\n');
-  const user = `--- OFFRE D'EMPLOI ---\n${jobText}\n\n--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
+function buildBatchPrompt(batch, job) {
+  const body = batch.map((r, i) => {
+    const matchNote = r.role === 'job-description'
+      ? ` ${buildMatchNote(segmentKeywordMatches(r.text, job.keywords))}`
+      : '';
+    return `###${i + 1}### [section "${r.section}"] ${roleInstruction(r.role)}${matchNote}\n${r.text.trim()}`;
+  }).join('\n\n');
+  const user = `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job)}\n\n--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
   return [
     { role: 'system', content: BATCH_REWRITE_SYSTEM_PROMPT },
     { role: 'user', content: user },
   ];
 }
 
-function parseBatchResponse(raw, expectedCount) {
+function parseBatchResponse(raw, batch, job) {
   const parts = String(raw || '').split(/###\s*(\d+)\s*###/).slice(1);
   const map = {};
+  const rejections = [];
   for (let i = 0; i < parts.length; i += 2) {
     const num = parseInt(parts[i], 10);
     const text = (parts[i + 1] || '').trim().replace(/^["«]|["»]$/g, '');
-    // Un bloc qui recopie le gabarit du prompt (voir isDegenerateOutput)
-    // est traité comme manquant plutôt qu'accepté tel quel — il repassera
-    // par le filet de sécurité individuel (rewriteSegment), qui a sa
-    // propre validation + nouvelle tentative.
-    if (num >= 1 && text && !isDegenerateOutput(text)) map[num] = text;
+    if (!(num >= 1 && num <= batch.length && text)) continue;
+    const run = batch[num - 1];
+    // Même garde-fou complet que pour un appel individuel (gabarit/fuite,
+    // longueur, faits inventés — voir validateSegmentOutput). Un bloc
+    // rejeté est traité comme manquant plutôt qu'accepté tel quel — il
+    // repassera par le filet de sécurité individuel (rewriteSegment), qui
+    // a sa propre validation + nouvelle tentative.
+    const validation = validateSegmentOutput(run, text, job);
+    if (validation.ok) {
+      map[num] = text;
+    } else {
+      rejections.push(`#${num} (${describeValidationFailure(validation)})`);
+    }
   }
   const results = [];
-  for (let i = 1; i <= expectedCount; i++) results.push(map[i] || null);
-  return results;
+  for (let i = 1; i <= batch.length; i++) results.push(map[i] || null);
+  return { results, rejections };
 }
 
 // Découpe la liste d'extraits en lots qui tiennent dans le budget de
@@ -862,26 +1167,39 @@ function parseBatchResponse(raw, expectedCount) {
 // courts et plus nombreux sont plus lents mais bien plus fiables.
 const MAX_SEGMENTS_PER_BATCH = 3;
 
-function buildBatches(editable, jobText) {
+function buildBatches(editable, job) {
   const budget = getContextBudget();
-  const reserved = estimateTokens(jobText) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
+  const reserved = estimateTokens(formatJobContextForPrompt(job)) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
   const perBatchBudget = Math.max(budget - reserved, 400);
 
-  const batches = [];
-  let current = [];
-  let currentTokens = 0;
+  // Regroupe d'abord par rôle (voir classifyRuns) : mélanger un titre (5
+  // mots max) et une description de poste (ton factuel, plus long) dans le
+  // même lot risquait de faire déborder la consigne de l'un sur l'autre.
+  // L'ordre des groupes n'a pas d'importance, chaque run garde son _idx
+  // d'origine pour le mapping des résultats (voir rewriteAllSegments).
+  const byRole = new Map();
   for (const run of editable) {
-    // Un extrait consomme environ (texte en entrée) + (texte en sortie, ~même longueur).
-    const segTokens = estimateTokens(run.text) * 2 + 20;
-    if (current.length > 0 && (currentTokens + segTokens > perBatchBudget || current.length >= MAX_SEGMENTS_PER_BATCH)) {
-      batches.push(current);
-      current = [];
-      currentTokens = 0;
-    }
-    current.push(run);
-    currentTokens += segTokens;
+    if (!byRole.has(run.role)) byRole.set(run.role, []);
+    byRole.get(run.role).push(run);
   }
-  if (current.length) batches.push(current);
+
+  const batches = [];
+  for (const runsOfRole of byRole.values()) {
+    let current = [];
+    let currentTokens = 0;
+    for (const run of runsOfRole) {
+      // Un extrait consomme environ (texte en entrée) + (texte en sortie, ~même longueur).
+      const segTokens = estimateTokens(run.text) * 2 + 20;
+      if (current.length > 0 && (currentTokens + segTokens > perBatchBudget || current.length >= MAX_SEGMENTS_PER_BATCH)) {
+        batches.push(current);
+        current = [];
+        currentTokens = 0;
+      }
+      current.push(run);
+      currentTokens += segTokens;
+    }
+    if (current.length) batches.push(current);
+  }
   return batches;
 }
 
@@ -899,34 +1217,64 @@ function buildBatches(editable, jobText) {
 // GPU/pilote est réellement mort en permanence sur cette machine).
 const MAX_SWEEPS = 6;
 
-async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
+async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
   const results = new Array(editable.length).fill(null);
-  const batches = buildBatches(editable, jobText);
-  log(`Découpage en ${batches.length} appel(s) groupé(s) pour ${editable.length} segment(s) (au lieu d'un appel par segment).`);
+  // Chaque run garde son index d'origine (_idx) pour pouvoir regrouper les
+  // lots PAR RÔLE (titre / profil / description de poste) plutôt que dans
+  // l'ordre brut du document — un lot homogène est plus sûr : la consigne
+  // (voir roleInstruction) ne risque pas d'être appliquée au mauvais type
+  // de segment par confusion entre blocs voisins de rôles différents.
+  editable.forEach((r, i) => { r._idx = i; });
+
+  // Décision KEEP vs REWRITE avant même d'appeler le LLM : une description
+  // de poste sans AUCUNE correspondance avec l'offre (voir
+  // segmentKeywordMatches) n'a structurellement rien à gagner à être
+  // envoyée au modèle — on économise complètement l'appel, zéro risque
+  // d'invention, zéro temps de calcul GPU perdu dessus. Titre et profil ne
+  // sont jamais "keep" d'office : ils dépendent du ton général de l'offre,
+  // pas d'un matching bullet par bullet.
+  const jobDescRuns = editable.filter((r) => r.role === 'job-description');
+  const skippedIdx = new Set();
+  if (jobDescRuns.length) {
+    let strong = 0, partial = 0, none = 0;
+    for (const r of jobDescRuns) {
+      const n = segmentKeywordMatches(r.text, job.keywords).length;
+      if (n === 0) { none++; skippedIdx.add(r._idx); } else if (n <= 2) partial++; else strong++;
+    }
+    log(`Correspondance sémantique sur les ${jobDescRuns.length} description(s) de poste : ${strong} forte(s), ${partial} partielle(s), ${none} sans correspondance.`);
+    if (skippedIdx.size) {
+      log(`↷ ${skippedIdx.size} description(s) de poste conservée(s) telle(s) quelle(s), sans appel au modèle (aucune correspondance avec l'offre — décision KEEP).`);
+    }
+  }
+  const toSend = editable.filter((r) => !skippedIdx.has(r._idx));
+
+  const batches = buildBatches(toSend, job);
+  log(`Découpage en ${batches.length} appel(s) groupé(s) pour ${toSend.length} segment(s) à reformuler (${skippedIdx.size} conservé(s) sans appel, ${editable.length} au total).`);
 
   const reportProgress = () => {
-    if (onProgress) onProgress(results.filter((t) => t).length, editable.length);
+    const done = results.filter((t) => t).length + skippedIdx.size;
+    if (onProgress) onProgress(Math.min(done, editable.length), editable.length);
   };
 
-  let offset = 0;
   for (let b = 0; b < batches.length; b++) {
     const batch = batches[b];
     setStatus(`Reformulation groupée ${b + 1}/${batches.length} (${batch.length} extrait(s))…`);
     try {
-      const messages = buildBatchPrompt(batch, jobText);
+      const messages = buildBatchPrompt(batch, job);
       // Plafond dur volontairement réduit (900, au lieu de 3800) : plus la
       // sortie générée en un seul appel est longue, plus le GPU reste
       // occupé en continu — et donc plus le risque de TDR (voir
       // MAX_SEGMENTS_PER_BATCH ci-dessus) est élevé. Un plafond bas force
       // des appels plus courts et plus nombreux, moins rapides mais bien
       // plus fiables sur un GPU/pilote instable.
-      const maxTokens = Math.min(batch.reduce((n, r) => n + estimateTokens(r.text) * 2 + 20, 0), 900);
+      const maxTokens = Math.min(batch.reduce((n, r) => n + roleMaxTokens(r.role) + 20, 0), 900);
       const raw = await generateText(messages, maxTokens, stopSignal);
-      const parsed = parseBatchResponse(raw, batch.length);
-      parsed.forEach((text, i) => { results[offset + i] = text; });
+      const { results: parsed, rejections } = parseBatchResponse(raw, batch, job);
+      parsed.forEach((text, i) => { results[batch[i]._idx] = text; });
       const missing = parsed.filter((t) => !t).length;
       if (missing > 0) {
         log(`  ⚠️ Réponse groupée incomplète (${missing}/${batch.length} extrait(s) manquant(s)) — repli individuel pour ceux-là.`);
+        if (rejections.length) log(`     rejeté(s) : ${rejections.join(', ')}`);
       } else {
         log(`  ✓ Lot ${b + 1}/${batches.length} : ${batch.length} extrait(s) reformulé(s) en un seul appel.`);
       }
@@ -944,7 +1292,6 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
         await attemptEngineRecovery();
       }
     }
-    offset += batch.length;
     reportProgress();
     // Pause proactive entre deux appels (pas seulement après un plantage) :
     // laisse le pilote GPU "respirer" entre deux sollicitations soutenues,
@@ -955,11 +1302,14 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
 
   // Filet de sécurité : tout ce qui n'a pas été rempli par un appel groupé
   // repasse en appel individuel classique (rewriteSegment), y compris son
-  // propre retry sur perte de contexte GPU.
-  for (let i = 0; i < editable.length; i++) {
+  // propre retry sur perte de contexte GPU. On saute les segments "KEEP"
+  // (skippedIdx) — ils n'ont jamais été envoyés au modèle, ce n'est pas un
+  // échec à rattraper.
+  for (const run of toSend) {
+    const i = run._idx;
     if (results[i]) continue;
     setStatus(`Reformulation individuelle ${i + 1}/${editable.length} (repli)…`);
-    results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
+    results[i] = await rewriteSegment(run, job, stopSignal);
     reportProgress();
     await sleep(300); // pause proactive, même logique que pour les appels groupés
   }
@@ -972,9 +1322,8 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
   // temps, jamais un segment perdu pour de bon.
   let sweep = 0;
   while (sweep < MAX_SWEEPS) {
-    const pendingIdx = [];
-    for (let i = 0; i < editable.length; i++) if (!results[i]) pendingIdx.push(i);
-    if (pendingIdx.length === 0) break;
+    const pending = toSend.filter((r) => !results[r._idx]);
+    if (pending.length === 0) break;
 
     // Le budget de rechargement GPU (voir MAX_ENGINE_RECOVERIES_PER_PASS)
     // est volontairement GLOBAL pour toute l'adaptation, pas remis à neuf à
@@ -991,42 +1340,61 @@ async function rewriteAllSegments(editable, jobText, stopSignal, onProgress) {
     }
 
     sweep++;
-    log(`↻ Reprise ${sweep}/${MAX_SWEEPS} : ${pendingIdx.length} segment(s) encore en échec — nouvelle tentative.`);
-    setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — ${pendingIdx.length} segment(s) restant(s)…`);
+    log(`↻ Reprise ${sweep}/${MAX_SWEEPS} : ${pending.length} segment(s) encore en échec — nouvelle tentative.`);
+    setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — ${pending.length} segment(s) restant(s)…`);
     await sleep(1500 * sweep); // backoff croissant : laisse le pilote GPU respirer entre les reprises
 
-    for (const i of pendingIdx) {
+    for (const run of pending) {
       if (webllmIrrecoverable) break; // le budget a pu s'épuiser en cours de reprise
-      setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — segment ${pendingIdx.indexOf(i) + 1}/${pendingIdx.length}…`);
-      results[i] = await rewriteSegment(editable[i], jobText, stopSignal);
+      const i = run._idx;
+      setStatus(`Reprise ${sweep}/${MAX_SWEEPS} — segment ${pending.indexOf(run) + 1}/${pending.length}…`);
+      results[i] = await rewriteSegment(run, job, stopSignal);
       reportProgress();
       await sleep(300); // même pause proactive que les autres boucles d'appels
     }
   }
 
-  const stillFailed = results.filter((t) => !t).length;
+  const stillFailed = results.filter((t) => !t).length - skippedIdx.size;
   if (stillFailed > 0) {
     log(`⚠️ ${stillFailed} segment(s) restent inchangés malgré ${sweep} reprise(s) complète(s) — le GPU/pilote semble réellement irrécupérable sur cette machine pour cette session. Ces segments gardent leur texte d'origine dans le CV final.`);
   } else if (sweep > 0) {
     log(`✓ Tous les segments ont finalement été reformulés après ${sweep} reprise(s).`);
   }
 
-  return results;
+  return { results, skippedIdx };
 }
 
 // ==== 6. Application d'une réécriture dans le XML ====
 function setRunText(rNode, newText) {
-  const tNodes = Array.from(rNode.getElementsByTagName('w:t'));
-  if (tNodes.length === 0) {
+  // Reconstruit ENTIÈREMENT le contenu texte du run (tous les <w:t>, <w:br/>
+  // et <w:cr/> existants sont retirés puis regénérés) plutôt que de
+  // réutiliser les <w:t> d'origine un par un. L'ancienne version vidait les
+  // <w:t> excédentaires (texte = '') mais laissait leurs <w:br/> voisins en
+  // place : pour un run multi-lignes (ex. liste de compétences séparée par
+  // Maj+Entrée, voir getTextRuns), tout le nouveau texte atterrissait sur
+  // la première ligne et les lignes suivantes devenaient vides mais
+  // gardaient leur saut de ligne — plusieurs lignes vides visibles dans le
+  // CV final. Reconstruire depuis zéro, en respectant les '\n' du nouveau
+  // texte, évite ce problème quel que soit le nombre de lignes d'origine
+  // ou de sortie (elles n'ont plus besoin de correspondre).
+  const toRemove = Array.from(rNode.childNodes).filter((n) => {
+    if (n.nodeType !== 1) return false;
+    return n.localName === 't' || n.localName === 'br' || n.localName === 'cr';
+  });
+  toRemove.forEach((n) => rNode.removeChild(n));
+
+  const lines = String(newText).split('\n');
+  lines.forEach((line, i) => {
     const t = docState.xmlDoc.createElementNS(W_NS, 'w:t');
     t.setAttribute('xml:space', 'preserve');
-    t.textContent = newText;
+    t.textContent = line;
     rNode.appendChild(t);
-    return;
-  }
-  tNodes[0].setAttribute('xml:space', 'preserve');
-  tNodes[0].textContent = newText;
-  for (let i = 1; i < tNodes.length; i++) tNodes[i].textContent = '';
+    if (i < lines.length - 1) {
+      const br = docState.xmlDoc.createElementNS(W_NS, 'w:br');
+      br.setAttribute('w:type', 'textWrapping');
+      rNode.appendChild(br);
+    }
+  });
 }
 
 // ==== 7. Génération du fichier .docx modifié ====
@@ -1062,7 +1430,8 @@ runBtn.addEventListener('click', async () => {
   webllmIrrecoverable = false;
   webllmRecoveryAttemptsThisPass = 0;
 
-  const jobText = jobTextEl.value.trim();
+  const job = buildJobContext(jobTextEl.value.trim());
+  log(`Mots-clés extraits de l'offre (déterministe, sans LLM) : ${job.keywords.join(', ') || '(aucun)'}`);
   const stopSignal = newStopSignal();
 
   try {
@@ -1074,8 +1443,9 @@ runBtn.addEventListener('click', async () => {
 
     let applied = 0;
     let failed = 0;
+    let kept = 0;
 
-    const results = await rewriteAllSegments(editable, jobText, stopSignal, (done, total) => {
+    const { results, skippedIdx } = await rewriteAllSegments(editable, job, stopSignal, (done, total) => {
       progressBar.style.width = Math.round((done / total) * 100) + '%';
       // Indicateur d'avancement global, lisible sans ouvrir le journal
       // technique — remplace la ligne de statut précédente (qui pouvait
@@ -1091,14 +1461,17 @@ runBtn.addEventListener('click', async () => {
         setRunText(run.node, newText);
         applied++;
         log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
+      } else if (skippedIdx.has(i)) {
+        kept++;
+        log(`  ○ [${i + 1}/${editable.length}] conservé tel quel (aucune correspondance avec l'offre — décision KEEP, pas un échec).`);
       } else {
         failed++;
-        log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé.`);
+        log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé (échec).`);
       }
     }
     progressBar.style.width = '100%';
 
-    log(`${applied} segment(s) modifié(s), ${failed} laissé(s) inchangé(s).`);
+    log(`${applied} segment(s) modifié(s), ${kept} conservé(s) par choix (KEEP), ${failed} laissé(s) inchangé(s) par échec.`);
 
     if (applied === 0) {
       // Même si rien n'a pu être reformulé (ex. GPU épuisé en cours de
