@@ -15,93 +15,106 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .wrap {
-  max-width: 720px;
+  max-width: 480px;
   margin: 0 auto;
-  padding: 40px 20px 80px;
+  padding: 32px 18px 48px;
 }
 
+header {
+  text-align: center;
+  margin-bottom: 20px;
+}
 header h1 {
-  font-size: 1.8rem;
-  margin-bottom: 8px;
+  font-size: 1.6rem;
+  margin: 0 0 4px;
+  letter-spacing: -0.02em;
 }
-
-.subtitle {
+.tagline {
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 0.88rem;
+  margin: 0;
 }
 
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px 22px;
-  margin-bottom: 18px;
-}
-
-.card h2 {
-  font-size: 1rem;
-  margin: 0 0 12px;
-  color: var(--accent);
+main > * + * {
+  margin-top: 12px;
 }
 
 .file-drop {
   display: block;
   border: 1px dashed var(--border);
   border-radius: 10px;
-  padding: 16px;
+  padding: 14px;
   text-align: center;
   cursor: pointer;
   color: var(--muted);
+  font-size: 0.9rem;
 }
 .file-drop input { display: none; }
 .file-drop:hover { border-color: var(--accent); color: var(--text); }
 
 textarea, select, input[type="text"], input[type="password"] {
   width: 100%;
-  background: #10131a;
+  background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px;
+  padding: 11px;
   font-family: inherit;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   resize: vertical;
 }
 
-.field-label {
-  display: block;
-  font-size: 0.82rem;
+#job-list { display: flex; flex-direction: column; gap: 8px; }
+
+.job-item {
+  position: relative;
+}
+.job-item textarea { padding-right: 34px; }
+
+.job-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  border: none;
+  background: var(--border);
   color: var(--muted);
-  margin-bottom: 6px;
-  margin-top: 12px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
 }
-.field-label:first-child { margin-top: 0; }
-code {
-  background: #10131a;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 0.85em;
+.job-remove:hover { background: #3a2530; color: #ff9fae; }
+
+.job-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
+.job-controls .secondary-btn { width: auto; margin: 0; }
 
 .hint {
   color: var(--muted);
-  font-size: 0.82rem;
-  margin-top: 10px;
+  font-size: 0.8rem;
+  margin: 0;
 }
 
 button {
   width: 100%;
-  padding: 14px;
+  padding: 13px;
   border: none;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #05070a;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.98rem;
   cursor: pointer;
 }
 button:disabled {
@@ -110,10 +123,9 @@ button:disabled {
 }
 
 .progress-outer {
-  margin-top: 14px;
-  height: 6px;
+  height: 5px;
   border-radius: 4px;
-  background: #10131a;
+  background: var(--card);
   overflow: hidden;
 }
 .progress-inner {
@@ -125,33 +137,52 @@ button:disabled {
 
 .status {
   color: var(--muted);
-  font-size: 0.9rem;
-  margin-top: 10px;
+  font-size: 0.88rem;
 }
+
+#download-area:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--card);
+}
+.result-label {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.result-card .hint { margin-top: 8px; }
 
 .download-link {
   display: inline-block;
-  margin-top: 12px;
-  margin-right: 10px;
   padding: 10px 16px;
   border-radius: 8px;
   background: var(--accent-2);
   color: #05070a;
   text-decoration: none;
   font-weight: 600;
+  font-size: 0.92rem;
 }
 
 .secondary-btn {
   display: inline-block;
-  margin-top: 12px;
-  padding: 10px 16px;
+  padding: 9px 14px;
   width: auto;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 .secondary-btn:hover {
@@ -159,25 +190,16 @@ button:disabled {
   color: var(--accent);
 }
 
-details {
-  margin-top: 16px;
-}
+details { font-size: 0.85rem; }
 summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.85rem;
 }
 #log {
   white-space: pre-wrap;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--muted);
   max-height: 200px;
   overflow-y: auto;
-}
-
-footer {
-  color: var(--muted);
-  font-size: 0.8rem;
-  text-align: center;
-  margin-top: 30px;
+  margin-top: 8px;
 }

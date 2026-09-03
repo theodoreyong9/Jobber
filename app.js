@@ -1,7 +1,8 @@
 // ==== Éléments DOM ====
 const fileInput = document.getElementById('cv-file');
 const fileNameEl = document.getElementById('file-name');
-const jobTextEl = document.getElementById('job-text');
+const jobListEl = document.getElementById('job-list');
+const addJobBtn = document.getElementById('add-job-btn');
 const jobCountEl = document.getElementById('job-count');
 const runBtn = document.getElementById('run-btn');
 const stopBtn = document.getElementById('stop-btn');
@@ -11,14 +12,11 @@ const downloadArea = document.getElementById('download-area');
 const logEl = document.getElementById('log');
 const modelSelect = document.getElementById('model-select');
 
-// État du document en cours d'édition, gardé EN MÉMOIRE et modifié en place :
-// tout ce qu'on ne touche pas (styles, thème, en-têtes/pieds de page, images,
-// tableaux, numérotation…) reste strictement intact, y compris à travers
-// plusieurs itérations "continuer à améliorer".
-let docState = null; // { zip, xmlDoc }
+// État du document ORIGINAL en cours (zip + XML intact) — chaque offre
+// traitée repart d'un clone frais de ce document, jamais du résultat d'une
+// offre précédente (voir freshXmlDoc()).
+let docState = null; // { zip, xmlDoc, originalXmlText }
 let originalFileName = 'cv';
-let baseFileName = 'cv';
-let iteration = 1;
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -27,8 +25,35 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// Pendant une adaptation, l'indicateur visible reste volontairement simple
+// (des points qui avancent) — tout le détail (rechargements GPU, reprises,
+// segment par segment...) continue d'exister mais uniquement dans le
+// journal technique replié. setStatus() devient silencieux pendant ce
+// temps plutôt que d'avoir à retirer un par un les nombreux appels
+// setStatus() disséminés dans le moteur (récupération GPU, reprises...).
+let dotTickerInterval = null;
+let dotTickerActive = false;
+
 function setStatus(msg) {
+  if (dotTickerActive) return;
   statusEl.textContent = msg;
+}
+
+function startDotTicker(baseText) {
+  stopDotTicker();
+  dotTickerActive = true;
+  let n = 0;
+  const tick = () => {
+    n = (n + 1) % 4;
+    statusEl.textContent = baseText + '.'.repeat(n) + '\u00a0'.repeat(3 - n);
+  };
+  tick();
+  dotTickerInterval = setInterval(tick, 500);
+}
+
+function stopDotTicker() {
+  dotTickerActive = false;
+  if (dotTickerInterval) { clearInterval(dotTickerInterval); dotTickerInterval = null; }
 }
 
 function dlog(msg) {
@@ -195,7 +220,7 @@ function looksLeakedFrom(text, source) {
 // éventuelle) — utilisé uniquement pour la détection de fuite ci-dessus,
 // jamais renvoyé au modèle deux fois.
 function ownPromptText(run, job) {
-  const parts = [REWRITE_SYSTEM_PROMPT, BATCH_REWRITE_SYSTEM_PROMPT, roleInstruction(run.role)];
+  const parts = [REWRITE_SYSTEM_PROMPT, roleInstruction(run.role)];
   if (run.role === 'job-description') {
     parts.push(buildMatchNote(run._planMatched || segmentKeywordMatches(run.text, job.keywords)));
   }
@@ -382,20 +407,6 @@ async function resolveModelChoice() {
   return MODELS[await resolveModelKey()] || MODELS.medium;
 }
 
-// Budget de tokens (entrée + sortie) qu'on s'autorise à utiliser dans un
-// seul appel groupé, par modèle. Volontairement conservateur : c'est une
-// estimation grossière (pas de vrai tokenizer côté app), pour rester loin
-// de la fenêtre de contexte réelle du modèle plutôt que de la frôler.
-const CONTEXT_BUDGET_TOKENS = { small: 1600, medium: 3000, large: 6000 };
-function getContextBudget() {
-  return CONTEXT_BUDGET_TOKENS[webllmModelKey] || 2000;
-}
-
-// Estimation grossière : ~4 caractères par token pour du texte latin.
-function estimateTokens(text) {
-  return Math.ceil((text || '').length / 4);
-}
-
 async function checkWebGpuSupport() {
   if (typeof navigator === 'undefined' || !navigator.gpu) {
     return { supported: false, reason: "WebGPU n'est pas disponible dans ce navigateur. Utilise une version récente de Chrome ou Edge (Safari/Firefox n'ont pas encore un support fiable)." };
@@ -558,7 +569,12 @@ async function loadCvFromArrayBuffer(arrayBuffer, displayName) {
     if (xmlDoc.getElementsByTagName('parsererror').length) {
       throw new Error('Le XML du document est illisible.');
     }
-    docState = { zip, xmlDoc };
+    // originalXmlText reste intact tout du long : chaque offre traitée
+    // repart d'un clone frais de CE texte (voir freshXmlDoc()), jamais du
+    // résultat d'une offre précédente — indispensable pour pouvoir
+    // enchaîner plusieurs offres sur le même CV sans qu'elles se
+    // contaminent entre elles.
+    docState = { zip, xmlDoc, originalXmlText: xmlText };
 
     const runs = classifyRuns(getTextRuns(docState.xmlDoc));
     const editable = runs.filter((r) => r.editable);
@@ -579,8 +595,6 @@ fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   originalFileName = file.name.replace(/\.docx$/i, '');
-  baseFileName = originalFileName;
-  iteration = 1;
   const arrayBuffer = await file.arrayBuffer();
   const ok = await loadCvFromArrayBuffer(arrayBuffer, file.name);
   if (ok) saveCvToDb(file.name, arrayBuffer);
@@ -591,17 +605,52 @@ fileInput.addEventListener('change', async (e) => {
   const saved = await loadCvFromDb();
   if (!saved) return;
   originalFileName = saved.name.replace(/\.docx$/i, '');
-  baseFileName = originalFileName;
-  iteration = 1;
   log(`CV précédemment chargé retrouvé (${saved.name}) — restauration…`);
   await loadCvFromArrayBuffer(saved.arrayBuffer, saved.name + ' (restauré)');
 })();
 
-jobTextEl.addEventListener('input', () => {
+// ==== Gestion de la liste d'offres (une ou plusieurs) ====
+function jobTexts() {
+  return Array.from(document.querySelectorAll('.job-text')).map((el) => el.value.trim());
+}
+
+function updateJobCount() {
+  const n = jobTexts().filter(Boolean).length;
+  jobCountEl.textContent = n === 0 ? 'Aucune offre collée' : n === 1 ? '1 offre' : `${n} offres`;
   updateRunButton();
-  const n = jobTextEl.value.length;
-  jobCountEl.textContent = `${n} caractère${n > 1 ? 's' : ''}`;
-});
+}
+
+function addJobItem(focus) {
+  const item = document.createElement('div');
+  item.className = 'job-item';
+  const textarea = document.createElement('textarea');
+  textarea.className = 'job-text';
+  textarea.rows = 4;
+  textarea.placeholder = "Colle une offre d'emploi…";
+  textarea.addEventListener('input', updateJobCount);
+  item.appendChild(textarea);
+
+  // Le premier bloc n'a pas de bouton de suppression (toujours au moins un).
+  if (jobListEl.children.length > 0) {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'job-remove';
+    removeBtn.setAttribute('aria-label', 'Retirer cette offre');
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', () => {
+      item.remove();
+      updateJobCount();
+    });
+    item.appendChild(removeBtn);
+  }
+
+  jobListEl.appendChild(item);
+  if (focus) textarea.focus();
+  updateJobCount();
+}
+
+addJobBtn.addEventListener('click', () => addJobItem(true));
+addJobItem(false); // premier bloc, toujours présent au chargement
 
 function updateRunButton() {
   // adaptationInProgress prime sur tout le reste : sans ce verrou dédié, le
@@ -613,7 +662,8 @@ function updateRunButton() {
   // webllmReady n'est PLUS une condition ici : le clic sur "Adapter mon CV"
   // charge lui-même le modèle choisi dans la liste s'il ne l'est pas déjà
   // (voir le handler, await initWebLLM()) — un seul bouton, un seul clic.
-  runBtn.disabled = adaptationInProgress || !docState || jobTextEl.value.trim().length === 0;
+  const hasJob = jobTexts().some(Boolean);
+  runBtn.disabled = adaptationInProgress || !docState || !hasJob;
 }
 
 // ==== 2. Extraction des "runs" (segments) du document.xml ====
@@ -688,7 +738,7 @@ function classifyRuns(runs) {
     }
     // Le tout premier passage en gras est le titre/accroche du CV — le
     // seul segment de type "titre" (contrainte : 5 mots maximum, voir
-    // buildSegmentPrompt/buildBatchPrompt).
+    // buildSegmentPrompt).
     if (i === firstBoldIndex) {
       return { ...r, editable: true, role: 'headline', section: currentSection };
     }
@@ -1007,6 +1057,13 @@ function stemsEquivalent(a, b) {
 // modèle à l'inventer, ce qui est exactement le recopiage d'offre qu'on
 // cherche à éviter. On ne met en avant que le vocabulaire de l'offre pour
 // des thèmes DÉJÀ présents dans l'extrait.
+//
+// Plafonné à 3 : au-delà, le prompt devient plus lourd sans gain réel pour
+// une consigne de rewriting minuscule — le modèle a besoin d'un signal
+// clair, pas d'une liste. `keywords` est déjà trié par fréquence (voir
+// extractJobKeywords), donc les 3 retenus sont les plus discriminants.
+const MAX_KEYWORDS_PER_SEGMENT = 3;
+
 function segmentKeywordMatches(segmentText, keywords) {
   const segStems = new Set((segmentText.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem));
   return keywords.filter((kw) => {
@@ -1014,7 +1071,7 @@ function segmentKeywordMatches(segmentText, keywords) {
     if (segStems.has(kwStem)) return true;
     for (const s of segStems) { if (stemsEquivalent(s, kwStem)) return true; }
     return false;
-  });
+  }).slice(0, MAX_KEYWORDS_PER_SEGMENT);
 }
 
 // Le score de correspondance module directement l'agressivité de la
@@ -1471,124 +1528,17 @@ async function rewriteSegment(run, job, stopSignal, _attempt) {
   }
 }
 
-// ==== 5bis. Reformulation groupée (un seul appel pour plusieurs segments) ==
-// Au lieu d'un appel par segment, on envoie plusieurs extraits numérotés
-// dans un seul prompt et on demande une réponse avec un marqueur simple
-// (###N###) par extrait — plus robuste à parser qu'un JSON pour un petit
-// modèle local quantifié. Le code garde la main sur le mapping (quel texte
-// va dans quel run XML) via ce numéro, jamais via l'ordre "au jugé".
-const BATCH_REWRITE_SYSTEM_PROMPT = `Plusieurs extraits de CV numérotés, chacun avec sa consigne. Reformule CHAQUE extrait selon SA consigne. Règles strictes : n'invente aucun fait absent de l'extrait ; n'utilise un mot-clé que s'il correspond vraiment ; renvoie un extrait tel quel si rien à gagner.
+// ==== 5bis. (section batching retirée, voir note ci-dessous) ================
+// (Lots groupés retirés : un appel = un segment, séquentiel. Observé sur
+// de nombreux essais réels que les lots groupés (même à 2 segments)
+// étaient une source récurrente d'échecs — réponses tronquées, gabarit
+// recopié, parsing raté — pour un gain de vitesse qui ne compensait pas.
+// Un appel par segment est plus lent mais bien plus simple à garantir
+// correct, et chaque appel est délibérément minuscule : le rôle, jusqu'à 3
+// mots-clés autorisés, l'extrait — rien de plus.)
 
-Format de réponse EXACT, un bloc par extrait, même ordre, rien d'autre :
-###1###
-texte reformulé de l'extrait 1
-###2###
-texte reformulé de l'extrait 2
-(un bloc ###N### par extrait fourni, aucun omis, aucun ajouté)`;
-
-function buildBatchPrompt(batch, job) {
-  // Les lots sont homogènes en rôle (voir rewriteAllSegments/buildBatches),
-  // donc soit TOUS les items sont des descriptions de poste (matching
-  // ciblé par item, pas besoin du bloc générique), soit AUCUN ne l'est
-  // (contexte générique une seule fois, réduit selon le rôle commun).
-  const isJobDescBatch = batch[0] && batch[0].role === 'job-description';
-  const body = batch.map((r, i) => {
-    const matchNote = r.role === 'job-description'
-      ? ` ${buildMatchNote(r._planMatched || segmentKeywordMatches(r.text, job.keywords))}`
-      : '';
-    return `###${i + 1}### [section "${r.section}"] ${roleInstruction(r.role)}${matchNote}\n${r.text.trim()}`;
-  }).join('\n\n');
-  const jobBlock = isJobDescBatch ? '' : `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job, batch[0] && batch[0].role)}\n\n`;
-  const user = `${jobBlock}--- EXTRAITS DU CV ---\n${body}\n\nRéponds avec le format demandé ci-dessus, un bloc ###N### par extrait, dans l'ordre, rien d'autre.`;
-  return [
-    { role: 'system', content: BATCH_REWRITE_SYSTEM_PROMPT },
-    { role: 'user', content: user },
-  ];
-}
-
-function parseBatchResponse(raw, batch, job) {
-  const parts = String(raw || '').split(/###\s*(\d+)\s*###/).slice(1);
-  const map = {};
-  const rejections = [];
-  for (let i = 0; i < parts.length; i += 2) {
-    const num = parseInt(parts[i], 10);
-    const text = (parts[i + 1] || '').trim().replace(/^["«]|["»]$/g, '');
-    if (!(num >= 1 && num <= batch.length && text)) continue;
-    const run = batch[num - 1];
-    // Même garde-fou complet que pour un appel individuel (gabarit/fuite,
-    // longueur, faits inventés — voir validateSegmentOutput). Un bloc
-    // rejeté est traité comme manquant plutôt qu'accepté tel quel — il
-    // repassera par le filet de sécurité individuel (rewriteSegment), qui
-    // a sa propre validation + nouvelle tentative.
-    const validation = validateSegmentOutput(run, text, job);
-    if (validation.ok) {
-      map[num] = text;
-    } else {
-      rejections.push(`#${num} (${describeValidationFailure(validation)})`);
-    }
-  }
-  const results = [];
-  for (let i = 1; i <= batch.length; i++) results.push(map[i] || null);
-  return { results, rejections };
-}
-
-// Découpe la liste d'extraits en lots qui tiennent dans le budget de
-// contexte estimé du modèle choisi. Pour un CV normal avec un modèle
-// medium/large, tout tient en général dans un seul lot.
-//
-// MAX_SEGMENTS_PER_BATCH plafonne aussi la taille d'un lot en NOMBRE
-// d'extraits, indépendamment du budget de tokens : un appel groupé avec
-// beaucoup de sortie à générer garde le GPU occupé en continu plus
-// longtemps, ce qui augmente le risque de déclencher un TDR Windows
-// (DXGI_ERROR_DEVICE_HUNG — le pilote graphique tue le device s'il reste
-// occupé trop longtemps sans rendre la main à l'affichage). Des appels plus
-// courts et plus nombreux sont plus lents mais bien plus fiables.
-const MAX_SEGMENTS_PER_BATCH = 2;
-
-function buildBatches(editable, job) {
-  const budget = getContextBudget();
-  // Estimation prudente du budget réservé : le pire cas est le bloc de
-  // contexte "profile" (le plus complet, voir formatJobContextForPrompt) —
-  // un lot de descriptions de poste consommera en réalité moins puisqu'il
-  // n'envoie pas ce bloc générique du tout (voir buildBatchPrompt).
-  const reserved = estimateTokens(formatJobContextForPrompt(job, 'profile')) + estimateTokens(BATCH_REWRITE_SYSTEM_PROMPT) + 200;
-  const perBatchBudget = Math.max(budget - reserved, 400);
-
-  // Regroupe d'abord par rôle (voir classifyRuns) : mélanger un titre (5
-  // mots max) et une description de poste (ton factuel, plus long) dans le
-  // même lot risquait de faire déborder la consigne de l'un sur l'autre.
-  // L'ordre des groupes n'a pas d'importance, chaque run garde son _idx
-  // d'origine pour le mapping des résultats (voir rewriteAllSegments).
-  const byRole = new Map();
-  for (const run of editable) {
-    if (!byRole.has(run.role)) byRole.set(run.role, []);
-    byRole.get(run.role).push(run);
-  }
-
-  const batches = [];
-  for (const runsOfRole of byRole.values()) {
-    let current = [];
-    let currentTokens = 0;
-    for (const run of runsOfRole) {
-      // Un extrait consomme environ (texte en entrée) + (texte en sortie, ~même longueur).
-      const segTokens = estimateTokens(run.text) * 2 + 20;
-      if (current.length > 0 && (currentTokens + segTokens > perBatchBudget || current.length >= MAX_SEGMENTS_PER_BATCH)) {
-        batches.push(current);
-        current = [];
-        currentTokens = 0;
-      }
-      current.push(run);
-      currentTokens += segTokens;
-    }
-    if (current.length) batches.push(current);
-  }
-  return batches;
-}
-
-// Reformule tous les segments modifiables. Essaie de grouper en un minimum
-// d'appels LLM (idéalement un seul) ; tout ce qui manque ou échoue dans un
-// lot repasse automatiquement en appel individuel (rewriteSegment), pour
-// ne jamais perdre un segment à cause d'un souci de format de réponse.
+// Reformule tous les segments modifiables, un appel au modèle par segment,
+// dans l'ordre.
 //
 // Pas de contrainte de temps/quota ici : au lieu d'abandonner définitivement
 // dès qu'un budget de récupération GPU (voir attemptEngineRecovery) est
@@ -1607,8 +1557,7 @@ const MAX_SWEEPS = 6;
 // journalisée, puis appliquée telle quelle. "Le code décide, le LLM
 // exécute" : ce plan est la seule source de vérité pour ce qui sera
 // envoyé au modèle et avec quel budget de tokens — plus aucune décision
-// dispersée entre buildSegmentPrompt, buildBatchPrompt et
-// rewriteAllSegments comme avant.
+// dispersée entre buildSegmentPrompt et rewriteAllSegments comme avant.
 async function buildAdaptationPlan(editable, job) {
   const jobDescRuns = editable.filter((r) => r.role === 'job-description');
 
@@ -1685,11 +1634,8 @@ function planMaxTokens(run) {
 
 async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
   const results = new Array(editable.length).fill(null);
-  // Chaque run garde son index d'origine (_idx) pour pouvoir regrouper les
-  // lots PAR RÔLE (titre / profil / description de poste) plutôt que dans
-  // l'ordre brut du document — un lot homogène est plus sûr : la consigne
-  // (voir roleInstruction) ne risque pas d'être appliquée au mauvais type
-  // de segment par confusion entre blocs voisins de rôles différents.
+  // Chaque run garde son index d'origine (_idx) pour retrouver sa place
+  // dans `results` quel que soit l'ordre de traitement (reprises incluses).
   editable.forEach((r, i) => { r._idx = i; });
 
   // Plan d'adaptation : calculé une seule fois, avant tout appel au
@@ -1719,70 +1665,20 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
   }
   const toSend = editable.filter((r) => !skippedIdx.has(r._idx));
 
-  const batches = buildBatches(toSend, job);
-  log(`Découpage en ${batches.length} appel(s) groupé(s) pour ${toSend.length} segment(s) à reformuler (${skippedIdx.size} conservé(s) sans appel, ${editable.length} au total).`);
-
   const reportProgress = () => {
     const done = results.filter((t) => t).length + skippedIdx.size;
     if (onProgress) onProgress(Math.min(done, editable.length), editable.length);
   };
 
-  for (let b = 0; b < batches.length; b++) {
-    const batch = batches[b];
-    setStatus(`Reformulation groupée ${b + 1}/${batches.length} (${batch.length} extrait(s))…`);
-    try {
-      const messages = buildBatchPrompt(batch, job);
-      // Plafond dur volontairement réduit (700, au lieu de 3800 à l'origine) :
-      // plus la sortie générée en un seul appel est longue, plus le GPU reste
-      // occupé en continu — et donc plus le risque de TDR (voir
-      // MAX_SEGMENTS_PER_BATCH ci-dessus) est élevé. Un plafond bas force
-      // des appels plus courts et plus nombreux, moins rapides mais bien
-      // plus fiables sur un GPU/pilote instable.
-      const maxTokens = Math.min(batch.reduce((n, r) => n + planMaxTokens(r) + 20, 0), 700);
-      const raw = await generateText(messages, maxTokens, stopSignal);
-      const { results: parsed, rejections } = parseBatchResponse(raw, batch, job);
-      parsed.forEach((text, i) => { results[batch[i]._idx] = text; });
-      const missing = parsed.filter((t) => !t).length;
-      if (missing > 0) {
-        log(`  ⚠️ Réponse groupée incomplète (${missing}/${batch.length} extrait(s) manquant(s)) — repli individuel pour ceux-là.`);
-        if (rejections.length) log(`     rejeté(s) : ${rejections.join(', ')}`);
-      } else {
-        log(`  ✓ Lot ${b + 1}/${batches.length} : ${batch.length} extrait(s) reformulé(s) en un seul appel.`);
-      }
-    } catch (err) {
-      if (err.message === '__STOPPED_BY_USER__') throw err;
-      log(`  ⚠️ Échec de l'appel groupé (lot ${b + 1}/${batches.length}) : ${err.message} — repli individuel pour ce lot.`);
-
-      // webllmReady ne repasse JAMAIS à false tout seul quand un appel
-      // plante en cours de route (voir resetWebllmState) — sans cet appel
-      // explicite, tous les lots suivants retombent instantanément sur le
-      // même moteur mort (c'est exactement ce qui produisait une rafale
-      // d'échecs "ModelNotLoadedError" à quelques centaines de ms
-      // d'intervalle, sans aucun rechargement entre eux).
-      if (isGpuContextLostError(err)) {
-        await attemptEngineRecovery();
-      }
-    }
-    reportProgress();
-    // Pause proactive entre deux appels (pas seulement après un plantage) :
-    // laisse le pilote GPU "respirer" entre deux sollicitations soutenues,
-    // ce qui réduit le risque cumulatif de TDR sur une longue série
-    // d'appels consécutifs.
-    if (b < batches.length - 1) await sleep(400);
-  }
-
-  // Filet de sécurité : tout ce qui n'a pas été rempli par un appel groupé
-  // repasse en appel individuel classique (rewriteSegment), y compris son
-  // propre retry sur perte de contexte GPU. On saute les segments "KEEP"
-  // (skippedIdx) — ils n'ont jamais été envoyés au modèle, ce n'est pas un
-  // échec à rattraper.
+  // Un appel = un segment, dans l'ordre. Chaque segment garde son propre
+  // cycle complet de tentatives + récupération GPU (voir rewriteSegment) ;
+  // un plantage sur un segment ne contamine jamais les suivants.
   for (const run of toSend) {
     const i = run._idx;
-    if (results[i]) continue;
-    setStatus(`Reformulation individuelle ${i + 1}/${editable.length} (repli)…`);
+    setStatus(`Reformulation ${i + 1}/${editable.length}…`);
     results[i] = await rewriteSegment(run, job, stopSignal);
     reportProgress();
-    await sleep(300); // pause proactive, même logique que pour les appels groupés
+    await sleep(300); // pause proactive : laisse le pilote GPU respirer entre deux appels
   }
 
   // ==== Reprises persistantes ====
@@ -1868,9 +1764,20 @@ function setRunText(rNode, newText) {
   });
 }
 
+// Clone frais du document.xml original, jamais celui d'une adaptation
+// précédente — c'est ce qui permet de traiter plusieurs offres à la suite
+// sur le MÊME CV chargé sans qu'elles n'interfèrent entre elles.
+function freshXmlDoc() {
+  const xmlDoc = new DOMParser().parseFromString(docState.originalXmlText, 'application/xml');
+  if (xmlDoc.getElementsByTagName('parsererror').length) {
+    throw new Error('Le XML du document original est illisible.');
+  }
+  return xmlDoc;
+}
+
 // ==== 7. Génération du fichier .docx modifié ====
-async function packageDocx() {
-  let serialized = new XMLSerializer().serializeToString(docState.xmlDoc);
+async function packageDocx(xmlDoc) {
+  let serialized = new XMLSerializer().serializeToString(xmlDoc);
   // Certains moteurs (Firefox notamment) réintroduisent déjà une déclaration
   // XML en tête quand on sérialise un Document entier. On la retire pour ne
   // jamais en avoir deux, ce qui corromprait le document.xml (Word refuse
@@ -1885,6 +1792,30 @@ async function packageDocx() {
 }
 
 // ==== 8. Orchestration principale ====
+function addResultCard(jobIndex, total, blob, filename, applied, kept, failed) {
+  const card = document.createElement('div');
+  card.className = 'result-card';
+
+  const label = document.createElement('p');
+  label.className = 'result-label';
+  label.textContent = total > 1 ? `Offre ${jobIndex + 1}/${total}` : 'Résultat';
+  card.appendChild(label);
+
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
+  a.className = 'download-link';
+  card.appendChild(a);
+
+  const summary = document.createElement('p');
+  summary.className = 'hint';
+  summary.textContent = `${applied} segment(s) modifié(s), ${kept} conservé(s), ${failed} échec(s).`;
+  card.appendChild(summary);
+
+  downloadArea.appendChild(card);
+}
+
 runBtn.addEventListener('click', async () => {
   if (adaptationInProgress) return; // garde-fou : un double-clic ne doit jamais lancer 2 passes en parallèle
   adaptationInProgress = true;
@@ -1892,112 +1823,112 @@ runBtn.addEventListener('click', async () => {
   stopBtn.hidden = false;
   downloadArea.innerHTML = '';
   progressBar.style.width = '0%';
-  log('--- Nouvelle adaptation ---');
 
-  // Chaque nouvelle passe repart avec son propre "droit" à plusieurs
-  // tentatives de récupération GPU — sinon un souci définitivement réglé
-  // (page rechargée, modèle re-choisi...) resterait bloqué par l'état d'une
-  // passe précédente.
-  webllmIrrecoverable = false;
-  webllmRecoveryAttemptsThisPass = 0;
+  // Une ou plusieurs offres : chacune produit son propre CV adapté, à
+  // partir du MÊME CV original (jamais chaînées entre elles).
+  const jobs = jobTexts().filter(Boolean);
 
-  const job = buildJobContext(jobTextEl.value.trim());
-  log(`Mots-clés extraits de l'offre (déterministe, sans LLM) : ${job.keywords.join(', ') || '(aucun)'}`);
-  const stopSignal = newStopSignal();
-
-  try {
-    await initWebLLM(); // charge le modèle maintenant si ce n'est pas déjà fait
-
-    const allRuns = classifyRuns(getTextRuns(docState.xmlDoc));
-    const editable = allRuns.filter((r) => r.editable);
-    log(`${editable.length} segment(s) à reformuler.`);
-
-    let applied = 0;
-    let failed = 0;
-    let kept = 0;
-
-    const { results, skippedIdx } = await rewriteAllSegments(editable, job, stopSignal, (done, total) => {
-      progressBar.style.width = Math.round((done / total) * 100) + '%';
-      // Indicateur d'avancement global, lisible sans ouvrir le journal
-      // technique — remplace la ligne de statut précédente (qui pouvait
-      // rester bloquée sur un message de rechargement pendant de longues
-      // secondes) dès qu'un nouveau segment aboutit.
-      setStatus(`Adaptation en cours… ${done}/${total} segment(s) adapté(s).`);
-    });
-
-    for (let i = 0; i < editable.length; i++) {
-      const run = editable[i];
-      const newText = results[i];
-      if (newText && newText.length > 0) {
-        setRunText(run.node, newText);
-        applied++;
-        const actionTag = run._planAction && run._planAction !== 'rewrite' ? ` [${run._planAction.toUpperCase()}]` : '';
-        log(`  ✓${actionTag} [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
-      } else if (skippedIdx.has(i)) {
-        kept++;
-        log(`  ○ [${i + 1}/${editable.length}] conservé tel quel (aucune correspondance avec l'offre — décision KEEP, pas un échec).`);
-      } else {
-        failed++;
-        log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé (échec).`);
-      }
-    }
-    progressBar.style.width = '100%';
-
-    log(`${applied} segment(s) modifié(s), ${kept} conservé(s) par choix (KEEP), ${failed} laissé(s) inchangé(s) par échec.`);
-
-    if (applied === 0) {
-      // Même si rien n'a pu être reformulé (ex. GPU épuisé en cours de
-      // route), on propose quand même le fichier : au pire il est identique
-      // à l'original (inoffensif), au mieux l'utilisateur peut relancer
-      // "Adapter mon CV" sur ce même document pour retenter. Ne rien
-      // produire du tout est la pire expérience possible après une longue
-      // attente.
-      log('⚠️ Aucun segment reformulé — le .docx proposé ci-dessous est identique au CV original.');
-      setStatus("Aucun segment n'a pu être reformulé (voir journal) — le CV original reste néanmoins disponible ci-dessous. Tu peux relancer « Adapter mon CV » pour retenter.");
-    }
-
-    setStatus("Assemblage du fichier .docx (mise en page, styles et images d'origine conservés)…");
-    const blob = await packageDocx();
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = originalFileName + '-adapte.docx';
-    a.textContent = '⬇️ Télécharger le CV adapté (.docx)';
-    a.className = 'download-link';
-    downloadArea.appendChild(a);
-
-    const continueBtn = document.createElement('button');
-    continueBtn.type = 'button';
-    continueBtn.textContent = '🔁 Continuer à améliorer ce CV';
-    continueBtn.className = 'secondary-btn';
-    continueBtn.addEventListener('click', () => {
-      iteration += 1;
-      originalFileName = baseFileName + '-v' + iteration;
-      log(`--- Nouvelle passe sur le document déjà modifié (version ${iteration}) ---`);
-      setStatus("Modifie l'annonce si besoin, puis relance « Adapter mon CV » pour continuer à l'affiner.");
-      downloadArea.innerHTML = '';
-      jobTextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    downloadArea.appendChild(continueBtn);
-
-    const msg = failed > 0
-      ? `Terminé avec ${failed} segment(s) non modifié(s) (voir journal).`
-      : "Terminé ✅ — mise en page, polices, tableaux et images d'origine conservés tels quels.";
-    setStatus(msg);
-  } catch (err) {
-    if (err.message === '__STOPPED_BY_USER__' || err.message === 'Stopped by user.') {
-      log('⏹ Arrêté par l’utilisateur.');
-      setStatus('Arrêté.');
-    } else {
-      console.error(err);
-      log('Erreur : ' + (err.stack || err.message));
-      setStatus('Erreur : ' + err.message);
-    }
-  } finally {
+  if (jobs.length === 0) {
+    setStatus('Colle au moins une offre avant de lancer l\'adaptation.');
     adaptationInProgress = false;
     runBtn.disabled = false;
     stopBtn.hidden = true;
+    updateRunButton();
+    return;
+  }
+
+  log(`--- Nouvelle série : ${jobs.length} offre(s) ---`);
+
+  // Chaque nouvelle série repart avec son propre "droit" à plusieurs
+  // tentatives de récupération GPU — sinon un souci définitivement réglé
+  // (page rechargée, modèle re-choisi...) resterait bloqué par l'état d'une
+  // série précédente.
+  webllmIrrecoverable = false;
+  webllmRecoveryAttemptsThisPass = 0;
+
+  const stopSignal = newStopSignal();
+  // Indicateur simple et unique pendant toute la série : des points qui
+  // avancent. Le détail (chargement du modèle, rechargements GPU, reprises,
+  // segment par segment...) reste entièrement dans le journal technique
+  // replié — voir setStatus()/startDotTicker().
+  startDotTicker('Adaptation en cours');
+
+  try {
+    await initWebLLM(); // charge le modèle UNE SEULE FOIS pour toute la série d'offres
+
+    for (let jobIdx = 0; jobIdx < jobs.length; jobIdx++) {
+      if (jobs.length > 1) log(`--- Offre ${jobIdx + 1}/${jobs.length} ---`);
+      const job = buildJobContext(jobs[jobIdx]);
+      log(`Mots-clés extraits (déterministe, sans LLM) : ${job.keywords.join(', ') || '(aucun)'}`);
+
+      // Clone frais du CV ORIGINAL — jamais du résultat de l'offre
+      // précédente, pour que chaque offre soit adaptée indépendamment.
+      const xmlDoc = freshXmlDoc();
+      const allRuns = classifyRuns(getTextRuns(xmlDoc));
+      const editable = allRuns.filter((r) => r.editable);
+      log(`${editable.length} segment(s) à reformuler.`);
+
+      let applied = 0;
+      let failed = 0;
+      let kept = 0;
+
+      const { results, skippedIdx } = await rewriteAllSegments(editable, job, stopSignal, (done, total) => {
+        const overallDone = jobIdx + (total ? done / total : 0);
+        progressBar.style.width = Math.round((overallDone / jobs.length) * 100) + '%';
+      });
+
+      for (let i = 0; i < editable.length; i++) {
+        const run = editable[i];
+        const newText = results[i];
+        if (newText && newText.length > 0) {
+          setRunText(run.node, newText);
+          applied++;
+          const actionTag = run._planAction && run._planAction !== 'rewrite' ? ` [${run._planAction.toUpperCase()}]` : '';
+          log(`  ✓${actionTag} [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
+        } else if (skippedIdx.has(i)) {
+          kept++;
+          log(`  ○ [${i + 1}/${editable.length}] conservé tel quel (aucune correspondance avec l'offre — décision KEEP, pas un échec).`);
+        } else {
+          failed++;
+          log(`  ✗ [${i + 1}/${editable.length}] laissé inchangé (échec).`);
+        }
+      }
+      log(`Offre ${jobIdx + 1}/${jobs.length} : ${applied} modifié(s), ${kept} conservé(s) (KEEP), ${failed} échec(s).`);
+
+      // Même si rien n'a pu être reformulé (ex. GPU épuisé en cours de
+      // route), on propose quand même le fichier : au pire il est identique
+      // à l'original (inoffensif), au mieux relancer suffit à retenter. Ne
+      // rien produire du tout est la pire expérience possible après une
+      // longue attente.
+      const blob = await packageDocx(xmlDoc);
+      const suffix = jobs.length > 1 ? `-offre${jobIdx + 1}` : '';
+      addResultCard(jobIdx, jobs.length, blob, `${originalFileName}-adapte${suffix}.docx`, applied, kept, failed);
+    }
+
+    progressBar.style.width = '100%';
+    stopDotTicker();
+    statusEl.textContent = jobs.length > 1
+      ? `Terminé ✅ — ${jobs.length} CV générés.`
+      : 'Terminé ✅.';
+  } catch (err) {
+    stopDotTicker();
+    if (err.message === '__STOPPED_BY_USER__' || err.message === 'Stopped by user.') {
+      log('⏹ Arrêté par l’utilisateur.');
+      statusEl.textContent = 'Arrêté.';
+    } else {
+      console.error(err);
+      log('Erreur : ' + (err.stack || err.message));
+      statusEl.textContent = 'Erreur : ' + err.message;
+    }
+  } finally {
+    stopDotTicker();
+    adaptationInProgress = false;
+    runBtn.disabled = false;
+    stopBtn.hidden = true;
+    // Détruit le moteur ET le Worker après la série complète (voir
+    // resetWebllmState) — rien ne reste chargé "au cas où" entre deux
+    // clics. Un futur clic recharge depuis le cache navigateur, rapide.
+    await resetWebllmState();
     updateRunButton();
   }
 });

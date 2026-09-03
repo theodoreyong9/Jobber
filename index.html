@@ -3,73 +3,47 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CV Adapter</title>
+<title>Jobber</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="wrap">
     <header>
-      <h1>🎯 CV Adapter</h1>
-      <p class="subtitle">
-        Adapte ton CV .docx à une offre d'emploi, en gardant exactement ta mise en page,
-        tes polices, tes couleurs, tes tableaux et ta photo d'origine — seuls les textes de
-        contenu (résumé, descriptions de poste, compétences) sont reformulés, via
-        <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>,
-        entièrement dans ton navigateur.
-      </p>
+      <h1>Jobber</h1>
+      <p class="tagline">Adapt your CV. No account needed.</p>
     </header>
 
     <main>
-      <section class="card">
-        <h2>1. Ton CV (.docx)</h2>
-        <label class="file-drop">
-          <input type="file" id="cv-file" accept=".docx" />
-          <span id="file-name">Choisir un fichier .docx…</span>
-        </label>
-      </section>
+      <label class="file-drop">
+        <input type="file" id="cv-file" accept=".docx" />
+        <span id="file-name">Charger ton CV (.docx)</span>
+      </label>
 
-      <section class="card">
-        <h2>2. L'offre d'emploi</h2>
-        <textarea id="job-text" rows="10" placeholder="Colle ici le texte complet de l'annonce…"></textarea>
-        <p id="job-count" class="hint">0 caractère</p>
-      </section>
+      <div id="job-list"></div>
+      <div class="job-controls">
+        <button id="add-job-btn" type="button" class="secondary-btn">+ Ajouter une offre</button>
+        <span id="job-count" class="hint">Aucune offre collée</span>
+      </div>
 
-      <section class="card">
-        <h2>3. Génération (100 % locale, dans ton navigateur — WebGPU)</h2>
-        <label class="field-label" for="model-select">Modèle</label>
-        <select id="model-select">
-          <option value="auto">Auto (choisi selon ton appareil)</option>
-          <option value="small">Petit / rapide (~1 Go, mobile)</option>
-          <option value="medium">Moyen (~2 Go, desktop)</option>
-          <option value="large">Grand / meilleure qualité (~5 Go, desktop avec beaucoup de VRAM)</option>
-        </select>
-        <p class="hint">
-          Le modèle tourne entièrement dans ton navigateur via
-          <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>
-          (WebGPU) — rien n'est envoyé à un serveur. Le premier chargement télécharge le
-          modèle (plusieurs centaines de Mo à quelques Go), puis il reste en cache. Il se
-          charge automatiquement au clic sur « Adapter mon CV » ci-dessous.
-        </p>
-      </section>
+      <select id="model-select" aria-label="Modèle">
+        <option value="auto">Modèle : Auto</option>
+        <option value="small">Modèle : Petit</option>
+        <option value="medium">Modèle : Moyen</option>
+        <option value="large">Modèle : Grand</option>
+      </select>
 
-      <section class="card">
-        <button id="run-btn" disabled>✨ Adapter mon CV</button>
-        <button id="stop-btn" type="button" class="secondary-btn" hidden>⏹ Stop</button>
-        <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
-        <p id="status" class="status">Charge un CV et colle une offre pour activer l'adaptation — un seul clic sur « Adapter mon CV » charge le modèle choisi puis lance l'adaptation.</p>
-        <div id="download-area"></div>
-        <details>
-          <summary>Journal technique</summary>
-          <pre id="log"></pre>
-        </details>
-      </section>
+      <button id="run-btn" disabled>Adapter mon CV</button>
+      <button id="stop-btn" type="button" class="secondary-btn" hidden>Stop</button>
+      <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
+      <p id="status" class="status">Charge un CV et colle une offre pour commencer.</p>
+
+      <div id="download-area"></div>
+
+      <details>
+        <summary>Journal technique</summary>
+        <pre id="log"></pre>
+      </details>
     </main>
-
-    <footer>
-      <p>Ton CV et le texte de l'annonce ne quittent jamais ton navigateur : la génération
-      se fait localement via WebGPU (WebLLM). Aucune donnée n'est envoyée à un serveur.
-      Nécessite un navigateur récent avec WebGPU (Chrome/Edge).</p>
-    </footer>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

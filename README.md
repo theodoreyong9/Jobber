@@ -1,237 +1,195 @@
-# CV Adapter
+# Jobber
 
-Site statique qui adapte un CV `.docx` à une offre d'emploi **entièrement
-dans le navigateur**, via [WebLLM](https://github.com/mlc-ai/web-llm)
-(WebGPU) — aucun serveur, aucune API, aucun compte, aucun token. Le CV et
-le texte de l'annonce ne quittent jamais l'appareil. La mise en page
-d'origine (styles, polices, couleurs, tableaux, photo) est conservée à
-l'identique — seuls certains textes sont reformulés.
+Adapte un CV `.docx` à une ou plusieurs offres d'emploi **entièrement dans
+le navigateur** — aucun serveur, aucune API, aucun compte. Le CV et les
+offres ne quittent jamais l'appareil. La mise en page d'origine (styles,
+polices, couleurs, tableaux, photo) est conservée à l'identique ; seuls
+certains textes sont reformulés.
 
-Deux modèles locaux, deux rôles bien séparés : **WebLLM** rédige (le seul
-endroit où un texte est généré, sur WebGPU), **[Transformers.js](https://github.com/huggingface/transformers.js)**
-calcule des embeddings pour affiner le matching CV ↔ offre — toujours en
-WASM/CPU, jamais en WebGPU, pour ne jamais entrer en concurrence avec
-WebLLM sur le pool de devices GPU du navigateur (déjà fragile sur
-certaines machines, voir plus bas). Les embeddings sont optionnels : si
-leur chargement échoue, tout le pipeline continue avec le matching par
-mots-clés seul.
+## Principe
 
-## Le principe : le code décide ce qui est autorisé, le modèle rédige
+Le code décide ce qui est autorisé à changer et pourquoi. Le modèle de
+langage (LLM) ne fait que rédiger de courtes phrases, une à la fois, avec
+un vocabulaire déjà validé. Rien n'est laissé à l'appréciation du modèle :
+ni quelles parties du CV toucher, ni quels mots-clés utiliser, ni si le
+résultat est acceptable — tout ça est décidé et vérifié par du code
+déterministe, avant et après chaque appel au modèle.
 
-L'idée centrale du projet : ne pas faire reposer la qualité du résultat
-sur "un LLM assez intelligent pour tout bien faire tout seul". La majorité
-du travail est déterministe (donc fiable, gratuite en calcul, prévisible)
-et le LLM n'intervient que là où le langage naturel apporte vraiment
-quelque chose — reformuler une phrase, pas décider quoi toucher.
+Deux modèles locaux, deux rôles distincts :
+- **[WebLLM](https://github.com/mlc-ai/web-llm)** (WebGPU) — rédige. Seul
+  endroit du pipeline où du texte est généré.
+- **[Transformers.js](https://github.com/huggingface/transformers.js)**
+  (WASM/CPU) — calcule des embeddings pour affiner la pertinence CV ↔
+  offre. Optionnel : si indisponible, le pipeline continue avec un
+  matching par mots-clés seul. Tourne toujours en CPU, jamais en WebGPU,
+  pour ne jamais se disputer le GPU avec WebLLM.
+
+## Pipeline
 
 ```
-CV (.docx)                                  OFFRE D'EMPLOI (texte collé)
-    │                                                │
-    ▼                                                ▼
-parsing local (JSZip + DOMParser)          extraction de mots-clés
-    │                                       (déterministe, sans LLM)
-    ▼                                                │
-classification par rôle                              │
-(déterministe, sans LLM)                              │
-    │                                                │
-    ├── gelé (coordonnées, photo, diplômes,           │
-    │   loisirs, lignes "poste — dates",              │
-    │   listes de compétences...)                     │
-    │                                                │
-    └── éditable : titre / profil / description ──────┤
-        de poste                                      │
-              │                                        │
-              ▼                                        │
-    matching sémantique par segment ◄──────────────────┘
-    (déterministe : quels mots-clés
-     sont VRAIMENT pertinents ici ?)
+CV (.docx)                                    OFFRE(S) D'EMPLOI (texte)
+    │                                                  │
+    ▼                                                  ▼
+parsing local (JSZip + DOMParser)            extraction de mots-clés
+    │                                        (fréquence, stopwords, fluff,
+    ▼                                         synonymes — déterministe)
+classification par rôle
+(déterministe)                                         │
+    │                                                   │
+    ├── gelé : coordonnées, photo, diplômes,            │
+    │   loisirs, lignes "poste — dates",                │
+    │   listes de compétences...                        │
+    │                                                   │
+    └── éditable : titre / profil / description ────────┤
+        de poste                                        │
+              │                                          │
+              ▼                                          │
+    matching par segment ◄───────────────────────────────┘
+    (mots-clés + embeddings si
+     disponibles ; max 3 mots-clés
+     retenus par segment)
               │
               ▼
-    plan d'adaptation (déterministe)
+    plan d'adaptation
     KEEP / LIGHT_REWRITE / STRONG_REWRITE
-    — calculé et journalisé AVANT
-      tout appel au modèle
+    (calculé et journalisé avant
+     tout appel au modèle)
               │
      ┌────────┴─────────┐
      ▼                   ▼
       KEEP           LIGHT / STRONG
-  → conservé tel        → WebLLM reformule
-    quel, PAS envoyé       (consigne + budget de
-    au modèle                tokens selon l'action)
+  → conservé tel        → WebLLM rédige
+    quel, PAS envoyé       (1 segment, jusqu'à
+    au modèle                3 mots-clés autorisés)
                               │
                               ▼
-                    validateur local (garde-fou)
-                    - gabarit de prompt recopié ?
-                    - passage de l'offre recopié ?
+                    validateur local
+                    - gabarit/offre recopiés ?
                     - longueur hors contrainte ?
-                    - fait/techno/chiffre inventé,
-                      absent de l'original ?
+                    - langue changée ?
+                    - dérive hors-sujet ?
+                    - fait/techno/chiffre inventé ?
                               │
                     rejeté → nouvelle tentative
                     accepté → écrit dans le CV
 ```
 
-## Étapes en détail
+## Étapes
 
-1. **Lecture** : le `.docx` est ouvert comme une archive zip
-   ([JSZip](https://stuk.github.io/jszip/)), `word/document.xml` est parsé
-   comme du XML natif (`DOMParser`). Les sauts de ligne internes à un run
-   Word (`<w:br/>`, utilisés par ex. pour une liste de compétences tapée
-   avec Maj+Entrée) sont préservés, pas aplatis.
+1. **Lecture** — le `.docx` est ouvert comme une archive zip (JSZip),
+   `word/document.xml` est parsé comme du XML natif. Le texte original
+   intact est conservé en mémoire : chaque offre traitée repart d'un clone
+   frais de ce texte, jamais du résultat d'une offre précédente — les
+   offres ne se contaminent jamais entre elles.
 
-2. **Classification par rôle (déterministe, sans LLM)** — `classifyRuns()` :
-   chaque segment de texte est classé par des règles simples (gras,
-   position, longueur, nom de section, motifs de contact) en :
+2. **Classification par rôle** (`classifyRuns()`) — chaque segment de
+   texte est classé par des règles simples (gras, position, longueur, nom
+   de section, motifs de contact) en :
    - **gelé** : nom, coordonnées, photo, diplômes/formation, langues,
      loisirs, lignes "poste — entreprise — dates", listes de
-     compétences/technologies — jamais touché.
-   - **éditable**, avec un rôle précis qui détermine la consigne donnée au
-     modèle : `headline` (titre du CV, 5 mots max), `profile` (résumé, ton
-     affirmatif et enthousiaste, 4 phrases max), `job-description`
-     (description de mission, ton factuel, longueur équivalente). Chaque
-     consigne inclut un exemple concret (extrait → réponse), pas
-     seulement une règle de style abstraite — un petit modèle local suit
-     un exemple bien plus fiablement qu'une description ("5 mots
-     maximum") qu'il doit s'auto-évaluer.
+     compétences/technologies.
+   - **éditable**, avec un rôle qui détermine la consigne donnée au
+     modèle : `headline` (titre, 5 mots max), `profile` (résumé, ton
+     affirmatif, 4 phrases max), `job-description` (mission, ton factuel,
+     longueur équivalente). Chaque consigne inclut un exemple concret
+     (extrait → réponse) — un petit modèle local suit un exemple bien
+     plus fiablement qu'une règle de style abstraite.
 
-3. **Extraction des mots-clés de l'offre (déterministe, sans LLM)** —
-   `extractJobKeywords()` : fréquence pondérée des termes de l'annonce
-   (les mots avec majuscule/acronyme comptent double — technologies, noms
-   propres), en excluant un stoplist de "fluff" typique d'annonce (Senior,
-   Strong, Excellent, Looking, Team...) qui faussait sinon le classement
-   juste parce que ces mots sont souvent capitalisés. Quelques bigrammes
-   techniques usuels (REST API, CI/CD, machine learning, full-stack...)
-   sont détectés en priorité pour ne pas les casser en deux mots-clés
-   isolés qui perdraient leur sens. Le modèle ne reçoit **jamais** le
-   texte complet de l'annonce, seulement cette liste de mots-clés + un
-   court extrait de contexte — ça réduit la taille des prompts et empêche
-   structurellement le modèle de recopier des phrases entières de l'offre
-   à la place du CV.
+3. **Extraction des mots-clés de l'offre** (`extractJobKeywords()`) —
+   fréquence pondérée des termes (majuscules/acronymes comptent double),
+   filtrage d'un stoplist de "fluff" d'annonce (Senior, Strong, Looking,
+   Team...), détection de bigrammes techniques usuels (REST API, CI/CD,
+   machine learning...). Le modèle ne reçoit jamais le texte complet de
+   l'offre — seulement cette liste de mots-clés et un court extrait de
+   contexte.
 
-4. **Matching sémantique par segment (déterministe, sans LLM)** —
-   `segmentKeywordMatches()` : pour chaque description de poste, calcule
-   lesquels des mots-clés de l'offre ont un vrai écho dans CE segment
-   précis (comparaison par racine de mot, tolère les variantes
-   morphologiques simples). Un petit dictionnaire de synonymes/variantes
-   entretenu à la main (`SYNONYM_CLUSTERS`) comble les cas où le stem seul
-   ne suffit pas (`psql`/`PostgreSQL`, `AWS`/`Amazon`, `REST`/`RESTful`,
-   `K8s`/`Kubernetes`...) — toujours déterministe, aucun appel LLM. Une
-   description de poste sans **aucune** correspondance n'est même pas
-   envoyée au modèle (décision *KEEP*) : zéro risque d'invention, zéro
-   calcul GPU perdu dessus. Les autres reçoivent une consigne
-   proportionnée à la force de la correspondance — cette note ciblée
-   remplace même le bloc générique de contexte d'offre pour ce rôle (plus
-   courte et plus pertinente qu'une liste de mots-clés identique envoyée à
-   chaque appel).
+4. **Matching par segment** (`segmentKeywordMatches()`) — pour chaque
+   description de poste, retient jusqu'à 3 mots-clés de l'offre ayant un
+   vrai écho dans ce segment (racine de mot + petit dictionnaire de
+   synonymes `SYNONYM_CLUSTERS` : `psql`/`PostgreSQL`, `AWS`/`Amazon`,
+   `REST`/`RESTful`...). Un segment sans aucune correspondance n'est même
+   pas envoyé au modèle. Si un modèle d'embeddings a pu se charger, un
+   score de similarité cosinus vient s'ajouter au comptage de mots-clés —
+   la décision retenue est toujours la plus "forte" des deux signaux.
 
-   La quantité de contexte envoyée est volontairement minimisée et
-   adaptée au rôle du segment (`formatJobContextForPrompt()`) : un titre
-   (5 mots max) n'a besoin que d'un signal minimal, un profil d'un
-   contexte réduit, une description de poste de sa seule note de
-   correspondance. Mesuré : la surcharge fixe par appel (hors texte du CV
-   lui-même) est passée d'environ 290 tokens à 70-140 selon le rôle — sur
-   un GPU lent, chaque token de moins réduit le temps de calcul continu et
-   donc le risque de dépasser le seuil de patience du pilote (TDR).
+5. **Plan d'adaptation** (`buildAdaptationPlan()`) — calculé une fois pour
+   tout le CV, avant tout appel au modèle : `KEEP` (non pertinent),
+   `LIGHT_REWRITE` (budget de sortie réduit) ou `STRONG_REWRITE` (plein
+   budget) pour chaque description de poste. Seule source de vérité
+   utilisée ensuite par les prompts et le validateur.
 
-5. **Plan d'adaptation (déterministe côté décision, embeddings en option)** —
-   `buildAdaptationPlan()` : calculé une seule fois pour tout le CV, AVANT
-   le moindre appel à WebLLM. Pour chaque description de poste, transforme
-   la pertinence par rapport à l'offre en une décision explicite et
-   journalisée : `KEEP` (non pertinent, jamais envoyé au modèle),
-   `LIGHT_REWRITE` (budget de sortie réduit — le texte n'a de toute façon
-   pas vocation à beaucoup changer) ou `STRONG_REWRITE` (plein budget).
+6. **Réécriture** (`rewriteSegment()`) — un appel au modèle par segment,
+   séquentiel : le rôle, jusqu'à 3 mots-clés autorisés, l'extrait — rien
+   de plus. En cas de perte du contexte GPU, le moteur est rechargé et le
+   segment retenté, dans la limite d'un budget global de tentatives pour
+   toute la série d'offres.
 
-   La pertinence combine deux signaux plutôt que de faire reposer la
-   décision sur un seul : le nombre de mots-clés en commun (voir étape 4)
-   est toujours calculé, et si un modèle d'**embeddings** (Transformers.js,
-   voir plus haut) a pu se charger, un score de similarité cosinus vient
-   s'y ajouter — la décision retenue est la plus "forte" des deux
-   (`KEEP` < `LIGHT_REWRITE` < `STRONG_REWRITE`), jamais la plus faible.
-   Ce choix protège contre un seuil de similarité mal calé qui
-   sous-évaluerait la pertinence et ferait passer en KEEP des segments que
-   le matching par mots-clés avait pourtant repérés à raison. Si les
-   embeddings sont indisponibles (échec de chargement...), le matching par
-   mots-clés fonctionne seul, exactement comme avant leur ajout.
-
-6. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
-   homogènes (même rôle) pour limiter le nombre d'appels au modèle, avec
-   repli automatique en appel individuel si un lot échoue.
-
-7. **Validation locale (garde-fou)** — `validateSegmentOutput()`, exécutée
-   sur *chaque* sortie du modèle avant acceptation, **pour les trois rôles
-   éditables** (titre, profil, description de poste — pas seulement ce
-   dernier) :
+7. **Validation locale** (`validateSegmentOutput()`), sur chaque sortie
+   avant acceptation :
    - rejette un texte qui recopie le gabarit du prompt ou un passage de
-     l'offre d'emploi ;
-   - rejette un titre/profil qui dépasse largement sa contrainte de
-     longueur ;
-   - rejette toute sortie qui **change la langue** du texte d'origine
-     (détection simple par mots-outils fréquents) — un texte en anglais
-     ne doit jamais ressortir en français, ou l'inverse ;
-   - rejette un profil qui a "dérivé" au point de ne garder presque aucun
-     mot en commun avec l'original (fabrication générique plutôt que
-     reformulation) ;
-   - rejette toute description de poste qui mentionne une technologie, un
-     nom propre ou un chiffre absent de l'extrait original (`extractFacts`
-     + `validateFactsPreserved`) — le garde-fou anti-hallucination.
+     l'offre ;
+   - rejette un titre/profil hors contrainte de longueur ;
+   - rejette toute sortie qui change la langue du texte d'origine ;
+   - rejette un profil ayant dérivé au point de ne garder presque aucun
+     mot en commun avec l'original (fabrication générique) ;
+   - rejette toute description de poste mentionnant une technologie, un
+     nom propre ou un chiffre absent de l'extrait original
+     (`validateFactsPreserved`).
 
-   **Règle absolue, revérifiée localement et indépendamment de tout
-   matching en amont** : un mot-clé présent uniquement dans l'offre
-   d'emploi ne devient jamais un fait autorisé pour le CV, même s'il a été
-   suggéré comme pertinent pour ce segment — il doit *aussi* avoir une
-   présence (même approximative) dans le texte original du candidat.
+   Règle absolue, revérifiée indépendamment de tout matching en amont :
+   un mot-clé présent uniquement dans l'offre ne devient jamais un fait
+   autorisé pour le CV — il doit aussi avoir une présence dans le texte
+   original du candidat. Un segment rejeté est retenté (jusqu'à 3 fois) ;
+   s'il échoue encore, il reste inchangé plutôt que d'injecter du texte
+   incorrect.
 
-   Un segment rejeté est retenté (nouvelle génération, jusqu'à 3 fois) ;
-   s'il échoue encore, il est laissé inchangé plutôt que d'injecter du
-   texte incorrect dans le CV final.
-
-8. **Écriture** : seul le texte (`<w:t>`/`<w:br/>`) du segment est
+8. **Écriture** — seul le texte (`<w:t>`/`<w:br/>`) du segment est
    remplacé ; sa mise en forme (police, couleur, gras) reste l'élément XML
    d'origine intact.
 
-9. **Réassemblage** : le zip est reconstruit avec ce `document.xml`
-   modifié et proposé au téléchargement.
+9. **Réassemblage** — le zip est reconstruit avec ce `document.xml`
+   modifié et proposé au téléchargement, un fichier par offre traitée.
+
+## Plusieurs offres à la suite
+
+Le modèle (WebLLM) est chargé **une seule fois** pour toute la série
+d'offres collées, pas une fois par offre — le rechargement d'un modèle de
+plusieurs centaines de Mo à chaque offre serait inutilement coûteux. Le
+moteur et son Worker dédié sont explicitement détruits (`resetWebllmState()`)
+une fois la série entière terminée, pas entre deux offres. Chaque offre
+produit son propre fichier `.docx`, indépendant des autres.
 
 ## Fiabilité face à un GPU/pilote instable
 
-WebLLM tourne entièrement sur le GPU via WebGPU, et certains
-GPU/pilotes (notamment sous Windows) peuvent perdre le contexte en cours
-d'inférence (`DXGI_ERROR_DEVICE_HUNG`). Le pipeline est conçu pour
-survivre à ça plutôt que d'abandonner :
+WebLLM tourne entièrement sur le GPU via WebGPU, et certains GPU/pilotes
+peuvent perdre le contexte en cours d'inférence (`DXGI_ERROR_DEVICE_HUNG`,
+"Device lost"). Le pipeline est conçu pour survivre à ça :
 
-- rechargement automatique du moteur avec budget de tentatives global
-  (pas de boucle infinie, mais généreux — pas de contrainte de temps) ;
-  ce budget est réellement utilisé jusqu'au bout : un échec de
-  rechargement sans palier de modèle plus léger disponible (déjà le cas
-  sur le plus petit modèle) ne met plus fin prématurément aux tentatives
-  restantes — seul l'épuisement réel du budget le fait ;
-- appels au modèle volontairement courts (peu de tokens, lots limités à 2
-  segments) pour réduire le temps de calcul GPU continu par appel et donc
-  le risque de timeout (TDR) ;
-- "reprises" complètes en fin de passe sur tout ce qui a échoué, avec un
+- un appel au modèle = un segment (pas de lot groupé) : plus petit, plus
+  rapide à générer, moins de risque de dépasser le seuil de patience du
+  pilote (TDR — les GPU intégrés y sont particulièrement sensibles) ;
+- rechargement automatique du moteur avec un budget de tentatives global
+  pour toute la série, réellement utilisé jusqu'au bout ;
+- "reprises" complètes en fin de série sur tout ce qui a échoué, avec un
   moteur neuf, jusqu'à ce que tout soit traité ou qu'un plafond de
   sécurité soit atteint ;
 - verrou d'interface dédié : le bouton "Adapter mon CV" reste désactivé du
-  premier au dernier instant d'une passe, même pendant les rechargements
-  internes, pour empêcher un double-clic de lancer deux passes en
-  parallèle sur le même document.
+  premier au dernier instant, même pendant les rechargements internes,
+  pour empêcher un double-clic de lancer deux séries en parallèle.
 
 ## Utilisation
 
 1. Charge un `.docx`.
-2. Colle le texte de l'offre d'emploi.
-3. Choisis un modèle dans la liste (Auto / Petit / Moyen / Grand — plus
-   gros = meilleure qualité mais plus de VRAM et de temps de
-   téléchargement).
-4. Clique sur **Adapter mon CV** : le modèle choisi se charge
-   automatiquement s'il ne l'est pas déjà, puis l'adaptation démarre.
-   Un seul bouton, un seul clic.
+2. Colle une offre d'emploi (bouton "+ Ajouter une offre" pour en traiter
+   plusieurs à la suite sur ce même CV).
+3. Choisis un modèle (Auto / Petit / Moyen / Grand).
+4. Clique sur **Adapter mon CV** : le modèle se charge automatiquement,
+   puis chaque offre est traitée à son tour. Un fichier par offre.
 
-Le premier chargement télécharge le modèle (plusieurs centaines de Mo à
-quelques Go selon la taille choisie), puis il reste en cache navigateur
-pour les fois suivantes.
+Le premier chargement télécharge le modèle (quelques centaines de Mo à
+plusieurs Go selon la taille choisie), puis il reste en cache navigateur.
 
-## Déploiement automatique sur GitHub Pages
+## Déploiement sur GitHub Pages
 
 Ce repo contient un workflow (`.github/workflows/deploy.yml`) qui déploie
 automatiquement sur GitHub Pages à chaque push sur `main`.
@@ -241,46 +199,27 @@ automatiquement sur GitHub Pages à chaque push sur `main`.
 3. Pousse un commit sur `main` : le site est déployé sur
    `https://<ton-user>.github.io/<nom-du-repo>/`.
 
-Aucune étape de build : HTML/CSS/JS pur. [JSZip](https://stuk.github.io/jszip/)
-et [WebLLM](https://github.com/mlc-ai/web-llm) sont chargés depuis un CDN
-directement dans le navigateur.
+Aucune étape de build : HTML/CSS/JS pur, bibliothèques chargées depuis un
+CDN directement dans le navigateur.
 
 ## Limites à connaître
 
-- **Classification par heuristiques** : la détection gelé/éditable et le
-  rôle (titre/profil/description) reposent sur des règles simples (gras,
-  taille, mots-clés de section) qui couvrent bien les CV classiques mais
-  peuvent se tromper sur une mise en page très inhabituelle — relis
-  toujours le résultat avant de l'envoyer.
-- **Extraction de mots-clés toujours heuristique** : fréquence + racine de
-  mot + un petit dictionnaire de synonymes entretenu à la main
-  (`SYNONYM_CLUSTERS`, une vingtaine d'entrées) — sert surtout à choisir
-  le vocabulaire suggéré dans les prompts, pas à mesurer la pertinence
-  elle-même (voir embeddings ci-dessous).
-- **Embeddings optionnels, seuils encore approximatifs** : quand ils sont
-  disponibles, un score de similarité cosinus vient s'ajouter au comptage
-  de mots-clés (la décision retient le plus "fort" des deux, jamais le
-  plus faible — voir étape 5). Un premier test réel a montré les seuils
-  de départ (`0.35`/`0.55`) plutôt stricts (beaucoup de `KEEP`) ; la
-  combinaison avec le matching par mots-clés compense en grande partie,
-  mais les seuils eux-mêmes pourront encore avoir besoin d'ajustement.
-  Toujours tourné en WASM/CPU, jamais en WebGPU — ne rentre jamais en
-  concurrence avec WebLLM pour le device GPU. Si le modèle d'embeddings ne
-  se charge pas (délai dépassé, réseau, navigateur), tout continue avec le
-  matching par mots-clés seul, sans interruption.
-- **Modèle local, donc plus faible qu'un modèle cloud** : même avec le
-  garde-fou anti-invention, un petit modèle peut produire une
-  reformulation maladroite ou décider de ne pas changer un segment
-  pourtant pertinent — relis toujours le résultat.
-- **GPU/pilote instable** : sur certaines machines (notamment Windows
-  avec un GPU intégré ou des pilotes anciens), l'inférence WebGPU peut
-  planter fréquemment. Le pipeline retente automatiquement, mais dans les
-  cas extrêmes certains segments peuvent rester inchangés faute de mieux.
-  Mettre à jour les pilotes GPU et vérifier `chrome://gpu` (accélération
-  matérielle active) aide nettement.
-- **Compétences/technologies "figées" par design** : les listes de
-  compétences ne sont jamais reformulées, même si l'offre en mentionne
-  d'autres — ce n'est pas un oubli, c'est pour ne jamais risquer d'ajouter
+- **Classification par heuristiques** : couvre bien les CV classiques,
+  peut se tromper sur une mise en page très inhabituelle — relire le
+  résultat avant de l'envoyer.
+- **Extraction de mots-clés et matching approximatifs** : fréquence +
+  racine de mot + un petit dictionnaire de synonymes ; les embeddings
+  affinent la pertinence globale mais n'en font pas une vraie analyse
+  sémantique complète.
+- **Modèle local, donc plus faible qu'un modèle cloud** : même avec les
+  garde-fous anti-invention, une reformulation peut rester maladroite —
+  relire le résultat.
+- **GPU/pilote instable** : sur certaines machines, l'inférence WebGPU
+  peut planter fréquemment ; le pipeline retente automatiquement, mais un
+  segment peut rester inchangé faute de mieux. Mettre à jour les pilotes
+  GPU et vérifier `chrome://gpu` (accélération matérielle active) aide.
+- **Compétences/technologies gelées par design** : jamais reformulées,
+  même si l'offre en mentionne d'autres — pour ne jamais risquer d'ajouter
   une compétence non maîtrisée par la personne.
 
 ## Structure du repo
@@ -290,8 +229,8 @@ index.html                  page unique
 style.css                   styles
 app.js                      logique complète : parsing/écriture XML,
                              classification par rôle, extraction de
-                             mots-clés, matching sémantique, moteur WebLLM
-                             (chargement, récupération GPU), prompts par
-                             rôle, validation/garde-fou, réassemblage
+                             mots-clés, matching, plan d'adaptation,
+                             moteur WebLLM (chargement, récupération GPU),
+                             prompts par rôle, validation, réassemblage
 .github/workflows/deploy.yml   CI de déploiement Pages
 ```
