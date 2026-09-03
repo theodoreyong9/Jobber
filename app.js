@@ -125,7 +125,18 @@ function releaseWakeLock() {
 // l'annonce collée). Ce n'est pas une reformulation du CV, c'est un
 // morceau d'une tout autre source injecté à la place — potentiellement
 // très gênant si l'offre décrit un poste ou une entreprise différents.
-function isDegenerateOutput(text, jobText) {
+//
+// ownPromptText (optionnel) : les morceaux de texte qu'ON a nous-mêmes
+// injectés dans CE prompt précis (système + consigne de rôle + note de
+// correspondance, voir ownPromptText()). Sans cette vérification
+// GÉNÉRIQUE, chaque fois qu'on reformule un prompt, il faut se souvenir
+// d'ajouter la nouvelle formulation à une liste figée ci-dessous — et on
+// l'a déjà oublié une fois (buildMatchNote reformulé, sa propre phrase
+// "Correspondance partielle avec l'offre sur…" recopiée telle quelle par
+// le modèle, jamais détectée). La vérification par fragment (même méthode
+// que looksLeakedFromJobText) reste valable quel que soit le texte exact
+// des prompts, tant qu'ils changent.
+function isDegenerateOutput(text, jobText, ownPromptText) {
   if (!text) return true;
   const t = text.toLowerCase();
   if (
@@ -133,24 +144,52 @@ function isDegenerateOutput(text, jobText) {
     t.includes("offre d'emploi") ||
     t.includes('réponds uniquement avec le texte reformulé') ||
     t.includes('réponds avec le format demandé') ||
-    /^---/.test(text.trim())
+    /^---/.test(text.trim()) ||
+    // Méta-commentaire sur la tâche plutôt qu'une vraie réponse — variantes
+    // observées : le modèle "annonce" son travail au lieu de le faire.
+    /texte reformul[ée]/.test(t) ||
+    /voici (la |le )?reformulation/.test(t) ||
+    /^\*\*/.test(text.trim()) ||
+    /^extrait\s*\d/.test(t.trim()) ||
+    // Mots qui n'ont normalement AUCUNE raison d'apparaître dans un vrai
+    // extrait de CV — bien plus robuste qu'une phrase exacte, qui casse
+    // dès que le modèle paraphrase légèrement l'instruction plutôt que de
+    // la recopier mot pour mot (déjà arrivé : "réutiliser CE vocabulaire"
+    // devenu "Réutilise LE vocabulaire" dans la sortie, undetected avant).
+    /\bvocabulaire\b/.test(t) ||
+    /\breformul/.test(t) ||
+    /\bconsigne\b/.test(t) ||
+    /\bcorrespondance (avec l'offre|partielle|forte)\b/.test(t)
   ) return true;
 
-  if (jobText && looksLeakedFromJobText(text, jobText)) return true;
+  if (jobText && looksLeakedFrom(text, jobText)) return true;
+  if (ownPromptText && looksLeakedFrom(text, ownPromptText)) return true;
 
   return false;
 }
 
-function looksLeakedFromJobText(text, jobText) {
+function looksLeakedFrom(text, source) {
   const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
   const t = norm(text);
-  const j = norm(jobText);
-  if (t.length < 40 || j.length < 40) return false; // trop court pour juger fiablement
+  const s = norm(source);
+  if (t.length < 40 || s.length < 40) return false; // trop court pour juger fiablement
   const CHUNK = 40;
   for (let i = 0; i + CHUNK <= t.length; i += CHUNK) {
-    if (j.includes(t.slice(i, i + CHUNK))) return true;
+    if (s.includes(t.slice(i, i + CHUNK))) return true;
   }
   return false;
+}
+
+// Reconstruit le texte que NOUS avons injecté dans le prompt pour ce
+// segment précis (système + consigne de rôle + note de correspondance
+// éventuelle) — utilisé uniquement pour la détection de fuite ci-dessus,
+// jamais renvoyé au modèle deux fois.
+function ownPromptText(run, job) {
+  const parts = [REWRITE_SYSTEM_PROMPT, BATCH_REWRITE_SYSTEM_PROMPT, roleInstruction(run.role)];
+  if (run.role === 'job-description') {
+    parts.push(buildMatchNote(run._planMatched || segmentKeywordMatches(run.text, job.keywords)));
+  }
+  return parts.join(' ');
 }
 
 function isGpuContextLostError(e) {
@@ -969,21 +1008,51 @@ function violatesLengthConstraint(role, text) {
   return false; // pas de contrainte stricte pour les descriptions de poste
 }
 
+// Part du vocabulaire (racines de mots, hors mots vides) de l'extrait
+// D'ORIGINE qui survit dans le texte généré. Une vraie reformulation garde
+// toujours une bonne partie des noms/verbes clés même en changeant la
+// structure de la phrase ; un texte qui a dérivé vers un tout autre sujet
+// n'en garde presque rien — c'est ce signal, pas le style, qu'on mesure
+// ici.
+function wordOverlapRatio(originalText, newText) {
+  const wordsOf = (t) => (t.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem);
+  const origStems = new Set(wordsOf(originalText).filter((s) => !STOPWORDS_JOB_EXTRACTION.has(s)));
+  if (origStems.size < 3) return 1; // extrait trop court pour juger fiablement, on ne bloque pas
+  const newStems = new Set(wordsOf(newText));
+  let shared = 0;
+  origStems.forEach((s) => { if (newStems.has(s)) shared++; });
+  return shared / origStems.size;
+}
+
+function driftsTooFarFromOriginal(originalText, newText) {
+  return wordOverlapRatio(originalText, newText) < 0.2; // moins de 20% du vocabulaire d'origine retrouvé
+}
+
 // Combine les 3 gardes-fous locaux (gabarit/fuite, longueur, faits
 // inventés) en une seule vérification, utilisée aussi bien pour un appel
 // individuel que pour chaque bloc d'un appel groupé. Retourne une raison
 // explicite pour un journal utile, pas juste "invalide".
 function validateSegmentOutput(run, cleaned, job) {
-  if (isDegenerateOutput(cleaned, job.raw)) {
+  if (isDegenerateOutput(cleaned, job.raw, ownPromptText(run, job))) {
     return { ok: false, reason: 'gabarit_ou_fuite' };
   }
   if (violatesLengthConstraint(run.role, cleaned)) {
     return { ok: false, reason: 'longueur' };
   }
   if (run.role === 'job-description') {
-    const matched = segmentKeywordMatches(run.text, job.keywords);
+    const matched = run._planMatched || segmentKeywordMatches(run.text, job.keywords);
     const check = validateFactsPreserved(run.text, cleaned, matched);
     if (!check.ok) return { ok: false, reason: 'faits_inventes', invented: check.invented };
+    // Garde-fou complémentaire au check de facts : une hallucination qui
+    // n'introduit aucun mot capitalisé/technique nouveau (donc invisible
+    // pour validateFactsPreserved) peut quand même partir complètement en
+    // roue libre sur un sujet différent (ex. "I understand the business
+    // deeply…" devenu "I. Travail\n\nTravail en matinée dans un e…" — zéro
+    // mot en commun avec l'original). On rejette si trop peu du
+    // vocabulaire d'origine survit dans la sortie.
+    if (driftsTooFarFromOriginal(run.text, cleaned)) {
+      return { ok: false, reason: 'derive_hors_sujet' };
+    }
   }
   return { ok: true };
 }
@@ -991,8 +1060,11 @@ function validateSegmentOutput(run, cleaned, job) {
 function describeValidationFailure(validation) {
   if (validation.reason === 'faits_inventes') return `invente des éléments absents de l'original (${validation.invented.join(', ')})`;
   if (validation.reason === 'longueur') return 'dépasse largement la longueur demandée';
+  if (validation.reason === 'derive_hors_sujet') return 'dérive trop loin du sujet original (quasi aucun mot en commun)';
   return 'recopie le gabarit du prompt ou un passage de l\'offre';
 }
+
+
 
 // ==== 5. Reformulation d'un segment ====
 const REWRITE_SYSTEM_PROMPT = `Reformule l'extrait de CV donné pour coller à l'offre. Règles strictes : n'invente aucun fait absent de l'extrait ; n'utilise un mot-clé que s'il correspond vraiment ; renvoie l'extrait tel quel si rien à gagner. Réponds uniquement avec le texte reformulé, sans guillemets ni préambule.`;
@@ -1024,7 +1096,7 @@ function buildSegmentPrompt(run, job) {
   // profil gardent le contexte général, réduit selon le rôle.
   const isJobDesc = run.role === 'job-description';
   const jobBlock = isJobDesc
-    ? buildMatchNote(segmentKeywordMatches(run.text, job.keywords))
+    ? buildMatchNote(run._planMatched || segmentKeywordMatches(run.text, job.keywords))
     : `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job, run.role)}`;
   const user = `${jobBlock}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role)}\n\nRéponds uniquement avec le texte reformulé.`;
   return [
@@ -1150,7 +1222,7 @@ async function rewriteSegment(run, job, stopSignal, _attempt) {
 
   const messages = buildSegmentPrompt(run, job);
   try {
-    const text = await generateText(messages, roleMaxTokens(run.role), stopSignal);
+    const text = await generateText(messages, planMaxTokens(run), stopSignal);
     const cleaned = text.trim().replace(/^["«]|["»]$/g, '');
     const validation = validateSegmentOutput(run, cleaned, job);
     if (!validation.ok) {
@@ -1216,7 +1288,7 @@ function buildBatchPrompt(batch, job) {
   const isJobDescBatch = batch[0] && batch[0].role === 'job-description';
   const body = batch.map((r, i) => {
     const matchNote = r.role === 'job-description'
-      ? ` ${buildMatchNote(segmentKeywordMatches(r.text, job.keywords))}`
+      ? ` ${buildMatchNote(r._planMatched || segmentKeywordMatches(r.text, job.keywords))}`
       : '';
     return `###${i + 1}### [section "${r.section}"] ${roleInstruction(r.role)}${matchNote}\n${r.text.trim()}`;
   }).join('\n\n');
@@ -1321,6 +1393,49 @@ function buildBatches(editable, job) {
 // GPU/pilote est réellement mort en permanence sur cette machine).
 const MAX_SWEEPS = 6;
 
+// ==== 4quinquies. Plan d'adaptation (déterministe, sans LLM) ================
+// Pièce qui manquait entre le matching et la réécriture : au lieu de
+// décider "à la volée" dans chaque prompt, on construit D'ABORD un plan
+// complet et explicite pour tout le CV — une vraie décision KEEP /
+// LIGHT_REWRITE / STRONG_REWRITE par segment, calculée une fois,
+// journalisée, puis appliquée telle quelle. "Le code décide, le LLM
+// exécute" : ce plan est la seule source de vérité pour ce qui sera
+// envoyé au modèle et avec quel budget de tokens — plus aucune décision
+// dispersée entre buildSegmentPrompt, buildBatchPrompt et
+// rewriteAllSegments comme avant.
+function buildAdaptationPlan(editable, job) {
+  return editable.map((run) => {
+    if (run.role !== 'job-description') {
+      // Titre et profil ne bénéficient pas d'un matching bullet par
+      // bullet (ce sont des synthèses globales, pas des faits ponctuels)
+      // — action fixe, leur propre contrainte de ton/longueur suffit
+      // (voir roleInstruction).
+      return { run, action: 'rewrite', matched: [] };
+    }
+    const matched = segmentKeywordMatches(run.text, job.keywords);
+    const action = matched.length === 0 ? 'keep' : matched.length <= 2 ? 'light-rewrite' : 'strong-rewrite';
+    return { run, action, matched };
+  });
+}
+
+function describePlanAction(entry) {
+  if (entry.action === 'keep') return 'KEEP — aucune correspondance, non envoyé au modèle';
+  if (entry.action === 'light-rewrite') return `LIGHT_REWRITE — ${entry.matched.join(', ')}`;
+  if (entry.action === 'strong-rewrite') return `STRONG_REWRITE — ${entry.matched.join(', ')}`;
+  return 'REWRITE';
+}
+
+// Le budget de sortie dépend maintenant aussi de l'action du plan, pas
+// seulement du rôle : un LIGHT_REWRITE doit rester proche de l'original
+// (pas besoin de marge), un STRONG_REWRITE garde le plein budget du rôle.
+// Ça réduit encore le calcul GPU demandé exactement là où le texte n'a de
+// toute façon pas vocation à beaucoup changer.
+function planMaxTokens(run) {
+  const base = roleMaxTokens(run.role);
+  if (run._planAction === 'light-rewrite') return Math.min(base, 130);
+  return base;
+}
+
 async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
   const results = new Array(editable.length).fill(null);
   // Chaque run garde son index d'origine (_idx) pour pouvoir regrouper les
@@ -1330,24 +1445,22 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
   // de segment par confusion entre blocs voisins de rôles différents.
   editable.forEach((r, i) => { r._idx = i; });
 
-  // Décision KEEP vs REWRITE avant même d'appeler le LLM : une description
-  // de poste sans AUCUNE correspondance avec l'offre (voir
-  // segmentKeywordMatches) n'a structurellement rien à gagner à être
-  // envoyée au modèle — on économise complètement l'appel, zéro risque
-  // d'invention, zéro temps de calcul GPU perdu dessus. Titre et profil ne
-  // sont jamais "keep" d'office : ils dépendent du ton général de l'offre,
-  // pas d'un matching bullet par bullet.
-  const jobDescRuns = editable.filter((r) => r.role === 'job-description');
+  // Plan d'adaptation : calculé une seule fois, avant tout appel au
+  // modèle. C'est lui qui décide qui est envoyé au LLM (et avec quelle
+  // intensité), pas une improvisation dans chaque prompt.
+  const plan = buildAdaptationPlan(editable, job);
+  plan.forEach((entry) => { entry.run._planAction = entry.action; entry.run._planMatched = entry.matched; });
+
+  const jobDescEntries = plan.filter((e) => e.run.role === 'job-description');
   const skippedIdx = new Set();
-  if (jobDescRuns.length) {
-    let strong = 0, partial = 0, none = 0;
-    for (const r of jobDescRuns) {
-      const n = segmentKeywordMatches(r.text, job.keywords).length;
-      if (n === 0) { none++; skippedIdx.add(r._idx); } else if (n <= 2) partial++; else strong++;
-    }
-    log(`Correspondance sémantique sur les ${jobDescRuns.length} description(s) de poste : ${strong} forte(s), ${partial} partielle(s), ${none} sans correspondance.`);
+  if (jobDescEntries.length) {
+    const strong = jobDescEntries.filter((e) => e.action === 'strong-rewrite').length;
+    const light = jobDescEntries.filter((e) => e.action === 'light-rewrite').length;
+    const kept = jobDescEntries.filter((e) => e.action === 'keep').length;
+    jobDescEntries.forEach((e) => { if (e.action === 'keep') skippedIdx.add(e.run._idx); });
+    log(`Plan d'adaptation sur les ${jobDescEntries.length} description(s) de poste : ${strong} STRONG_REWRITE, ${light} LIGHT_REWRITE, ${kept} KEEP.`);
     if (skippedIdx.size) {
-      log(`↷ ${skippedIdx.size} description(s) de poste conservée(s) telle(s) quelle(s), sans appel au modèle (aucune correspondance avec l'offre — décision KEEP).`);
+      log(`↷ ${skippedIdx.size} description(s) de poste en KEEP — conservée(s) telle(s) quelle(s), sans appel au modèle (aucune correspondance avec l'offre).`);
     }
   }
   const toSend = editable.filter((r) => !skippedIdx.has(r._idx));
@@ -1371,7 +1484,7 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
       // MAX_SEGMENTS_PER_BATCH ci-dessus) est élevé. Un plafond bas force
       // des appels plus courts et plus nombreux, moins rapides mais bien
       // plus fiables sur un GPU/pilote instable.
-      const maxTokens = Math.min(batch.reduce((n, r) => n + roleMaxTokens(r.role) + 20, 0), 700);
+      const maxTokens = Math.min(batch.reduce((n, r) => n + planMaxTokens(r) + 20, 0), 700);
       const raw = await generateText(messages, maxTokens, stopSignal);
       const { results: parsed, rejections } = parseBatchResponse(raw, batch, job);
       parsed.forEach((text, i) => { results[batch[i]._idx] = text; });
@@ -1564,7 +1677,8 @@ runBtn.addEventListener('click', async () => {
       if (newText && newText.length > 0) {
         setRunText(run.node, newText);
         applied++;
-        log(`  ✓ [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
+        const actionTag = run._planAction && run._planAction !== 'rewrite' ? ` [${run._planAction.toUpperCase()}]` : '';
+        log(`  ✓${actionTag} [${i + 1}/${editable.length}] "${run.text.trim().slice(0, 40)}…" → "${newText.slice(0, 40)}…"`);
       } else if (skippedIdx.has(i)) {
         kept++;
         log(`  ○ [${i + 1}/${editable.length}] conservé tel quel (aucune correspondance avec l'offre — décision KEEP, pas un échec).`);

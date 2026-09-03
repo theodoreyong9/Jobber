@@ -37,12 +37,18 @@ classification par rôle                              │
     (déterministe : quels mots-clés
      sont VRAIMENT pertinents ici ?)
               │
+              ▼
+    plan d'adaptation (déterministe)
+    KEEP / LIGHT_REWRITE / STRONG_REWRITE
+    — calculé et journalisé AVANT
+      tout appel au modèle
+              │
      ┌────────┴─────────┐
      ▼                   ▼
-  0 correspondance   ≥1 correspondance
+      KEEP           LIGHT / STRONG
   → conservé tel        → WebLLM reformule
-    quel, PAS envoyé       (consigne + mots-clés
-    au modèle (KEEP)        propres au segment)
+    quel, PAS envoyé       (consigne + budget de
+    au modèle                tokens selon l'action)
                               │
                               ▼
                     validateur local (garde-fou)
@@ -110,11 +116,22 @@ classification par rôle                              │
    un GPU lent, chaque token de moins réduit le temps de calcul continu et
    donc le risque de dépasser le seuil de patience du pilote (TDR).
 
-5. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
+5. **Plan d'adaptation (déterministe, sans LLM)** — `buildAdaptationPlan()` :
+   calculé une seule fois pour tout le CV, AVANT le moindre appel au
+   modèle. Pour chaque description de poste, transforme le score de
+   correspondance en une décision explicite et journalisée :
+   `KEEP` (aucune correspondance, jamais envoyé au modèle),
+   `LIGHT_REWRITE` (correspondance partielle, budget de sortie réduit —
+   le texte n'a de toute façon pas vocation à beaucoup changer) ou
+   `STRONG_REWRITE` (forte correspondance, plein budget). C'est la seule
+   source de vérité utilisée ensuite par les prompts et le validateur —
+   plus aucune décision dispersée à la volée dans chaque appel.
+
+6. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
    homogènes (même rôle) pour limiter le nombre d'appels au modèle, avec
    repli automatique en appel individuel si un lot échoue.
 
-6. **Validation locale (garde-fou)** — `validateSegmentOutput()`, exécutée
+7. **Validation locale (garde-fou)** — `validateSegmentOutput()`, exécutée
    sur *chaque* sortie du modèle avant acceptation :
    - rejette un texte qui recopie le gabarit du prompt ou un passage de
      l'offre d'emploi ;
@@ -134,11 +151,11 @@ classification par rôle                              │
    s'il échoue encore, il est laissé inchangé plutôt que d'injecter du
    texte incorrect dans le CV final.
 
-7. **Écriture** : seul le texte (`<w:t>`/`<w:br/>`) du segment est
+8. **Écriture** : seul le texte (`<w:t>`/`<w:br/>`) du segment est
    remplacé ; sa mise en forme (police, couleur, gras) reste l'élément XML
    d'origine intact.
 
-8. **Réassemblage** : le zip est reconstruit avec ce `document.xml`
+9. **Réassemblage** : le zip est reconstruit avec ce `document.xml`
    modifié et proposé au téléchargement.
 
 ## Fiabilité face à un GPU/pilote instable
