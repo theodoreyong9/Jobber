@@ -160,6 +160,7 @@ function isDegenerateOutput(text, jobText, ownPromptText) {
     /voici (la |le )?reformulation/.test(t) ||
     /^\*\*/.test(text.trim()) ||
     /^extrait\s*\d/.test(t.trim()) ||
+    /^r[ée]ponse\s*[:.]/.test(t.trim()) ||
     // Mots qui n'ont normalement AUCUNE raison d'apparaître dans un vrai
     // extrait de CV — bien plus robuste qu'une phrase exacte, qui casse
     // dès que le modèle paraphrase légèrement l'instruction plutôt que de
@@ -1147,20 +1148,60 @@ function wordOverlapRatio(originalText, newText) {
   return shared / origStems.size;
 }
 
-function driftsTooFarFromOriginal(originalText, newText) {
-  return wordOverlapRatio(originalText, newText) < 0.2; // moins de 20% du vocabulaire d'origine retrouvé
+function driftsTooFarFromOriginal(originalText, newText, threshold) {
+  return wordOverlapRatio(originalText, newText) < (threshold || 0.2);
 }
 
-// Combine les 3 gardes-fous locaux (gabarit/fuite, longueur, faits
-// inventés) en une seule vérification, utilisée aussi bien pour un appel
-// individuel que pour chaque bloc d'un appel groupé. Retourne une raison
-// explicite pour un journal utile, pas juste "invalide".
+// Détection de langue très simple (comptage de mots-outils français vs
+// anglais courants) — pas une vraie détection linguistique, mais amplement
+// suffisante pour repérer un cas grossier : un extrait en anglais
+// reformulé en français (ou l'inverse), ce qu'aucun autre garde-fou ne
+// détectait (observé concrètement : "I understand the business deeply…"
+// devenu "Je suis à l'écoute de l'entreprise…", accepté tel quel avant ce
+// correctif). Une vraie tâche de reformulation ne doit jamais changer la
+// langue du texte.
+const FR_MARKERS = new Set(['le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'et', 'je', 'tu', 'il', 'elle', 'nous', 'vous', 'ils', 'elles', 'est', 'sont', 'être', 'avoir', 'pour', 'dans', 'avec', 'sur', 'que', 'qui', 'ce', 'cette', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son', 'sa', 'ses', 'suis', 'es', 'sommes', 'êtes']);
+const EN_MARKERS = new Set(['the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'i', 'you', 'he', 'she', 'we', 'they', 'for', 'in', 'with', 'on', 'that', 'this', 'my', 'your', 'his', 'her', 'of', 'to', 'am']);
+
+function detectLanguage(text) {
+  const words = text.toLowerCase().match(/[a-zà-ÿ]+/g) || [];
+  let fr = 0, en = 0;
+  for (const w of words) {
+    if (FR_MARKERS.has(w)) fr++;
+    if (EN_MARKERS.has(w)) en++;
+  }
+  if (fr + en < 3) return 'unknown'; // pas assez de signal pour juger fiablement
+  if (fr > en * 1.5) return 'fr';
+  if (en > fr * 1.5) return 'en';
+  return 'unknown';
+}
+
+function isLanguageMismatch(originalText, newText) {
+  const origLang = detectLanguage(originalText);
+  const newLang = detectLanguage(newText);
+  return origLang !== 'unknown' && newLang !== 'unknown' && origLang !== newLang;
+}
+
+// Combine les gardes-fous locaux (gabarit/fuite, longueur, langue, dérive,
+// faits inventés) en une seule vérification, utilisée aussi bien pour un
+// appel individuel que pour chaque bloc d'un appel groupé. Retourne une
+// raison explicite pour un journal utile, pas juste "invalide".
+//
+// IMPORTANT : la langue et la dérive hors-sujet sont vérifiées pour TOUS
+// les rôles éditables, pas seulement les descriptions de poste — c'est
+// précisément le trou qui avait laissé passer un titre devenu "Réponse :
+// Travail" et un profil transformé en remplissage générique sans aucun
+// rapport avec l'original (le garde-fou anti-invention ne portait alors
+// que sur les descriptions de poste).
 function validateSegmentOutput(run, cleaned, job) {
   if (isDegenerateOutput(cleaned, job.raw, ownPromptText(run, job))) {
     return { ok: false, reason: 'gabarit_ou_fuite' };
   }
   if (violatesLengthConstraint(run.role, cleaned)) {
     return { ok: false, reason: 'longueur' };
+  }
+  if (isLanguageMismatch(run.text, cleaned)) {
+    return { ok: false, reason: 'langue' };
   }
   if (run.role === 'job-description') {
     const matched = run._planMatched || segmentKeywordMatches(run.text, job.keywords);
@@ -1169,11 +1210,20 @@ function validateSegmentOutput(run, cleaned, job) {
     // Garde-fou complémentaire au check de facts : une hallucination qui
     // n'introduit aucun mot capitalisé/technique nouveau (donc invisible
     // pour validateFactsPreserved) peut quand même partir complètement en
-    // roue libre sur un sujet différent (ex. "I understand the business
-    // deeply…" devenu "I. Travail\n\nTravail en matinée dans un e…" — zéro
-    // mot en commun avec l'original). On rejette si trop peu du
+    // roue libre sur un sujet différent. On rejette si trop peu du
     // vocabulaire d'origine survit dans la sortie.
     if (driftsTooFarFromOriginal(run.text, cleaned)) {
+      return { ok: false, reason: 'derive_hors_sujet' };
+    }
+  } else if (run.role === 'profile') {
+    // Un profil est censé être reformulé plus librement (ton, structure)
+    // qu'une description de poste factuelle — seuil plus généreux (10%
+    // au lieu de 20%) pour ne pas rejeter une vraie reformulation créative.
+    // Mais un remplissage générique sans aucun rapport avec l'original
+    // ("I understand the business deeply…" → "I am the ideal candidate
+    // for this work…") doit quand même être rejeté : zéro mot en commun
+    // n'est jamais une reformulation, c'est une fabrication.
+    if (driftsTooFarFromOriginal(run.text, cleaned, 0.1)) {
       return { ok: false, reason: 'derive_hors_sujet' };
     }
   }
@@ -1184,6 +1234,7 @@ function describeValidationFailure(validation) {
   if (validation.reason === 'faits_inventes') return `invente des éléments absents de l'original (${validation.invented.join(', ')})`;
   if (validation.reason === 'longueur') return 'dépasse largement la longueur demandée';
   if (validation.reason === 'derive_hors_sujet') return 'dérive trop loin du sujet original (quasi aucun mot en commun)';
+  if (validation.reason === 'langue') return 'change la langue du texte (l\'original et la sortie ne correspondent pas)';
   return 'recopie le gabarit du prompt ou un passage de l\'offre';
 }
 

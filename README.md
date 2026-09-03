@@ -154,11 +154,19 @@ classification par rôle                              │
    repli automatique en appel individuel si un lot échoue.
 
 7. **Validation locale (garde-fou)** — `validateSegmentOutput()`, exécutée
-   sur *chaque* sortie du modèle avant acceptation :
+   sur *chaque* sortie du modèle avant acceptation, **pour les trois rôles
+   éditables** (titre, profil, description de poste — pas seulement ce
+   dernier) :
    - rejette un texte qui recopie le gabarit du prompt ou un passage de
      l'offre d'emploi ;
    - rejette un titre/profil qui dépasse largement sa contrainte de
      longueur ;
+   - rejette toute sortie qui **change la langue** du texte d'origine
+     (détection simple par mots-outils fréquents) — un texte en anglais
+     ne doit jamais ressortir en français, ou l'inverse ;
+   - rejette un profil qui a "dérivé" au point de ne garder presque aucun
+     mot en commun avec l'original (fabrication générique plutôt que
+     reformulation) ;
    - rejette toute description de poste qui mentionne une technologie, un
      nom propre ou un chiffre absent de l'extrait original (`extractFacts`
      + `validateFactsPreserved`) — le garde-fou anti-hallucination.
