@@ -45,6 +45,15 @@ function dlog(msg) {
 // modèle (HF gardait le modèle chargé côté serveur), mais qu'il faut éviter
 // explicitement nous-mêmes en local.
 const WEBLLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
+// Transformers.js (ONNX Runtime Web) pour le matching sémantique — un
+// modèle d'EMBEDDINGS, pas un LLM génératif. Un seul passage avant par
+// texte (pas de génération token par token) : un ordre de grandeur moins
+// coûteux en calcul GPU continu qu'une génération, même courte. Utilisé
+// UNIQUEMENT pour affiner la pertinence CV↔offre (voir buildAdaptationPlan
+// ci-dessous) — jamais pour écrire du texte, ce rôle reste exclusivement
+// celui de WebLLM.
+const EMBEDDINGS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+const EMBEDDINGS_MODEL_ID = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
 
 // Modèles choisis pour de la réécriture de texte (pas du code) : instruct
 // models généralistes. À adapter à la liste réellement disponible dans ta
@@ -254,6 +263,68 @@ async function loadWebllmLib() {
     window.addEventListener('webllm-loaded', resolve, { once: true });
     setTimeout(() => reject(new Error('Chargement de la librairie WebLLM (CDN) trop long.')), 30000);
   });
+}
+
+// ==== 4sexies. Embeddings pour le matching sémantique (optionnel) ==========
+// Complément au matching par mots-clés/stem (voir segmentKeywordMatches) :
+// un vrai score de similarité sémantique entre chaque description de
+// poste et l'offre, via un petit modèle d'embeddings multilingue plutôt
+// que des heuristiques de texte. PRINCIPE NON NÉGOCIABLE : cette
+// fonctionnalité est un bonus, jamais une dépendance dure. Si le
+// chargement échoue, time-out, ou qu'une erreur survient au calcul —
+// n'importe où dans ce module — on revient silencieusement au matching
+// par stem existant, qui reste 100% fonctionnel seul. Le pipeline entier
+// n'a jamais dépendu de ça et ne doit jamais en dépendre.
+let embedderPromise = null;
+
+async function loadEmbedder() {
+  if (embedderPromise) return embedderPromise;
+  embedderPromise = (async () => {
+    if (!window.transformersjs) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.type = 'module';
+        s.textContent = `
+          import * as tfjs from '${EMBEDDINGS_CDN}';
+          window.transformersjs = tfjs;
+          window.dispatchEvent(new Event('transformersjs-loaded'));
+        `;
+        document.head.appendChild(s);
+        window.addEventListener('transformersjs-loaded', resolve, { once: true });
+        setTimeout(() => reject(new Error('Chargement de Transformers.js (CDN) trop long.')), 20000);
+      });
+    }
+    // WebGPU d'abord (rapide), repli WASM automatique si indisponible pour
+    // ce modèle précis — Transformers.js gère cette bascule lui-même.
+    let device = 'webgpu';
+    try {
+      const gpu = await checkWebGpuSupport();
+      if (!gpu.supported) device = 'wasm';
+    } catch { device = 'wasm'; }
+    return await window.transformersjs.pipeline('feature-extraction', EMBEDDINGS_MODEL_ID, { device });
+  })();
+  return embedderPromise;
+}
+
+function cosineSimilarity(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+// Calcule les embeddings d'un lot de textes en un seul appel (plus
+// efficace qu'un appel par texte). Retourne null en cas d'échec — à
+// l'appelant de retomber sur le matching par stem dans ce cas.
+async function embedTexts(texts) {
+  try {
+    const extractor = await loadEmbedder();
+    const output = await extractor(texts, { pooling: 'mean', normalize: true });
+    return output.tolist();
+  } catch (e) {
+    dlog('Embeddings indisponibles (' + (e && e.message) + ') — repli sur le matching par mots-clés seul.');
+    return null;
+  }
 }
 
 let webllmGpuTierPromise = null;
@@ -888,15 +959,56 @@ function stem(word) {
     .slice(0, 5);
 }
 
+// Regroupements de synonymes/variantes courants — entretenu à la main,
+// volontairement modeste, pas une vraie analyse sémantique. Le stem à 5
+// caractères capture déjà les variantes morphologiques simples de mots
+// PROCHES ("postgres"/"postgresql" partagent déjà le même stem "postg"),
+// mais rate les synonymes dont le préfixe diffère complètement
+// ("psql"/"postgres", "AWS"/"Amazon", "REST"/"RESTful", "JS"/"JavaScript")
+// — c'est précisément ce que couvre cette liste. Chaque sous-liste = un
+// même concept sous des formes différentes ; DÉTERMINISTE, aucun appel
+// LLM, cohérent avec "le code décide ce qui est autorisé".
+const SYNONYM_CLUSTERS = [
+  ['postgresql', 'postgres', 'psql'],
+  ['aws', 'amazon'],
+  ['rest', 'restful'],
+  ['kubernetes', 'k8s'],
+  ['javascript', 'js'],
+  ['typescript', 'ts'],
+  ['database', 'db'],
+  ['artificial', 'ia', 'ai'],
+  ['machine', 'ml'],
+  ['management', 'manager', 'manageur'],
+  ['developpement', 'developer', 'dev'],
+];
+const STEM_TO_CLUSTER = new Map();
+SYNONYM_CLUSTERS.forEach((cluster, idx) => {
+  cluster.forEach((word) => STEM_TO_CLUSTER.set(stem(word), idx));
+});
+
+// Deux stems sont "équivalents" s'ils sont identiques OU s'ils appartiennent
+// au même regroupement de synonymes ci-dessus.
+function stemsEquivalent(a, b) {
+  if (a === b) return true;
+  const ca = STEM_TO_CLUSTER.get(a);
+  return ca !== undefined && ca === STEM_TO_CLUSTER.get(b);
+}
+
 // Ne renvoie que les mots-clés qui ont un vrai écho thématique dans le
-// texte du segment (variante déjà présente) — PAS les mots-clés absents.
-// C'est volontaire : suggérer un mot-clé totalement absent du sujet du
-// segment revient à pousser le modèle à l'inventer, ce qui est exactement
-// le recopiage d'offre qu'on cherche à éviter. On ne met en avant que le
-// vocabulaire de l'offre pour des thèmes DÉJÀ présents dans l'extrait.
+// texte du segment (variante — ou synonyme connu, voir SYNONYM_CLUSTERS —
+// déjà présente) — PAS les mots-clés absents. C'est volontaire : suggérer
+// un mot-clé totalement absent du sujet du segment revient à pousser le
+// modèle à l'inventer, ce qui est exactement le recopiage d'offre qu'on
+// cherche à éviter. On ne met en avant que le vocabulaire de l'offre pour
+// des thèmes DÉJÀ présents dans l'extrait.
 function segmentKeywordMatches(segmentText, keywords) {
   const segStems = new Set((segmentText.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem));
-  return keywords.filter((kw) => segStems.has(stem(kw)));
+  return keywords.filter((kw) => {
+    const kwStem = stem(kw);
+    if (segStems.has(kwStem)) return true;
+    for (const s of segStems) { if (stemsEquivalent(s, kwStem)) return true; }
+    return false;
+  });
 }
 
 // Le score de correspondance module directement l'agressivité de la
@@ -977,18 +1089,24 @@ function extractFactsStrict(text) {
 // vocabulaire secondaire), cette double vérification reste la dernière
 // ligne de défense contre l'ajout d'une compétence que le CV n'a jamais
 // revendiquée.
+function hasEquivalentStem(stemSet, targetStem) {
+  if (stemSet.has(targetStem)) return true;
+  for (const s of stemSet) { if (stemsEquivalent(s, targetStem)) return true; }
+  return false;
+}
+
 function validateFactsPreserved(originalText, newText, suggestedKeywords) {
   const allowedStems = new Set(Array.from(extractFactsLenient(originalText)).map(stem));
   const originalWordStems = new Set(
     (originalText.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem)
   );
   (suggestedKeywords || []).forEach((k) => {
-    if (originalWordStems.has(stem(k))) allowedStems.add(stem(k));
+    if (hasEquivalentStem(originalWordStems, stem(k))) allowedStems.add(stem(k));
     // sinon : mot-clé présent UNIQUEMENT dans l'offre → jamais autorisé,
     // quel que soit ce que l'appelant a suggéré.
   });
   const newFacts = extractFactsStrict(newText);
-  const invented = Array.from(newFacts).filter((f) => !allowedStems.has(stem(f)));
+  const invented = Array.from(newFacts).filter((f) => !hasEquivalentStem(allowedStems, stem(f)));
   return { ok: invented.length === 0, invented };
 }
 
@@ -1403,7 +1521,25 @@ const MAX_SWEEPS = 6;
 // envoyé au modèle et avec quel budget de tokens — plus aucune décision
 // dispersée entre buildSegmentPrompt, buildBatchPrompt et
 // rewriteAllSegments comme avant.
-function buildAdaptationPlan(editable, job) {
+async function buildAdaptationPlan(editable, job) {
+  const jobDescRuns = editable.filter((r) => r.role === 'job-description');
+
+  // Tente un vrai score de similarité sémantique (voir embedTexts) — un
+  // seul appel groupé pour TOUS les segments à la fois, pas un par
+  // segment. Si ça échoue pour n'importe quelle raison, `similarities`
+  // reste null et chaque segment retombe sur son score par mots-clés
+  // (voir plus bas) — dégradation gracieuse totale, jamais de blocage.
+  let similarities = null;
+  if (jobDescRuns.length) {
+    const jobText = [job.keywords.join(', '), job.gist].filter(Boolean).join('. ');
+    const vectors = await embedTexts([jobText, ...jobDescRuns.map((r) => r.text)]);
+    if (vectors && vectors.length === jobDescRuns.length + 1) {
+      const jobVec = vectors[0];
+      similarities = new Map();
+      jobDescRuns.forEach((r, i) => similarities.set(r, cosineSimilarity(jobVec, vectors[i + 1])));
+    }
+  }
+
   return editable.map((run) => {
     if (run.role !== 'job-description') {
       // Titre et profil ne bénéficient pas d'un matching bullet par
@@ -1413,15 +1549,29 @@ function buildAdaptationPlan(editable, job) {
       return { run, action: 'rewrite', matched: [] };
     }
     const matched = segmentKeywordMatches(run.text, job.keywords);
-    const action = matched.length === 0 ? 'keep' : matched.length <= 2 ? 'light-rewrite' : 'strong-rewrite';
+    let action;
+    if (similarities && similarities.has(run)) {
+      const sim = similarities.get(run);
+      run._planSimilarity = sim; // pour le journal, voir describePlanAction
+      // Seuils de départ pour une similarité cosinus entre phrases courtes
+      // — raisonnables mais empiriques, à affiner avec des retours réels
+      // plutôt que devinés dans l'absolu.
+      action = sim < 0.35 ? 'keep' : sim < 0.55 ? 'light-rewrite' : 'strong-rewrite';
+    } else {
+      // Repli : décision par nombre de mots-clés correspondants (stem +
+      // synonymes, voir segmentKeywordMatches) — c'est ce qui tournait
+      // seul avant l'ajout des embeddings, toujours pleinement valable.
+      action = matched.length === 0 ? 'keep' : matched.length <= 2 ? 'light-rewrite' : 'strong-rewrite';
+    }
     return { run, action, matched };
   });
 }
 
 function describePlanAction(entry) {
-  if (entry.action === 'keep') return 'KEEP — aucune correspondance, non envoyé au modèle';
-  if (entry.action === 'light-rewrite') return `LIGHT_REWRITE — ${entry.matched.join(', ')}`;
-  if (entry.action === 'strong-rewrite') return `STRONG_REWRITE — ${entry.matched.join(', ')}`;
+  const simTag = entry.run._planSimilarity !== undefined ? ` (similarité ${entry.run._planSimilarity.toFixed(2)})` : '';
+  if (entry.action === 'keep') return `KEEP — aucune correspondance, non envoyé au modèle${simTag}`;
+  if (entry.action === 'light-rewrite') return `LIGHT_REWRITE — ${entry.matched.join(', ')}${simTag}`;
+  if (entry.action === 'strong-rewrite') return `STRONG_REWRITE — ${entry.matched.join(', ')}${simTag}`;
   return 'REWRITE';
 }
 
@@ -1447,9 +1597,16 @@ async function rewriteAllSegments(editable, job, stopSignal, onProgress) {
 
   // Plan d'adaptation : calculé une seule fois, avant tout appel au
   // modèle. C'est lui qui décide qui est envoyé au LLM (et avec quelle
-  // intensité), pas une improvisation dans chaque prompt.
-  const plan = buildAdaptationPlan(editable, job);
+  // intensité), pas une improvisation dans chaque prompt. Tente un vrai
+  // score de similarité sémantique (embeddings) ; retombe silencieusement
+  // sur le matching par mots-clés si les embeddings sont indisponibles
+  // (voir buildAdaptationPlan/embedTexts) — jamais de blocage.
+  const plan = await buildAdaptationPlan(editable, job);
   plan.forEach((entry) => { entry.run._planAction = entry.action; entry.run._planMatched = entry.matched; });
+  const usedEmbeddings = plan.some((e) => e.run._planSimilarity !== undefined);
+  log(usedEmbeddings
+    ? 'Matching sémantique : embeddings actifs (similarité réelle CV ↔ offre).'
+    : 'Matching sémantique : embeddings indisponibles — repli sur mots-clés/stem seul.');
 
   const jobDescEntries = plan.filter((e) => e.run.role === 'job-description');
   const skippedIdx = new Set();

@@ -7,6 +7,13 @@ le texte de l'annonce ne quittent jamais l'appareil. La mise en page
 d'origine (styles, polices, couleurs, tableaux, photo) est conservée à
 l'identique — seuls certains textes sont reformulés.
 
+Deux modèles locaux, deux rôles bien séparés : **WebLLM** rédige (le seul
+endroit où un texte est généré), **[Transformers.js](https://github.com/huggingface/transformers.js)**
+calcule des embeddings pour affiner le matching CV ↔ offre (un simple
+passage avant par texte, pas de génération — beaucoup moins coûteux en
+calcul GPU). Les embeddings sont optionnels : si leur chargement échoue,
+tout le pipeline continue avec le matching par mots-clés seul.
+
 ## Le principe : le code décide ce qui est autorisé, le modèle rédige
 
 L'idée centrale du projet : ne pas faire reposer la qualité du résultat
@@ -99,13 +106,17 @@ classification par rôle                              │
    `segmentKeywordMatches()` : pour chaque description de poste, calcule
    lesquels des mots-clés de l'offre ont un vrai écho dans CE segment
    précis (comparaison par racine de mot, tolère les variantes
-   morphologiques simples). Une description de poste sans **aucune**
-   correspondance n'est même pas envoyée au modèle (décision *KEEP*) :
-   zéro risque d'invention, zéro calcul GPU perdu dessus. Les autres
-   reçoivent une consigne proportionnée à la force de la correspondance —
-   cette note ciblée remplace même le bloc générique de contexte d'offre
-   pour ce rôle (plus courte et plus pertinente qu'une liste de mots-clés
-   identique envoyée à chaque appel).
+   morphologiques simples). Un petit dictionnaire de synonymes/variantes
+   entretenu à la main (`SYNONYM_CLUSTERS`) comble les cas où le stem seul
+   ne suffit pas (`psql`/`PostgreSQL`, `AWS`/`Amazon`, `REST`/`RESTful`,
+   `K8s`/`Kubernetes`...) — toujours déterministe, aucun appel LLM. Une
+   description de poste sans **aucune** correspondance n'est même pas
+   envoyée au modèle (décision *KEEP*) : zéro risque d'invention, zéro
+   calcul GPU perdu dessus. Les autres reçoivent une consigne
+   proportionnée à la force de la correspondance — cette note ciblée
+   remplace même le bloc générique de contexte d'offre pour ce rôle (plus
+   courte et plus pertinente qu'une liste de mots-clés identique envoyée à
+   chaque appel).
 
    La quantité de contexte envoyée est volontairement minimisée et
    adaptée au rôle du segment (`formatJobContextForPrompt()`) : un titre
@@ -116,16 +127,23 @@ classification par rôle                              │
    un GPU lent, chaque token de moins réduit le temps de calcul continu et
    donc le risque de dépasser le seuil de patience du pilote (TDR).
 
-5. **Plan d'adaptation (déterministe, sans LLM)** — `buildAdaptationPlan()` :
-   calculé une seule fois pour tout le CV, AVANT le moindre appel au
-   modèle. Pour chaque description de poste, transforme le score de
-   correspondance en une décision explicite et journalisée :
-   `KEEP` (aucune correspondance, jamais envoyé au modèle),
-   `LIGHT_REWRITE` (correspondance partielle, budget de sortie réduit —
-   le texte n'a de toute façon pas vocation à beaucoup changer) ou
-   `STRONG_REWRITE` (forte correspondance, plein budget). C'est la seule
-   source de vérité utilisée ensuite par les prompts et le validateur —
-   plus aucune décision dispersée à la volée dans chaque appel.
+5. **Plan d'adaptation (déterministe côté décision, embeddings en option)** —
+   `buildAdaptationPlan()` : calculé une seule fois pour tout le CV, AVANT
+   le moindre appel à WebLLM. Pour chaque description de poste, transforme
+   la pertinence par rapport à l'offre en une décision explicite et
+   journalisée : `KEEP` (non pertinent, jamais envoyé au modèle),
+   `LIGHT_REWRITE` (budget de sortie réduit — le texte n'a de toute façon
+   pas vocation à beaucoup changer) ou `STRONG_REWRITE` (plein budget).
+
+   La pertinence est calculée de deux façons, avec repli automatique :
+   si un modèle d'**embeddings** (Transformers.js, voir plus haut) a pu se
+   charger, un vrai score de similarité cosinus entre chaque description
+   et l'offre pilote la décision ; sinon (échec de chargement, WebGPU
+   indisponible pour ce modèle...) le nombre de mots-clés en commun (voir
+   étape 4) sert de repli — le pipeline entier continue de fonctionner
+   sans interruption dans les deux cas. C'est la seule source de vérité
+   utilisée ensuite par les prompts et le validateur — plus aucune
+   décision dispersée à la volée dans chaque appel.
 
 6. **Réécriture** — `rewriteSegment()` / réécriture groupée par lots
    homogènes (même rôle) pour limiter le nombre d'appels au modèle, avec
@@ -214,12 +232,19 @@ directement dans le navigateur.
   taille, mots-clés de section) qui couvrent bien les CV classiques mais
   peuvent se tromper sur une mise en page très inhabituelle — relis
   toujours le résultat avant de l'envoyer.
-- **Extraction de mots-clés et matching approximatifs** : c'est une
-  heuristique par fréquence + racine de mot, pas une vraie analyse
-  sémantique (pas d'embeddings) — elle capture l'essentiel mais avec du
-  bruit résiduel et sans comprendre les synonymes éloignés
-  ("PostgreSQL"/"base de données relationnelle" ne seront pas reliés,
-  par exemple).
+- **Extraction de mots-clés toujours heuristique** : fréquence + racine de
+  mot + un petit dictionnaire de synonymes entretenu à la main
+  (`SYNONYM_CLUSTERS`, une vingtaine d'entrées) — sert surtout à choisir
+  le vocabulaire suggéré dans les prompts, pas à mesurer la pertinence
+  elle-même (voir embeddings ci-dessous).
+- **Embeddings optionnels, seuils non calibrés en conditions réelles** :
+  quand ils sont disponibles, la décision KEEP/LIGHT/STRONG s'appuie sur
+  une vraie similarité cosinus plutôt que sur un comptage de mots-clés —
+  mais les seuils (`0.35`/`0.55`) sont un point de départ raisonnable, pas
+  une valeur calibrée sur un grand nombre de CV réels. Ils pourront avoir
+  besoin d'ajustement avec l'usage. Si le modèle d'embeddings ne se charge
+  pas (délai dépassé, réseau, navigateur), tout continue avec le matching
+  par mots-clés seul, sans interruption.
 - **Modèle local, donc plus faible qu'un modèle cloud** : même avec le
   garde-fou anti-invention, un petit modèle peut produire une
   reformulation maladroite ou décider de ne pas changer un segment
