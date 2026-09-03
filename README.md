@@ -189,7 +189,11 @@ survivre à ça plutôt que d'abandonner :
 
 - rechargement automatique du moteur avec budget de tentatives global
   (pas de boucle infinie, mais généreux — pas de contrainte de temps) ;
-- appels au modèle volontairement courts (peu de tokens, lots limités à 3
+  ce budget est réellement utilisé jusqu'au bout : un échec de
+  rechargement sans palier de modèle plus léger disponible (déjà le cas
+  sur le plus petit modèle) ne met plus fin prématurément aux tentatives
+  restantes — seul l'épuisement réel du budget le fait ;
+- appels au modèle volontairement courts (peu de tokens, lots limités à 2
   segments) pour réduire le temps de calcul GPU continu par appel et donc
   le risque de timeout (TDR) ;
 - "reprises" complètes en fin de passe sur tout ce qui a échoué, avec un

@@ -1317,8 +1317,17 @@ async function attemptEngineRecovery() {
       }
     }
 
-    log('  ℹ️ Le contexte GPU semble irrécupérable dans cet onglet (processus GPU du navigateur probablement instable) — les segments restants ne seront plus retentés. Recharge la page pour réinitialiser complètement le moteur.');
-    webllmIrrecoverable = true;
+    log('  ℹ️ Ce rechargement a échoué, mais il reste peut-être des tentatives dans le budget — la prochaine perte de contexte en relancera une nouvelle.');
+    // On NE déclare PAS le moteur irrécupérable ici : seul le plafond de
+    // MAX_ENGINE_RECOVERIES_PER_PASS (vérifié tout en haut de cette
+    // fonction) doit décider de l'abandon définitif. Avant ce correctif,
+    // un simple échec de rechargement — sans modèle plus léger disponible
+    // (déjà le cas dès qu'on est sur "small", le palier le plus bas) —
+    // déclarait l'abandon immédiatement, même s'il restait des tentatives
+    // dans le budget (ex. arrêt à la tentative 4/6 au lieu d'aller
+    // jusqu'à 6). Ici, on se contente de signaler l'échec DE CETTE
+    // tentative précise ; l'appel suivant à attemptEngineRecovery()
+    // retentera normalement, jusqu'à épuisement réel du budget.
     return false;
   }
 }
