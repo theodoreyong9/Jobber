@@ -129,9 +129,15 @@ classification par rôle
    - rejette un texte qui recopie le gabarit du prompt ou un passage de
      l'offre ;
    - rejette un titre/profil hors contrainte de longueur ;
-   - rejette toute sortie qui change la langue du texte d'origine ;
-   - rejette un profil ayant dérivé au point de ne garder presque aucun
-     mot en commun avec l'original (fabrication générique) ;
+   - rejette toute sortie dans la mauvaise langue : la cible est celle de
+     **l'offre** (détectée une fois pour toute l'adaptation), pas
+     forcément celle de l'extrait d'origine — un CV en anglais qui
+     postule à une offre en français est reformulé en français. Repli sur
+     la langue de l'extrait d'origine si celle de l'offre n'a pas pu être
+     déterminée ;
+   - rejette un titre ou un profil ayant dérivé au point de ne garder
+     presque aucun mot en commun avec l'original (fabrication générique
+     ou hors-sujet — le seuil tient compte de leur brièveté) ;
    - rejette toute description de poste mentionnant une technologie, un
      nom propre ou un chiffre absent de l'extrait original
      (`validateFactsPreserved`).

@@ -197,7 +197,12 @@ function isDegenerateOutput(text, jobText, ownPromptText) {
     /voici (la |le )?reformulation/.test(t) ||
     /^\*\*/.test(text.trim()) ||
     /^extrait\s*\d/.test(t.trim()) ||
-    /^r[ée]ponse\s*[:.]/.test(t.trim()) ||
+    // Toute étiquette de type "Mot :" en tout début de réponse — pas un
+    // mot précis à la fois (fragile, casse à chaque nouvelle paraphrase du
+    // modèle : "Réponse :" puis "Extrait :" observés séparément, aucun des
+    // deux prévu par l'autre). Un vrai extrait de CV ne commence jamais
+    // par une étiquette suivie de deux-points.
+    /^(extrait|r[ée]ponse|texte|r[ée]sultat|voici|sortie|traduction)\s*[:.]/.test(t.trim()) ||
     // Mots qui n'ont normalement AUCUNE raison d'apparaître dans un vrai
     // extrait de CV — bien plus robuste qu'une phrase exacte, qui casse
     // dès que le modèle paraphrase légèrement l'instruction plutôt que de
@@ -232,7 +237,7 @@ function looksLeakedFrom(text, source) {
 // éventuelle) — utilisé uniquement pour la détection de fuite ci-dessus,
 // jamais renvoyé au modèle deux fois.
 function ownPromptText(run, job) {
-  const parts = [REWRITE_SYSTEM_PROMPT, roleInstruction(run.role)];
+  const parts = [REWRITE_SYSTEM_PROMPT, roleInstruction(run.role, job)];
   if (run.role === 'job-description') {
     parts.push(buildMatchNote(run._planMatched || segmentKeywordMatches(run.text, job.keywords)));
   }
@@ -985,6 +990,13 @@ function buildJobContext(jobText) {
     raw,
     keywords: extractJobKeywords(raw),
     gist: raw.slice(0, 120).trim(),
+    // Langue cible de la reformulation : celle de L'OFFRE, pas forcément
+    // celle du CV d'origine (règle explicite du produit — un CV en
+    // anglais candidatant à une offre en français doit être reformulé en
+    // français). 'unknown' si l'offre est trop courte/ambiguë pour juger
+    // fiablement ; dans ce cas on retombe sur la langue de l'extrait
+    // d'origine (voir roleInstruction/isLanguageMismatch).
+    language: detectLanguage(raw),
   };
 }
 
@@ -1207,28 +1219,25 @@ function violatesLengthConstraint(role, text) {
 // structure de la phrase ; un texte qui a dérivé vers un tout autre sujet
 // n'en garde presque rien — c'est ce signal, pas le style, qu'on mesure
 // ici.
-function wordOverlapRatio(originalText, newText) {
+function wordOverlapRatio(originalText, newText, minStems) {
   const wordsOf = (t) => (t.match(/[\p{L}][\p{L}0-9+#.\-]{2,}/gu) || []).map(stem);
   const origStems = new Set(wordsOf(originalText).filter((s) => !STOPWORDS_JOB_EXTRACTION.has(s)));
-  if (origStems.size < 3) return 1; // extrait trop court pour juger fiablement, on ne bloque pas
+  if (origStems.size < (minStems === undefined ? 3 : minStems)) return 1; // extrait trop court pour juger fiablement, on ne bloque pas
   const newStems = new Set(wordsOf(newText));
   let shared = 0;
   origStems.forEach((s) => { if (newStems.has(s)) shared++; });
   return shared / origStems.size;
 }
 
-function driftsTooFarFromOriginal(originalText, newText, threshold) {
-  return wordOverlapRatio(originalText, newText) < (threshold || 0.2);
+function driftsTooFarFromOriginal(originalText, newText, threshold, minStems) {
+  return wordOverlapRatio(originalText, newText, minStems) < (threshold || 0.2);
 }
 
 // Détection de langue très simple (comptage de mots-outils français vs
 // anglais courants) — pas une vraie détection linguistique, mais amplement
-// suffisante pour repérer un cas grossier : un extrait en anglais
-// reformulé en français (ou l'inverse), ce qu'aucun autre garde-fou ne
-// détectait (observé concrètement : "I understand the business deeply…"
-// devenu "Je suis à l'écoute de l'entreprise…", accepté tel quel avant ce
-// correctif). Une vraie tâche de reformulation ne doit jamais changer la
-// langue du texte.
+// suffisante pour repérer un cas grossier de changement de langue non
+// souhaité. Une vraie tâche de reformulation ne doit jamais dériver vers
+// une langue autre que celle visée.
 const FR_MARKERS = new Set(['le', 'la', 'les', 'de', 'des', 'du', 'un', 'une', 'et', 'je', 'tu', 'il', 'elle', 'nous', 'vous', 'ils', 'elles', 'est', 'sont', 'être', 'avoir', 'pour', 'dans', 'avec', 'sur', 'que', 'qui', 'ce', 'cette', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son', 'sa', 'ses', 'suis', 'es', 'sommes', 'êtes']);
 const EN_MARKERS = new Set(['the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'i', 'you', 'he', 'she', 'we', 'they', 'for', 'in', 'with', 'on', 'that', 'this', 'my', 'your', 'his', 'her', 'of', 'to', 'am']);
 
@@ -1245,10 +1254,23 @@ function detectLanguage(text) {
   return 'unknown';
 }
 
-function isLanguageMismatch(originalText, newText) {
-  const origLang = detectLanguage(originalText);
+// Règle du produit : la langue cible d'une reformulation est celle de
+// L'OFFRE, pas forcément celle du CV d'origine (un CV en anglais qui
+// postule à une offre en français doit être reformulé en français). Si la
+// langue de l'offre n'a pas pu être déterminée (job.language === 'unknown'
+// — offre trop courte ou ambiguë), on retombe sur l'ancien comportement :
+// préserver la langue du segment d'origine, plus sûr par défaut.
+function targetLanguage(job) {
+  return job && job.language && job.language !== 'unknown' ? job.language : null;
+}
+
+function isLanguageMismatch(originalText, newText, job) {
   const newLang = detectLanguage(newText);
-  return origLang !== 'unknown' && newLang !== 'unknown' && origLang !== newLang;
+  if (newLang === 'unknown') return false; // pas assez de signal pour juger, on ne bloque pas
+  const target = targetLanguage(job);
+  if (target) return newLang !== target;
+  const origLang = detectLanguage(originalText);
+  return origLang !== 'unknown' && newLang !== origLang;
 }
 
 // Combine les gardes-fous locaux (gabarit/fuite, longueur, langue, dérive,
@@ -1269,7 +1291,7 @@ function validateSegmentOutput(run, cleaned, job) {
   if (violatesLengthConstraint(run.role, cleaned)) {
     return { ok: false, reason: 'longueur' };
   }
-  if (isLanguageMismatch(run.text, cleaned)) {
+  if (isLanguageMismatch(run.text, cleaned, job)) {
     return { ok: false, reason: 'langue' };
   }
   if (run.role === 'job-description') {
@@ -1293,6 +1315,16 @@ function validateSegmentOutput(run, cleaned, job) {
     // for this work…") doit quand même être rejeté : zéro mot en commun
     // n'est jamais une reformulation, c'est une fabrication.
     if (driftsTooFarFromOriginal(run.text, cleaned, 0.1)) {
+      return { ok: false, reason: 'derive_hors_sujet' };
+    }
+  } else if (run.role === 'headline') {
+    // Un titre n'a que 2-4 mots de contenu — le seuil par défaut (3 mots
+    // minimum avant de juger) le désactivait quasiment toujours, laissant
+    // passer un titre totalement halluciné ("IT Business Analyst" devenu
+    // "Gouverneur de la caisse", zéro rapport). minStems=1 : dès qu'il y a
+    // au moins un mot de contenu dans l'original, on vérifie qu'il en
+    // reste une trace dans la sortie.
+    if (driftsTooFarFromOriginal(run.text, cleaned, 0.25, 1)) {
       return { ok: false, reason: 'derive_hors_sujet' };
     }
   }
@@ -1327,24 +1359,41 @@ const REWRITE_SYSTEM_PROMPT = `Reformule l'extrait de CV donné pour coller à l
 // taux de rejet par le validateur — donc MOINS de nouvelles tentatives au
 // total, pas plus de calcul GPU cumulé.
 const ROLE_INSTRUCTIONS = {
-  headline: `Ce segment est le TITRE/ACCROCHE du CV. Réponds par une phrase de 5 MOTS MAXIMUM, dans la MÊME LANGUE que l'extrait, percutante, dans le même esprit que l'original. Pas de ponctuation finale, pas de guillemets, pas de préfixe du type "Réponse :".
+  headline: `Ce segment est le TITRE/ACCROCHE du CV. Réponds par une phrase de 5 MOTS MAXIMUM, percutante, dans le même esprit que l'original. Pas de ponctuation finale, pas de guillemets, pas de préfixe du type "Réponse :".
 
 Exemple :
 Extrait : "Marketing Manager"
 Réponse : Growth Marketing Lead`,
-  profile: `Ce segment fait partie du PROFIL/RÉSUMÉ du CV. Reformule sur un ton UNIQUEMENT AFFIRMATIF ET ENTHOUSIASTE (jamais négatif, jamais hésitant), dans la MÊME LANGUE que l'extrait, en 4 PHRASES MAXIMUM. Garde les faits et le sens précis de l'extrait original — ne le remplace JAMAIS par un texte générique sans rapport avec ce qu'il dit vraiment.
+  profile: `Ce segment fait partie du PROFIL/RÉSUMÉ du CV. Reformule sur un ton UNIQUEMENT AFFIRMATIF ET ENTHOUSIASTE (jamais négatif, jamais hésitant), en 4 PHRASES MAXIMUM. Garde les faits et le sens précis de l'extrait original — ne le remplace JAMAIS par un texte générique sans rapport avec ce qu'il dit vraiment.
 
 Exemple :
 Extrait : "Five years leading backend teams and building scalable APIs."
 Réponse : With five years leading backend teams, I build scalable, reliable APIs that drive real business growth.`,
-  'job-description': `Ce segment est une description de poste/mission. Reformule-le de façon factuelle et professionnelle, dans la MÊME LANGUE que l'extrait, en gardant sa longueur d'origine à peu près équivalente et tous ses faits précis.
+  'job-description': `Ce segment est une description de poste/mission. Reformule-le de façon factuelle et professionnelle, en gardant sa longueur d'origine à peu près équivalente et tous ses faits précis.
 
 Exemple :
 Extrait : "Managed a team of 5 developers building REST APIs."
 Réponse : Led a team of 5 developers, delivering well-documented REST APIs.`,
 };
-function roleInstruction(role) {
-  return ROLE_INSTRUCTIONS[role] || ROLE_INSTRUCTIONS['job-description'];
+
+// Directive de langue construite dynamiquement, pas figée dans les
+// modèles ci-dessus : la langue cible d'une reformulation est celle de
+// L'OFFRE (règle du produit — un CV en anglais candidatant à une offre en
+// français doit être reformulé en français), pas forcément celle de
+// l'extrait d'origine. Repli sur "même langue que l'extrait" si la langue
+// de l'offre n'a pas pu être déterminée (voir targetLanguage/job.language).
+const LANGUAGE_NAMES = { fr: 'français', en: 'anglais' };
+function languageDirective(job) {
+  const target = targetLanguage(job);
+  if (target) {
+    return `Écris IMPÉRATIVEMENT ta réponse en ${LANGUAGE_NAMES[target] || target} (la langue de l'offre), même si l'extrait original est dans une autre langue.`;
+  }
+  return "Garde la même langue que l'extrait d'origine.";
+}
+
+function roleInstruction(role, job) {
+  const base = ROLE_INSTRUCTIONS[role] || ROLE_INSTRUCTIONS['job-description'];
+  return `${base}\n\n${languageDirective(job)}`;
 }
 // Limite de sortie par rôle : un titre tient en quelques mots, un profil en
 // 4 phrases, une description de poste peut légitimement rester plus longue.
@@ -1364,7 +1413,7 @@ function buildSegmentPrompt(run, job) {
   const jobBlock = isJobDesc
     ? buildMatchNote(run._planMatched || segmentKeywordMatches(run.text, job.keywords))
     : `--- OFFRE D'EMPLOI ---\n${formatJobContextForPrompt(job, run.role)}`;
-  const user = `${jobBlock}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role)}\n\nRéponds uniquement avec le texte reformulé.`;
+  const user = `${jobBlock}\n\n--- EXTRAIT DU CV (section "${run.section}") ---\n${run.text.trim()}\n\n${roleInstruction(run.role, job)}\n\nRéponds uniquement avec le texte reformulé.`;
   return [
     { role: 'system', content: REWRITE_SYSTEM_PROMPT },
     { role: 'user', content: user }
