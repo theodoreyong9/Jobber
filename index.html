@@ -1,77 +1,16 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Jobber — Adapt your CV. No account needed.</title>
-<meta name="description" content="Adapte ton CV .docx à une offre d'emploi, 100% local dans ton navigateur, aucun compte requis." />
-<link rel="stylesheet" href="css/style.css" />
-</head>
-<body>
-
-<header class="topbar">
-  <h1>Jobber</h1>
-  <p class="tagline">Adapt your CV. No account needed.</p>
-</header>
-
-<main class="grid">
-
-  <!-- Etape 1 : CV -->
-  <section class="card" id="card-cv">
-    <h2>1 · Ton CV</h2>
-    <label class="dropzone" id="cv-dropzone">
-      <input type="file" id="cv-input" accept=".docx" hidden />
-      <span id="cv-filename">Choisir un fichier .docx</span>
-    </label>
-    <p class="hint">Traité entièrement dans ton navigateur. Rien n'est envoyé sur un serveur.</p>
-  </section>
-
-  <!-- Etape 2 : annonces -->
-  <section class="card" id="card-ads">
-    <h2>2 · Annonce(s)</h2>
-    <div id="ads-list">
-      <textarea class="ad-textarea" placeholder="Colle ici le texte de l'annonce…"></textarea>
-    </div>
-    <button id="add-ad" class="btn-secondary" type="button">+ Ajouter une autre annonce</button>
-  </section>
-
-  <!-- Etape 3 : modèle -->
-  <section class="card" id="card-model">
-    <h2>3 · Modèle WebLLM</h2>
-    <select id="model-select">
-      <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B Instruct (rapide, léger)</option>
-      <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini Instruct (équilibré)</option>
-      <option value="Qwen2.5-7B-Instruct-q4f16_1-MLC">Qwen 2.5 7B Instruct (plus qualitatif, plus lourd)</option>
-    </select>
-    <p class="hint">Le modèle tourne localement via WebGPU (Chrome/Edge récent recommandé).</p>
-  </section>
-
-  <!-- Go -->
-  <section class="card card-go">
-    <button id="go-btn" class="btn-primary" type="button" disabled>Go</button>
-    <div class="progress-wrap">
-      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-      <span id="progress-pct">0%</span>
-    </div>
-    <details id="log-details">
-      <summary>Journal technique</summary>
-      <pre id="log-output"></pre>
-    </details>
-  </section>
-
-  <!-- Résultats -->
-  <section class="card" id="card-results" hidden>
-    <h2>Résultats</h2>
-    <ul id="results-list"></ul>
-  </section>
-
-</main>
-
-<footer class="footer">
-  <span>100% client-side · aucune donnée envoyée à un serveur · code source sur GitHub</span>
-</footer>
-
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script type="module" src="js/main.js"></script>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1115" />
+    <meta name="description" content="Adapt your CV to any job offer — locally, privately, with no account and no cloud." />
+    <title>Jobber — tailor your CV, privately</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

@@ -1,0 +1,184 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #2a2e37;
+  --text: #e7e9ee;
+  --muted: #9aa2b1;
+  --accent: #4f8cff;
+  --accent-soft: rgba(79, 140, 255, 0.12);
+  --danger: #ff6161;
+  --radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+.app__header h1 {
+  margin: 0 0 4px;
+  letter-spacing: 0.08em;
+  font-size: 1.4rem;
+}
+.app__header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.app__section {
+  margin-top: 24px;
+}
+.app__section h2 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 28px 16px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--panel);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dropzone--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dropzone__hint { color: var(--muted); font-size: 0.9rem; }
+.dropzone__file { font-weight: 500; }
+
+.job-offers__item { position: relative; margin-bottom: 10px; }
+.job-offers textarea {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 10px 32px 10px 12px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+.job-offers__remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.job-offers__add {
+  background: none;
+  border: 1px dashed var(--border);
+  color: var(--accent);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.engine-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.engine-selector__option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.engine-selector__option p { margin: 2px 0 0; color: var(--muted); font-size: 0.78rem; }
+.engine-selector__option--active { border-color: var(--accent); background: var(--accent-soft); }
+.engine-selector__option--disabled { opacity: 0.45; cursor: not-allowed; }
+
+.model-selector {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+.model-selector__status { color: var(--muted); font-size: 0.85rem; }
+.model-selector__status--error { color: var(--danger); }
+
+.app__go {
+  width: 100%;
+  margin-top: 28px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+.app__go:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.progress { margin-top: 16px; }
+.progress__track {
+  height: 8px;
+  background: var(--panel);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress__fill { height: 100%; background: var(--accent); transition: width 0.2s ease; }
+.progress__label { margin-top: 6px; font-size: 0.8rem; color: var(--muted); }
+
+.app__error {
+  margin-top: 16px;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.app__results { list-style: none; padding: 0; margin: 0; }
+.app__results li { margin-bottom: 8px; }
+.app__results a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.app__results-warning { color: var(--muted); font-size: 0.78rem; }
+
+.technical-log { margin-top: 28px; font-size: 0.8rem; }
+.technical-log summary { cursor: pointer; color: var(--muted); }
+.technical-log__body {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.technical-log__line { padding: 2px 0; color: var(--muted); }
+.technical-log__line--warn { color: #e8b34c; }
+.technical-log__line--error { color: var(--danger); }
+.technical-log__time { opacity: 0.6; margin-right: 4px; }
