@@ -4,10 +4,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
-  // For a GitHub Pages *project* site (https://user.github.io/repo/),
-  // set this to '/repo/' (e.g. via `vite build --base=/jobber/`).
-  // Left as '/' for a user/organization site or any other static host.
-  base: '/',
+  // Served at https://theodoreyong9.github.io/Jobber/ (project Pages site),
+  // so all asset URLs must be prefixed with the repo name.
+  base: '/Jobber/',
   plugins: [
     react(),
     VitePWA({
@@ -20,7 +19,8 @@ export default defineConfig({
         theme_color: '#0f1115',
         background_color: '#0f1115',
         display: 'standalone',
-        start_url: '/',
+        start_url: '/Jobber/',
+        scope: '/Jobber/',
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
