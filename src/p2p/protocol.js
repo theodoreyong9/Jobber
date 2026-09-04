@@ -14,6 +14,7 @@ export const MessageType = Object.freeze({
   CHAT_RESPONSE: 'chat_response',
   CHAT_MESSAGE: 'chat_message',
   PRESENCE_UPDATE: 'presence_update',
+  THRESHOLD_UPDATE: 'threshold_update',
 });
 
 let counter = 0;
@@ -53,6 +54,16 @@ export function createChatMessage({ toPeerId, text }) {
 
 export function createPresenceUpdate(status) {
   return { ...base(MessageType.PRESENCE_UPDATE), status };
+}
+
+/**
+ * Diffusé par un recruteur quand il déplace le curseur de seuil d'une
+ * annonce (§ nouveau : visibilité dynamique par score). Permet aux
+ * candidats déjà connectés de mettre à jour la visibilité de cette
+ * annonce sans attendre une nouvelle annonce Nostr complète.
+ */
+export function createThresholdUpdate({ postingId, threshold }) {
+  return { ...base(MessageType.THRESHOLD_UPDATE), postingId, threshold };
 }
 
 /** Vérifie qu'un message ne dépasse pas la limite de taille appropriée à son type. */

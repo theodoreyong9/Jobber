@@ -27,69 +27,195 @@ export function renderRoleSelect(onSelect) {
   root.appendChild(el('div', { class: 'role-select' }, [
     el('h2', { text: 'Que cherchez-vous ?' }),
     el('p', { class: 'lede', text: 'Vos documents restent sur cet appareil. L\'analyse se fait localement, sans compte ni service cloud.' }),
-    el('button', {
-      class: 'role-card',
-      onclick: () => onSelect('candidate'),
-    }, [el('strong', { text: 'Trouver une opportunité' }), el('span', { text: 'Déposer un CV, découvrir des annonces pertinentes.' })]),
-    el('button', {
-      class: 'role-card',
-      onclick: () => onSelect('recruiter'),
-    }, [el('strong', { text: 'Trouver des candidats' }), el('span', { text: 'Déposer une annonce, découvrir des profils pertinents.' })]),
+    el('button', { class: 'role-card', onclick: () => onSelect('candidate') },
+      [el('strong', { text: 'Trouver une opportunité' }), el('span', { text: 'Déposer un CV, découvrir des annonces pertinentes.' })]),
+    el('button', { class: 'role-card', onclick: () => onSelect('recruiter') },
+      [el('strong', { text: 'Trouver des candidats' }), el('span', { text: 'Publier une ou plusieurs annonces, découvrir des profils pertinents.' })]),
   ]));
 }
 
-// --- Écran 2 : espace de travail (upload + modèle + résultats) (§14-16, §66-67) ---
-export function renderWorkspace({ role, webgpuAvailable, models, onDocumentSubmit, onLoadModel, onResetLocalData }) {
-  const root = app();
-  root.innerHTML = '';
-  const isCandidate = role === 'candidate';
+function roleHeader(label, onChangeRole) {
+  return el('div', { style: 'display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.3rem;' }, [
+    el('span', { style: 'color:var(--muted); font-size:0.85rem;', text: label }),
+    el('button', { class: 'link-button', style: 'color:var(--copper);', onclick: onChangeRole, text: 'Changer de rôle' }),
+  ]);
+}
 
-  const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
-  const pasteArea = el('textarea', { class: 'paste-area', placeholder: isCandidate ? 'Ou collez le texte de votre CV ici…' : 'Collez le texte de l\'annonce ici…' });
-  const semanticCheckbox = el('input', { type: 'checkbox', id: 'semantic-toggle' });
-
+function modelSection({ webgpuAvailable, models, onLoadModel }) {
   const modelSelect = el('select', { class: 'model-select' }, [
     el('option', { value: '', text: '— pas de modèle local —' }),
     ...models.map((m) => el('option', { value: m.id, text: `${m.label} · ~${(m.approxDownloadMb / 1000).toFixed(1)} Go` })),
   ]);
+  const semanticCheckbox = el('input', { type: 'checkbox' });
+  const section = el('div', {}, [
+    el('div', { class: 'section-title', text: 'Intelligence locale (optionnel)' }),
+    webgpuAvailable
+      ? el('div', {}, [
+          modelSelect,
+          el('button', { class: 'btn secondary', onclick: () => onLoadModel(modelSelect.value), text: 'Charger le modèle' }),
+          el('div', { class: 'model-status', id: 'model-status' }),
+        ])
+      : el('p', { class: 'lede', text: 'WebGPU indisponible dans ce navigateur : le matching déterministe (CPU) reste utilisable, sans compréhension sémantique fine.' }),
+    el('label', { class: 'checkbox-row' }, [semanticCheckbox, 'Utiliser l\'analyse sémantique WebLLM si le modèle est chargé']),
+  ]);
+  return { section, semanticCheckbox };
+}
 
-  root.appendChild(el('div', {}, [
-    el('div', { class: 'section-title', text: isCandidate ? 'Votre CV' : 'Votre annonce' }),
+/** Formulaire d'upload générique (CV pour candidat, une annonce pour recruteur). */
+function uploadForm({ isCandidate, onSubmit, submitLabel }) {
+  const nameInput = el('input', {
+    type: 'text',
+    placeholder: isCandidate ? 'Nom affiché aux recruteurs (optionnel)' : 'Intitulé du poste / entreprise (optionnel)',
+    style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin-bottom:0.6rem;',
+  });
+  const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
+  const pasteArea = el('textarea', { class: 'paste-area', placeholder: isCandidate ? 'Ou collez le texte de votre CV ici…' : 'Collez le texte de l\'annonce ici…' });
+
+  return el('div', {}, [
+    nameInput,
     el('div', { class: 'dropzone' }, [
       el('div', { text: isCandidate ? 'Déposez un fichier .docx / .txt, ou collez le texte ci-dessous.' : 'Collez le texte de l\'offre, ou déposez un .docx / .txt.' }),
       fileInput,
     ]),
     pasteArea,
-
-    el('div', { class: 'section-title', text: 'Intelligence locale (optionnel)' }),
-    webgpuAvailable
-      ? el('div', {}, [
-          modelSelect,
-          el('button', { class: 'btn secondary', onclick: () => onLoadModel(modelSelect.value) , text: 'Charger le modèle'}),
-          el('div', { class: 'model-status', id: 'model-status' }),
-        ])
-      : el('p', { class: 'lede', text: 'WebGPU indisponible dans ce navigateur : le matching déterministe (CPU) reste utilisable, sans compréhension sémantique fine.' }),
-    el('label', { class: 'checkbox-row' }, [semanticCheckbox, 'Utiliser l\'analyse sémantique WebLLM si le modèle est chargé']),
-
     el('button', {
       class: 'btn',
-      text: isCandidate ? 'Analyser et rechercher des opportunités' : 'Analyser et rechercher des candidats',
-      onclick: () => onDocumentSubmit({
+      text: submitLabel,
+      onclick: () => onSubmit({
         file: fileInput.files[0],
         text: pasteArea.value.trim() ? pasteArea.value : undefined,
-        useSemanticAnalysis: semanticCheckbox.checked,
+        displayName: nameInput.value.trim() || null,
       }),
     }),
+  ]);
+}
 
-    el('div', { class: 'section-title', text: isCandidate ? 'Annonces correspondantes' : 'Candidats correspondants' }),
+// --- Écran candidat (§14, §66) ---
+export function renderCandidateWorkspace({ webgpuAvailable, models, onDocumentSubmit, onLoadModel, onResetLocalData, onChangeRole }) {
+  const root = app();
+  root.innerHTML = '';
+
+  const { section: modelSectionEl, semanticCheckbox } = modelSection({ webgpuAvailable, models, onLoadModel });
+
+  root.appendChild(el('div', {}, [
+    roleHeader('Mode : candidat', onChangeRole),
+    el('div', { class: 'section-title', text: 'Votre CV' }),
+    uploadForm({
+      isCandidate: true,
+      submitLabel: 'Analyser et rechercher des opportunités',
+      onSubmit: (input) => onDocumentSubmit({ ...input, useSemanticAnalysis: semanticCheckbox.checked }),
+    }),
+
+    modelSectionEl,
+
+    el('div', { class: 'section-title', text: 'Annonces correspondantes' }),
+    el('p', { class: 'lede', style: 'margin-top:-0.3rem;', text: 'Seules les annonces dont le score atteint le seuil fixé par le recruteur apparaissent ici — c\'est lui qui décide, en temps réel, qui peut voir son offre.' }),
     el('ul', { class: 'ledger', id: 'match-ledger' }, [el('li', { class: 'empty-state', text: 'Aucun résultat pour le moment.' })]),
 
     el('div', { class: 'section-title', text: 'Confidentialité' }),
     el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
   ]));
 
-  // Zone dédiée pour le détail de match / chat, insérée après le workspace.
   root.appendChild(el('div', { id: 'detail-zone' }));
+}
+
+// --- Écran recruteur (§15, §67) : annonces multiples + curseur de seuil ---
+export function renderRecruiterWorkspace({ webgpuAvailable, models, postings, onAddPosting, onLoadModel, onResetLocalData, onChangeRole, onRemovePosting, onThresholdInput, onThresholdCommit, onOpenCandidate }) {
+  const root = app();
+  root.innerHTML = '';
+
+  const { section: modelSectionEl, semanticCheckbox } = modelSection({ webgpuAvailable, models, onLoadModel });
+  let addFormVisible = postings.length === 0;
+
+  const postingsContainer = el('div', { id: 'postings-container' });
+  const addFormContainer = el('div', { id: 'add-posting-form' });
+
+  function renderAddForm() {
+    addFormContainer.innerHTML = '';
+    if (!addFormVisible) {
+      addFormContainer.appendChild(el('button', { class: 'btn secondary', text: '+ Nouvelle annonce', onclick: () => { addFormVisible = true; renderAddForm(); } }));
+      return;
+    }
+    addFormContainer.appendChild(uploadForm({
+      isCandidate: false,
+      submitLabel: postings.length === 0 ? 'Publier cette annonce et rechercher des candidats' : 'Ajouter cette annonce',
+      onSubmit: (input) => onAddPosting({ ...input, useSemanticAnalysis: semanticCheckbox.checked }),
+    }));
+    if (postings.length > 0) {
+      addFormContainer.appendChild(el('button', { class: 'link-button', text: 'annuler', onclick: () => { addFormVisible = false; renderAddForm(); } }));
+    }
+  }
+  renderAddForm();
+
+  root.appendChild(el('div', {}, [
+    roleHeader('Mode : recruteur', onChangeRole),
+    el('div', { class: 'section-title', text: 'Mes annonces' }),
+    postingsContainer,
+    addFormContainer,
+    modelSectionEl,
+    el('div', { class: 'section-title', text: 'Confidentialité' }),
+    el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
+  ]));
+
+  root.appendChild(el('div', { id: 'detail-zone' }));
+
+  renderPostingsList(postings, { onRemovePosting, onThresholdInput, onThresholdCommit, onOpenCandidate });
+}
+
+/**
+ * Affiche une carte par annonce : titre, curseur de seuil temps réel,
+ * mini-ledger des candidats découverts (visibles / sous le seuil).
+ */
+export function renderPostingsList(postings, { onRemovePosting, onThresholdInput, onThresholdCommit, onOpenCandidate }) {
+  const container = document.getElementById('postings-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (postings.length === 0) {
+    container.appendChild(el('p', { class: 'empty-state', text: 'Aucune annonce publiée pour le moment.' }));
+    return;
+  }
+
+  for (const posting of postings) {
+    const percentLabel = el('span', { class: 'threshold-value', text: `${posting.threshold}%` });
+    const slider = el('input', {
+      type: 'range', min: '0', max: '100', step: '5', value: String(posting.threshold),
+      class: 'threshold-slider',
+      oninput: (e) => { percentLabel.textContent = `${e.target.value}%`; onThresholdInput(posting.id, Number(e.target.value)); },
+      onchange: (e) => onThresholdCommit(posting.id, Number(e.target.value)),
+    });
+
+    const visibleCount = posting.candidates.filter((c) => c.visible).length;
+
+    const ledgerItems = posting.candidates.length === 0
+      ? [el('li', { class: 'empty-state', text: 'Aucun candidat découvert pour le moment.' })]
+      : posting.candidates.map((c) => el('li', {}, [
+          el('button', {
+            class: `ledger-row ${c.visible ? '' : 'below-threshold'}`,
+            onclick: () => onOpenCandidate(c, posting),
+          }, [
+            el('span', { class: `ledger-score ${c.total < 50 ? 'weak' : ''}`, text: `${c.total}` }),
+            el('span', {}, [
+              el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}…` }),
+              el('div', { class: 'ledger-sub', text: c.visible ? 'Visible par ce candidat' : 'Sous le seuil — invisible pour ce candidat' }),
+            ]),
+            el('span', { class: 'ledger-chevron', text: '›' }),
+          ]),
+        ]));
+
+    container.appendChild(el('div', { class: 'posting-card' }, [
+      el('div', { style: 'display:flex; justify-content:space-between; align-items:baseline;' }, [
+        el('strong', { style: 'font-family:var(--serif); font-size:1.1rem;', text: posting.title || 'Annonce sans titre' }),
+        el('button', { class: 'link-button', style: 'color:var(--copper);', text: 'retirer', onclick: () => onRemovePosting(posting.id) }),
+      ]),
+      el('div', { class: 'threshold-row' }, [
+        el('span', { class: 'threshold-label', text: 'Score minimum pour voir cette annonce et proposer un chat' }),
+        el('div', { style: 'display:flex; align-items:center; gap:0.6rem;' }, [slider, percentLabel]),
+        el('div', { class: 'lede', style: 'font-size:0.8rem; margin:0.2rem 0 0;', text: `${visibleCount} / ${posting.candidates.length} candidat(s) découvert(s) actuellement au-dessus du seuil` }),
+      ]),
+      el('ul', { class: 'ledger' }, ledgerItems),
+    ]));
+  }
 }
 
 export function renderModelStatus(progress) {
@@ -103,13 +229,13 @@ function scoreClass(entry) {
   return '';
 }
 
-// --- Ledger de matchs (§34-36, §43) ---
+// --- Ledger de matchs côté candidat (§34-36, §43) ---
 export function renderMatchList(ranking, onOpen) {
   const list = document.getElementById('match-ledger');
   if (!list) return;
   list.innerHTML = '';
   if (ranking.length === 0) {
-    list.appendChild(el('li', { class: 'empty-state', text: 'Recherche en cours… aucun résultat pour le moment.' }));
+    list.appendChild(el('li', { class: 'empty-state', text: 'Recherche en cours… aucun résultat visible pour le moment.' }));
     return;
   }
   for (const entry of ranking) {
@@ -117,8 +243,8 @@ export function renderMatchList(ranking, onOpen) {
       el('button', { class: 'ledger-row', onclick: () => onOpen(entry) }, [
         el('span', { class: `ledger-score ${scoreClass(entry)}`, text: `${entry.total}` }),
         el('span', {}, [
-          el('div', { class: 'ledger-title', text: entry.blocked ? 'Bloqué par une contrainte' : `Match ${entry.total}%` }),
-          el('div', { class: 'ledger-sub', text: `Pair ${String(entry.peerId || entry.jobId || entry.candidateId).slice(0, 10)}…` }),
+          el('div', { class: 'ledger-title', text: entry.blocked ? 'Bloqué par une contrainte' : (entry.postingTitle || entry.displayName || `Match ${entry.total}%`) }),
+          el('div', { class: 'ledger-sub', text: `${entry.displayName ? entry.displayName + ' · ' : ''}Pair ${String(entry.peerId).slice(0, 8)}…` }),
         ]),
         el('span', { class: 'ledger-chevron', text: '›' }),
       ]),
@@ -171,11 +297,11 @@ export const renderChat = {
     zone.prepend(banner);
   },
 
-  open(peerId, history, onSend) {
+  open(peerId, history, onSend, peerName) {
     const zone = document.getElementById('detail-zone');
     if (!zone) return;
     zone.innerHTML = '';
-    zone.appendChild(el('div', { class: 'section-title', text: 'Conversation' }));
+    zone.appendChild(el('div', { class: 'section-title', text: peerName ? `Conversation avec ${peerName}` : 'Conversation' }));
 
     const messages = el('div', { class: 'chat-messages' });
     for (const m of history) {

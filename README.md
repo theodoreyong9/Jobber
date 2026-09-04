@@ -41,6 +41,7 @@ supposé absolu (`/`) : tout est relatif, pour fonctionner sous
 | CI GitHub Actions (tests + déploiement Pages) | ✅ implémentée |
 | Sécurité réseau (limites de taille, validation stricte, anti prompt-injection) | ✅ implémentée dans `core/validation` et `p2p/protocol` |
 | Gestion des pairs malveillants (bloquer/ignorer un pair) | ✅ implémentée (`src/storage/blocklist.js`, §75) |
+| Annonces multiples par recruteur + curseur de score en temps réel | ✅ implémentée (voir section dédiée ci-dessous) |
 | Support PDF | ⏳ hors périmètre V1 (§16, §89) |
 
 Les modules réseau (Nostr/Trystero/WebLLM) n'ont pas pu être exécutés
@@ -70,6 +71,46 @@ src/
 └── config/matching.js    pondérations, seuils, limites — configuration centrale
 tests/                    tests unitaires (Node --test, sans dépendance)
 ```
+
+## Annonces multiples et seuil de visibilité en temps réel
+
+Un recruteur peut publier **plusieurs annonces actives simultanément**
+(§1 : "une ou plusieurs annonces d'emploi"). Chaque annonce est une carte
+indépendante avec :
+
+- son propre score par candidat découvert (calculé côté recruteur, pour son
+  propre tableau de bord — il voit tout le monde) ;
+- un **curseur de score minimum (0-100)**, réglable en temps réel, qui
+  détermine quels candidats peuvent **voir l'annonce et proposer un chat**.
+
+### Comment le seuil est appliqué (architecture décentralisée)
+
+Il n'y a pas de serveur central capable de "cacher" une annonce à quelqu'un.
+Le seuil est donc :
+
+1. publié comme partie du profil réseau minimal du recruteur
+   (`capabilities.postings[].visibilityThreshold`, jamais le document
+   complet, §11/§51) ;
+2. **appliqué côté candidat** : chaque candidat calcule localement son
+   propre score de matching pour cette annonce (à partir des faits publics
+   de l'annonce), puis compare ce score au seuil publié. En dessous, il n'y a
+   simplement pas de ligne dans son classement (`src/p2p/discovery.js`,
+   `MatchingRanker._emit`).
+
+Quand le recruteur bouge le curseur :
+
+- **en direct (pendant le drag)** : la vue recruteur se met à jour
+  instantanément (aucun réseau, juste un filtre local), *et* un message
+  `threshold_update` léger est diffusé aux candidats déjà connectés via
+  Trystero, qui recalculent leur visibilité sans re-scorer quoi que ce soit ;
+- **au relâchement du curseur** : le profil complet (avec le nouveau seuil)
+  est republié sur Nostr, avec un anti-rebond de 800 ms, pour que les
+  candidats qui se connectent plus tard voient aussi le seuil à jour.
+
+Le tableau de bord du recruteur, lui, **ne masque jamais** un candidat déjà
+découvert : il marque juste chaque ligne "visible pour ce candidat" ou "sous
+le seuil", pour que le recruteur voie l'effet de son curseur en temps réel
+avant de le figer.
 
 ## Principes non négociables (rappel du cahier des charges)
 

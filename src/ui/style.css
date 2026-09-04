@@ -204,11 +204,27 @@ select.model-select {
 .chat-input-row input { flex: 1; border: 1px solid var(--line); border-radius: var(--radius); padding: 0.5rem 0.7rem; font-family: var(--sans); }
 
 /* --- Journal technique --- */
-.log-open { position: fixed; bottom: 1rem; right: 1rem; background: var(--ink); color: var(--surface); border: none; border-radius: 999px; width: 2.4rem; height: 2.4rem; cursor: pointer; }
-.log-panel { position: fixed; bottom: 4rem; right: 1rem; width: 320px; max-height: 40vh; background: var(--ink); color: #cfd8d1; border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; font-size: 0.78rem; }
+.log-open { position: fixed; bottom: 1rem; right: 1rem; background: var(--ink); color: var(--surface); border: none; border-radius: 999px; width: 2.4rem; height: 2.4rem; cursor: pointer; }.log-panel { position: fixed; bottom: 4rem; right: 1rem; width: 320px; max-height: 40vh; background: var(--ink); color: #cfd8d1; border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; font-size: 0.78rem; }
+.log-panel[hidden] { display: none; }
 .log-panel-head { display: flex; justify-content: space-between; padding: 0.5rem 0.7rem; background: #0f1613; }
 .log-list { list-style: none; margin: 0; padding: 0.5rem 0.7rem; overflow-y: auto; }
 .log-list li { padding: 0.15rem 0; border-bottom: 1px solid #26332c; }
 .link-button { background: none; border: none; color: #9aa79e; cursor: pointer; font-size: 0.78rem; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* --- Annonces multiples côté recruteur + curseur de seuil --- */
+.posting-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.threshold-row { margin: 0.8rem 0; padding: 0.7rem; background: var(--paper); border-radius: var(--radius); }
+.threshold-label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 0.4rem; }
+.threshold-slider { flex: 1; accent-color: var(--signal); }
+.threshold-value { font-family: var(--serif); font-weight: 700; color: var(--signal); min-width: 2.6rem; text-align: right; }
+.ledger-row.below-threshold { opacity: 0.45; }
+.ledger-row.below-threshold .ledger-score { color: var(--muted); }
+#add-posting-form { margin-bottom: 1rem; }

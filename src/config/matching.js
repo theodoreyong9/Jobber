@@ -35,11 +35,17 @@ export const SENIORITY_LEVELS = Object.freeze([
 
 // Limites réseau/anti-abus (cf. §73).
 export const PAYLOAD_LIMITS = Object.freeze({
-  maxProfileBytes: 8 * 1024,      // profil réseau minimal
+  maxProfileBytes: 16 * 1024,     // profil réseau minimal (plusieurs annonces possibles côté recruteur)
   maxMessageBytes: 16 * 1024,     // message P2P générique
   maxChatMessageBytes: 4 * 1024,  // un message de chat
   maxDocumentBytes: 2 * 1024 * 1024, // CV/annonce uploadé localement (2 Mo)
 });
+
+/** Nombre maximal d'annonces actives simultanées par recruteur (anti-abus, §73). */
+export const MAX_POSTINGS_PER_RECRUITER = 20;
+
+/** Seuil de visibilité par défaut : aucun filtrage tant que le recruteur n'a pas réglé le curseur. */
+export const DEFAULT_VISIBILITY_THRESHOLD = 0;
 
 // Dictionnaire de normalisation déterministe (CPU), volontairement modeste.
 // WebLLM ne fait que désambiguïser les cas non couverts ici (§23).

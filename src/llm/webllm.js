@@ -29,9 +29,11 @@ export async function loadEngine(modelId, onProgress) {
   }
   currentModelId = modelId;
 
-  // Import dynamique : évite de charger la lib côté Node (tests) et permet
-  // au bundler / navigateur de la résoudre via CDN/npm selon la config.
-  const webllm = await import('@mlc-ai/web-llm');
+  // Import direct depuis le CDN : un Web Worker n'hérite PAS de l'import map
+  // déclaré dans le document principal (limitation des navigateurs), donc un
+  // spécificateur "nu" comme `@mlc-ai/web-llm` ne peut pas être résolu ici.
+  // On importe depuis l'URL CDN complète pour rester indépendant du contexte.
+  const webllm = await import('https://esm.run/@mlc-ai/web-llm');
 
   const engine = await webllm.CreateMLCEngine(modelId, {
     initProgressCallback: (report) => {

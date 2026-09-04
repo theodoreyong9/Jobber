@@ -4,6 +4,8 @@
 // échangées : sorties WebLLM (§57) et messages réseau (§55, §56).
 // Toute donnée reçue du réseau ou du modèle est non fiable par défaut.
 
+import { MAX_POSTINGS_PER_RECRUITER } from '../../config/matching.js';
+
 /** @typedef {{ id: string, field: string, value: string, sourceDocumentId: string, sourceLocation?: string }} ExtractedFact */
 
 export class ValidationError extends Error {
@@ -78,6 +80,14 @@ export function validateIncomingMessage(raw, maxBytes) {
 
 /**
  * Valide un profil réseau minimal (§11, §51) avant diffusion.
+ *
+ * Forme candidat (inchangée, un seul CV) :
+ *   capabilities: { skills, domains, seniority?, locations?, languages?, displayName? }
+ *
+ * Forme recruteur (§1 : "une ou plusieurs annonces") :
+ *   capabilities: { postings: [{ id, title?, skills, domains, seniority?, locations?,
+ *                                 languages?, visibilityThreshold }], displayName? }
+ *
  * @param {unknown} profile
  */
 export function validatePeerProfile(profile) {
@@ -88,16 +98,49 @@ export function validatePeerProfile(profile) {
   const p = /** @type {any} */ (profile);
   if (!isString(p.peerId)) errors.push('peerId manquant.');
   if (p.role !== 'candidate' && p.role !== 'recruiter') errors.push('role invalide.');
-  if (typeof p.capabilities !== 'object' || p.capabilities === null) errors.push('capabilities manquant.');
-  else {
+  if (typeof p.capabilities !== 'object' || p.capabilities === null) {
+    errors.push('capabilities manquant.');
+    return { ok: false, errors };
+  }
+
+  const forbidsFullText = (obj, label) => {
+    if (isString(obj?.fullText) || isString(obj?.cvText) || isString(obj?.rawDocument) || isString(obj?.description)) {
+      errors.push(`${label} ne doit pas contenir de texte intégral de document.`);
+    }
+  };
+  forbidsFullText(p, 'Le profil réseau');
+
+  if (p.capabilities.displayName !== undefined) {
+    if (!isString(p.capabilities.displayName) || p.capabilities.displayName.length > 80) {
+      errors.push('capabilities.displayName doit être une chaîne de 80 caractères maximum.');
+    }
+  }
+
+  if (p.role === 'recruiter') {
+    if (!Array.isArray(p.capabilities.postings)) {
+      errors.push('capabilities.postings doit être un tableau pour un profil recruteur.');
+    } else {
+      if (p.capabilities.postings.length > MAX_POSTINGS_PER_RECRUITER) {
+        errors.push(`Trop d'annonces (${p.capabilities.postings.length} > ${MAX_POSTINGS_PER_RECRUITER}).`);
+      }
+      p.capabilities.postings.forEach((posting, i) => {
+        if (typeof posting !== 'object' || posting === null) { errors.push(`postings[${i}] non-objet.`); return; }
+        if (!isString(posting.id)) errors.push(`postings[${i}].id manquant.`);
+        if (posting.title !== undefined && (!isString(posting.title) || posting.title.length > 120)) errors.push(`postings[${i}].title invalide.`);
+        if (posting.skills !== undefined && !isStringArray(posting.skills)) errors.push(`postings[${i}].skills invalide.`);
+        if (posting.domains !== undefined && !isStringArray(posting.domains)) errors.push(`postings[${i}].domains invalide.`);
+        if (posting.visibilityThreshold !== undefined) {
+          const t = posting.visibilityThreshold;
+          if (typeof t !== 'number' || t < 0 || t > 100) errors.push(`postings[${i}].visibilityThreshold doit être un nombre entre 0 et 100.`);
+        }
+        forbidsFullText(posting, `postings[${i}]`);
+      });
+    }
+  } else if (p.role === 'candidate') {
     if (p.capabilities.skills !== undefined && !isStringArray(p.capabilities.skills)) errors.push('capabilities.skills invalide.');
     if (p.capabilities.domains !== undefined && !isStringArray(p.capabilities.domains)) errors.push('capabilities.domains invalide.');
   }
-  // Interdiction explicite : un profil réseau ne doit jamais contenir de texte
-  // intégral de document (§11, §51).
-  if (isString(p.fullText) || isString(p.cvText) || isString(p.rawDocument)) {
-    errors.push('Le profil réseau ne doit pas contenir de texte intégral de document.');
-  }
+
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: p };
 }
