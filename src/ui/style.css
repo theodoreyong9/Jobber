@@ -1,0 +1,214 @@
+/*
+  Plan de design
+  --------------
+  Sujet : un dossier de candidature qu'on feuillette — pas un dashboard SaaS.
+  Couleurs (base) :
+    --ink        #16211D  texte principal, fond de l'entête
+    --paper      #EEF0EA  fond général (papier pâle, plus vert que crème)
+    --surface    #FBFAF5  cartes/documents (blanc cassé)
+    --line       #C9CDBE  hairlines
+    --signal     #3E6259  accent principal (validation / score fort)
+    --copper     #B2551F  accent secondaire (alerte / contrainte bloquante)
+    --muted      #6B7268  texte secondaire
+  Typo :
+    Titres/scores -> serif à empattements ("Zilla Slab" style tampon de dossier)
+    UI/texte      -> grotesque humaniste ("Inter")
+  Layout : colonne unique alignée à gauche, ~640px, liste "ledger" à
+  hairlines plutôt que grille de cartes à ombre. Le score est un grand
+  chiffre serif à gauche de chaque ligne, comme un tampon.
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --ink: #16211d;
+  --paper: #eef0ea;
+  --surface: #fbfaf5;
+  --line: #c9cdbe;
+  --signal: #3e6259;
+  --signal-tint: #dfe8e2;
+  --copper: #b2551f;
+  --copper-tint: #f3e3d6;
+  --muted: #6b7268;
+  --radius: 3px;
+  --serif: 'Zilla Slab', Georgia, serif;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 1.1rem 1.5rem;
+  background: var(--ink);
+  color: var(--surface);
+}
+.topbar-mark { color: var(--signal); font-size: 1.1rem; }
+.topbar-title { font-family: var(--serif); font-weight: 600; font-size: 1.25rem; margin: 0; letter-spacing: 0.01em; }
+.topbar-sub { color: #9aa79e; font-size: 0.82rem; margin-left: 0.25rem; }
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+/* --- Choix de rôle --- */
+.role-select {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 2rem;
+}
+.role-select h2 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.6rem;
+  margin: 0 0 0.25rem;
+}
+.role-select p.lede { color: var(--muted); margin: 0 0 1rem; max-width: 46ch; }
+.role-card {
+  display: block;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 1rem;
+}
+.role-card strong { display: block; font-family: var(--serif); font-size: 1.15rem; margin-bottom: 0.2rem; }
+.role-card span { color: var(--muted); font-size: 0.88rem; }
+.role-card:hover { border-color: var(--signal); }
+
+/* --- Espace de travail --- */
+.section-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 2rem 0 0.6rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--line);
+}
+.section-title:first-child { border-top: none; padding-top: 0; margin-top: 0.5rem; }
+
+.dropzone {
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 1.6rem;
+  text-align: center;
+  color: var(--muted);
+}
+.dropzone input[type="file"] { margin-top: 0.6rem; }
+
+textarea.paste-area {
+  width: 100%;
+  min-height: 140px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+label.checkbox-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--muted); margin-top: 0.6rem; }
+
+.btn {
+  display: inline-block;
+  background: var(--ink);
+  color: var(--surface);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.65rem 1.2rem;
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 0.92rem;
+  cursor: pointer;
+  margin-top: 0.9rem;
+}
+.btn:hover { background: var(--signal); }
+.btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn.secondary:hover { border-color: var(--copper); color: var(--copper); }
+
+select.model-select {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
+  background: var(--surface);
+  font-family: var(--sans);
+}
+
+.model-status { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; min-height: 1.2em; }
+
+/* --- Ledger : liste de matchs (au lieu d'une grille de cartes) --- */
+.ledger { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.ledger-row {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.85rem 0.1rem;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  background: none;
+  border-left: none; border-right: none; border-top: none;
+  text-align: left;
+  width: 100%;
+  font-family: var(--sans);
+}
+.ledger-row:hover { background: var(--surface); }
+.ledger-score {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.5rem;
+  color: var(--signal);
+}
+.ledger-score.weak { color: var(--muted); }
+.ledger-score.blocked { color: var(--copper); }
+.ledger-title { font-weight: 600; }
+.ledger-sub { color: var(--muted); font-size: 0.82rem; }
+.ledger-chevron { color: var(--muted); }
+.empty-state { color: var(--muted); padding: 1.2rem 0.1rem; font-size: 0.92rem; }
+
+/* --- Détail d'un match --- */
+.match-detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.3rem; }
+.match-detail .score-stamp { font-family: var(--serif); font-weight: 700; font-size: 2.4rem; color: var(--signal); line-height: 1; }
+.dimension-row { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+.reason { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.2rem 0; font-size: 0.92rem; }
+.reason.positive::before { content: '✓'; color: var(--signal); }
+.reason.warning::before { content: '⚠'; color: var(--copper); }
+.reason.blocking::before { content: '✕'; color: var(--copper); font-weight: 700; }
+.provenance-tag { font-size: 0.72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 0.4rem; }
+
+/* --- Chat --- */
+.chat-window { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; height: 420px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.chat-bubble { max-width: 75%; padding: 0.5rem 0.7rem; border-radius: 10px; font-size: 0.92rem; }
+.chat-bubble.me { align-self: flex-end; background: var(--signal-tint); }
+.chat-bubble.them { align-self: flex-start; background: var(--paper); }
+.chat-input-row { display: flex; gap: 0.5rem; padding: 0.7rem; border-top: 1px solid var(--line); }
+.chat-input-row input { flex: 1; border: 1px solid var(--line); border-radius: var(--radius); padding: 0.5rem 0.7rem; font-family: var(--sans); }
+
+/* --- Journal technique --- */
+.log-open { position: fixed; bottom: 1rem; right: 1rem; background: var(--ink); color: var(--surface); border: none; border-radius: 999px; width: 2.4rem; height: 2.4rem; cursor: pointer; }
+.log-panel { position: fixed; bottom: 4rem; right: 1rem; width: 320px; max-height: 40vh; background: var(--ink); color: #cfd8d1; border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; font-size: 0.78rem; }
+.log-panel-head { display: flex; justify-content: space-between; padding: 0.5rem 0.7rem; background: #0f1613; }
+.log-list { list-style: none; margin: 0; padding: 0.5rem 0.7rem; overflow-y: auto; }
+.log-list li { padding: 0.15rem 0; border-bottom: 1px solid #26332c; }
+.link-button { background: none; border: none; color: #9aa79e; cursor: pointer; font-size: 0.78rem; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

@@ -1,16 +1,53 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f1115" />
-    <meta name="description" content="Adapt your CV to any job offer — locally, privately, with no account and no cloud." />
-    <title>Jobber — tailor your CV, privately</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dossier — matching emploi local &amp; P2P</title>
+  <meta name="description" content="Mise en relation candidats / recruteurs, analyse locale, aucun compte, aucun cloud." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./public/icons/icon-192.png" />
+  <meta name="theme-color" content="#16211D" />
+  <link rel="stylesheet" href="./src/ui/style.css" />
+
+  <!-- Résolution des dépendances via CDN (aucun bundler requis en V1, §4). -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@mlc-ai/web-llm": "https://esm.run/@mlc-ai/web-llm",
+      "trystero/nostr": "https://esm.run/trystero/nostr",
+      "nostr-tools": "https://esm.run/nostr-tools",
+      "mammoth": "https://esm.run/mammoth"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <span class="topbar-mark" aria-hidden="true">◐</span>
+    <h1 class="topbar-title">Dossier</h1>
+    <span class="topbar-sub">local · P2P · sans compte</span>
+  </header>
+
+  <main id="app" class="app" aria-live="polite"></main>
+
+  <aside id="log-panel" class="log-panel" hidden>
+    <div class="log-panel-head">
+      <span>Journal technique</span>
+      <button id="log-toggle" class="link-button" type="button">masquer</button>
+    </div>
+    <ul id="log-list" class="log-list"></ul>
+  </aside>
+  <button id="log-open" class="log-open" type="button" title="Journal technique">⋮</button>
+
+  <script type="module" src="./src/app/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        const base = document.querySelector('link[rel="manifest"]').href.replace('manifest.webmanifest', '');
+        navigator.serviceWorker.register(base + 'service-worker.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
 </html>

@@ -1,123 +1,83 @@
-# Jobber
+# Dossier — matching emploi P2P, local et sans compte
 
-Adapt your CV to a job offer — locally, privately, with no account and no cloud.
+Application web statique de mise en relation candidats/recruteurs.
+L'analyse des CV et annonces se fait **localement** (CPU + WebLLM dans le
+navigateur), la découverte et le chat passent par **Nostr** (signalisation)
+et **Trystero** (transport P2P direct). Aucun backend applicatif, aucun
+compte, aucun LLM cloud, **aucune réécriture de document**.
 
-Jobber is a client-only Progressive Web App. Your CV never leaves your
-device: inference runs either in-browser via **WebLLM** or against a
-**local engine** (Ollama) on your own machine. There is no backend, no
-account, and no server-side storage.
-
-> **Jobber never invents facts.** It can reformulate, reorder, translate and
-> re-emphasize what's already in your CV — it cannot add an employer, a
-> technology, a date, a number, or a qualification that isn't already there.
-
-## Quick start
+## Démarrer en local
 
 ```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # production build in dist/
-npm run preview  # serve the production build locally
+npm test        # exécute la suite de tests du cœur métier (déterministe)
+npm run serve    # sert le dossier statique sur http://localhost:8080
 ```
 
-Deploys as static assets — GitHub Pages, Netlify, Vercel static, or any
-static host all work with no server component.
+Aucune étape de build n'est nécessaire : le runtime est du JavaScript
+vanilla avec import map vers les dépendances (WebLLM, Trystero, Nostr,
+mammoth) résolues via CDN (`esm.run`). Ouvrez `index.html` servi par
+`npm run serve` (pas en `file://`, les ES modules et le Service Worker
+l'exigent).
 
-## How it works
+## Déploiement GitHub Pages
 
-```
-CV.docx + Job offer(s)
-        │
-        ▼
-CPU: parse DOCX → ResumeSource (Fact Bank)
-        │
-        ▼
-For each job offer
-  ├─ detect language
-  ├─ extract keywords + "adapters" (job-side phrasing)
-  ├─ match resume sections ↔ adapters (lexical overlap, max 3/section)
-  └─ build a RewritePlan (original text + authorized facts + adapters + rules)
-        │
-        ▼
-LLM (WebLLM or local model, in a Web Worker)
-  → strict JSON: { paragraphId, text }[]
-        │
-        ▼
-CPU validation
-  ├─ numbers preserved?
-  ├─ length not exploded?
-  ├─ paragraphId known?
-  └─ JSON well-formed? (2 retries, else keep original text)
-        │
-        ▼
-DOCX patcher — rewrites only the targeted <w:t> runs,
-everything else (images, tables, styles, headers/footers) untouched
-        │
-        ▼
-DOCX validator — re-opens the ZIP, checks XML + media survived
-        │
-        ▼
-Download: "My CV - Company A.docx"
-```
+`.github/workflows/deploy.yml` fait tourner les tests puis publie le dépôt
+tel quel sur GitHub Pages à chaque push sur `main`. Aucun chemin n'est
+supposé absolu (`/`) : tout est relatif, pour fonctionner sous
+`https://username.github.io/repository/`.
 
-The philosophy, restated:
+## État d'avancement
 
-- **CPU** to parse, structure, extract and validate — deterministic, cheap,
-  auditable.
-- **LLM** only to reformulate a small, explicitly scoped chunk of text.
-- **CPU again** to check the LLM didn't cross any line.
-- **The original DOCX** is patched in place, never rebuilt from scratch —
-  so layout, images, and styles survive.
+| Bloc | Statut |
+|---|---|
+| Cœur métier (parsing CPU, extraction, normalisation, scoring, matching) | ✅ implémenté et testé (`tests/`) |
+| Validation des sorties WebLLM / messages réseau | ✅ implémenté et testé |
+| Intégration WebLLM (Worker + prompts + catalogue de modèles) | ✅ code écrit, à valider avec un vrai chargement de modèle en navigateur |
+| Nostr (identité locale, découverte, publication de profil minimal) | ✅ code écrit, à valider contre de vrais relais |
+| Trystero (transport P2P direct, chat) | ✅ code écrit, à valider en conditions réelles (2 navigateurs) |
+| Stockage local (IndexedDB : profils, cache, chat, suppression totale) | ✅ implémenté |
+| UI vanilla JS (rôle, upload, ledger de matchs, détail, chat) | ✅ implémentée, identité visuelle dédiée (`src/ui/style.css`) |
+| PWA (manifest, Service Worker, icônes) | ✅ implémentée |
+| CI GitHub Actions (tests + déploiement Pages) | ✅ implémentée |
+| Sécurité réseau (limites de taille, validation stricte, anti prompt-injection) | ✅ implémentée dans `core/validation` et `p2p/protocol` |
+| Gestion des pairs malveillants (bloquer/ignorer un pair) | ✅ implémentée (`src/storage/blocklist.js`, §75) |
+| Support PDF | ⏳ hors périmètre V1 (§16, §89) |
 
-## Project layout
+Les modules réseau (Nostr/Trystero/WebLLM) n'ont pas pu être exécutés
+bout-en-bout dans cet environnement de développement (pas d'accès WebGPU ni
+aux relais Nostr/serveurs de signalisation depuis ce sandbox). Le cœur
+métier déterministe, lui, est entièrement testé (`node --test tests/` →
+16/16 tests verts).
+
+## Arborescence
 
 ```
 src/
-├── App.tsx                    # single-screen UI, orchestrates the worker
-├── components/                # CVUploader, JobOfferInput, EngineSelector,
-│                               # ModelSelector, ProgressBar, TechnicalLog
+├── app/main.js          orchestration générale
+├── ui/                   rendu DOM vanilla + style.css
 ├── core/
-│   ├── resume/                 # section detection, fact/keyword extraction
-│   ├── jobs/                   # job offer parsing, adapter extraction
-│   ├── matching/                # lexical resume ↔ job matching
-│   ├── rewriting/                 # RewritePlan + prompt building
-│   ├── validation/                 # CPU-side output validation
-│   └── pipeline/                    # end-to-end orchestration
-├── docx/
-│   ├── parser.ts               # DOCX → ParagraphFeatures[]
-│   ├── patcher.ts               # targeted run rewriting
-│   └── validator.ts              # post-patch ZIP/XML/media sanity checks
-├── llm/
-│   ├── (types in ../types)      # common LLMProvider interface
-│   ├── WebLLMProvider.ts         # @mlc-ai/web-llm, curated model catalog
-│   └── LocalProvider.ts           # Ollama adapter, dynamic model discovery
-├── worker/llm.worker.ts          # runs the model + pipeline off the main thread
-├── storage/                       # persists engine/model preference only
-└── types/index.ts                 # all shared data models
+│   ├── parser/           Document -> texte structuré (DOCX/TXT)
+│   ├── extraction/       extraction heuristique CPU + fusion avec WebLLM
+│   ├── normalization/    alias de compétences, nettoyage
+│   ├── matching/         filtre CPU avant scoring (§30-31)
+│   ├── scoring/          score multidimensionnel explicable (§24-29)
+│   └── validation/       schémas de validation runtime (§55-58)
+├── llm/                  provider (thread principal) + wrapper WebLLM + prompts
+├── worker/llm.worker.js  WebLLM tourne exclusivement ici (§47)
+├── p2p/                  protocole typé, Nostr, Trystero, orchestration découverte
+├── storage/              IndexedDB : profils, cache, chat, liste de pairs bloqués
+├── models/catalog.js     catalogue de modèles contrôlé (§79-80)
+└── config/matching.js    pondérations, seuils, limites — configuration centrale
+tests/                    tests unitaires (Node --test, sans dépendance)
 ```
 
-## Extending
+## Principes non négociables (rappel du cahier des charges)
 
-- **New local engine**: implement `LocalEngineAdapter` (see
-  `src/llm/LocalProvider.ts`) and pass it into `new LocalProvider(adapter)`.
-- **New WebLLM model**: add an entry to `WEBLLM_CATALOG` in
-  `src/llm/WebLLMProvider.ts` — the `id` must match an entry in WebLLM's
-  `prebuiltAppConfig`.
-- **Other CV formats**: the DOCX-specific code is isolated in `src/docx/`;
-  a new format needs its own parser/patcher/validator implementing an
-  analogous contract, feeding the same `ResumeSource` shape.
-
-## Known limitations (v1)
-
-- Paragraph rewriting collapses a paragraph's runs into a single run (the
-  first run's formatting is kept, later runs are dropped). This guarantees
-  structural validity but loses *inline* mixed formatting (e.g. one bold
-  word inside an otherwise plain sentence) inside a rewritten paragraph.
-  Non-targeted paragraphs are never touched.
-- Section detection and keyword/adapter extraction are heuristic
-  (font-size/bold/regex based), not ML-based — by design, to keep the
-  pipeline auditable and keep the LLM's job narrowly scoped.
-- The WebLLM runtime is fetched and cached lazily (only when you pick the
-  WebLLM engine and click **GO**), so it doesn't bloat the initial page
-  load, but first run on a new device will download the selected model
-  (hundreds of MB to a few GB depending on the model).
+- Le document original (CV, annonce) **n'est jamais réécrit ni modifié**.
+- Le document complet **n'est jamais publié automatiquement** sur le réseau ;
+  seul un profil de matching minimal (`PeerProfile`) est partagé.
+- La clé privée locale **ne quitte jamais le navigateur**.
+- Une information absente du CV est **`UNKNOWN`, jamais `NO`** par défaut.
+- Le GPU (WebLLM) n'est sollicité **qu'après filtrage CPU**, jamais sur
+  l'ensemble brut du réseau.
+- Le chat nécessite un **double consentement** (proposition + acceptation).
