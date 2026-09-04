@@ -228,3 +228,17 @@ select.model-select {
 .ledger-row.below-threshold { opacity: 0.45; }
 .ledger-row.below-threshold .ledger-score { color: var(--muted); }
 #add-posting-form { margin-bottom: 1rem; }
+
+/* --- Bandeau d'identité --- */
+.identity-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+.identity-id { font-family: var(--serif); font-size: 0.72rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.5rem; }
+
+/* --- Propositions reçues (candidat) --- */
+.proposal-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1rem; margin-bottom: 0.6rem; }

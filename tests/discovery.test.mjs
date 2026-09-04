@@ -1,116 +1,128 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MatchingRanker, peerProfileToComparable, peerPostingToComparable } from '../src/p2p/discovery.js';
-import { buildCandidateProfile, buildJobProfile } from '../src/core/extraction/buildProfile.js';
+import { RoomRanker, candidateBroadcastToComparable, matchesKeywordGate } from '../src/p2p/discovery.js';
+import { buildJobProfile } from '../src/core/extraction/buildProfile.js';
 
-function candidateWithSkill(skill) {
-  return buildCandidateProfile({ documentId: 'me', facts: [{ id: '1', field: 'skill', value: skill, sourceDocumentId: 'me' }] });
+function jobWithSkill(skill) {
+  return buildJobProfile({ documentId: 'job1', facts: [{ id: '1', field: 'skill', value: skill, sourceDocumentId: 'job1' }] });
 }
 
-test('côté candidat : un recruteur avec plusieurs annonces produit une ligne par annonce (§1, §61)', () => {
-  const candidate = candidateWithSkill('python');
-  const ranker = new MatchingRanker(candidate, 'candidate');
+test('une diffusion dont le mot-clé ne correspond à rien dans la salle est ignorée avant toute analyse', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
   const events = [];
   ranker.onRankingChange((r) => events.push(r));
 
-  ranker.ingestPeerProfile('recruiterA', {
-    peerId: 'recruiterA',
-    role: 'recruiter',
-    capabilities: {
-      displayName: 'Acme Corp',
-      postings: [
-        { id: 'job1', title: 'Data Engineer', skills: ['python'], visibilityThreshold: 0 },
-        { id: 'job2', title: 'Photographe', skills: ['photographie'], visibilityThreshold: 0 },
-      ],
-    },
-  });
-
-  const last = events[events.length - 1];
-  // job1 matche (skill commun) ; job2 est filtré par passesCpuFilter (aucun recoupement).
-  assert.equal(last.length, 1);
-  assert.equal(last[0].postingId, 'job1');
-  assert.equal(last[0].displayName, 'Acme Corp');
+  // Compétences communes (python) MAIS mot-clé hors sujet : ne doit rien produire.
+  ranker.ingestBroadcast('cand0', { peerId: 'cand0', searchKeyword: 'photographie', skills: ['python'], timestamp: 1 });
+  assert.equal(events.length, 0, 'aucun événement ne doit être émis pour une diffusion filtrée par mot-clé');
 });
 
-test('côté candidat : une annonce sous le seuil de visibilité du recruteur est masquée', () => {
-  const candidate = candidateWithSkill('sql'); // une seule compétence commune -> score modeste
-  const ranker = new MatchingRanker(candidate, 'candidate');
+test('un mot-clé qui correspond au titre de la salle passe le filtre', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
   const events = [];
   ranker.onRankingChange((r) => events.push(r));
 
-  ranker.ingestPeerProfile('recruiterB', {
-    peerId: 'recruiterB',
-    role: 'recruiter',
-    capabilities: {
-      postings: [{ id: 'jobX', skills: ['sql', 'kubernetes', 'terraform'], visibilityThreshold: 95 }],
-    },
-  });
-
-  assert.equal(events[events.length - 1].length, 0, 'le score ne doit pas atteindre 95 avec une seule compétence sur trois');
+  ranker.ingestBroadcast('cand1', { peerId: 'cand1', searchKeyword: 'data', skills: ['python'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 1);
 });
 
-test('mise à jour de seuil en direct recalcule la visibilité sans re-scoring réseau', () => {
-  const candidate = candidateWithSkill('python');
-  const ranker = new MatchingRanker(candidate, 'candidate');
+test('un mot-clé qui correspond à une compétence de la salle passe le filtre', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Poste sans rapport');
   const events = [];
   ranker.onRankingChange((r) => events.push(r));
 
-  ranker.ingestPeerProfile('recruiterC', {
-    peerId: 'recruiterC',
-    role: 'recruiter',
-    capabilities: { postings: [{ id: 'jobY', skills: ['python'], visibilityThreshold: 0 }] },
-  });
-  assert.equal(events[events.length - 1].length, 1, 'visible au seuil 0');
-
-  ranker.applyThresholdUpdate('recruiterC', 'jobY', 100);
-  assert.equal(events[events.length - 1].length, 0, 'masquée après relèvement du seuil à 100');
-
-  ranker.applyThresholdUpdate('recruiterC', 'jobY', 0);
-  assert.equal(events[events.length - 1].length, 1, 'revient visible après baisse du seuil');
+  ranker.ingestBroadcast('cand2', { peerId: 'cand2', searchKeyword: 'python', skills: ['python'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 1);
 });
 
-test('côté recruteur : le tableau de bord montre tous les candidats, marqués visible/non-visible selon le curseur', () => {
-  const job = buildJobProfile({ documentId: 'job1', facts: [{ id: '1', field: 'skill', value: 'python', sourceDocumentId: 'job1' }] });
-  const ranker = new MatchingRanker(job, 'recruiter');
+test('changer de mot-clé vers un sujet hors annonce retire le candidat du classement', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
   const events = [];
   ranker.onRankingChange((r) => events.push(r));
 
-  ranker.ingestPeerProfile('candidateA', { peerId: 'candidateA', role: 'candidate', capabilities: { skills: ['python'] }, updatedAt: 1 });
-
-  let last = events[events.length - 1];
-  assert.equal(last.length, 1);
-  assert.equal(last[0].visible, true, 'visible par défaut (seuil 0)');
-
-  ranker.setOwnThreshold(100);
-  last = events[events.length - 1];
-  assert.equal(last[0].visible, false, 'devient non-visible en direct quand le curseur monte, sans disparaître du tableau de bord recruteur');
-});
-
-test('une annonce retirée du profil publié disparaît du classement candidat', () => {
-  const candidate = candidateWithSkill('python');
-  const ranker = new MatchingRanker(candidate, 'candidate');
-  const events = [];
-  ranker.onRankingChange((r) => events.push(r));
-
-  ranker.ingestPeerProfile('recruiterD', {
-    peerId: 'recruiterD', role: 'recruiter',
-    capabilities: { postings: [{ id: 'jobZ', skills: ['python'], visibilityThreshold: 0 }] },
-  });
+  ranker.ingestBroadcast('cand3', { peerId: 'cand3', searchKeyword: 'python', skills: ['python'], timestamp: 1 });
   assert.equal(events[events.length - 1].length, 1);
 
-  ranker.ingestPeerProfile('recruiterD', { peerId: 'recruiterD', role: 'recruiter', capabilities: { postings: [] } });
+  ranker.ingestBroadcast('cand3', { peerId: 'cand3', searchKeyword: 'photographie', skills: ['python'], timestamp: 2 });
   assert.equal(events[events.length - 1].length, 0);
 });
 
-test('peerPostingToComparable ne fabrique jamais de texte intégral', () => {
-  const comparable = peerPostingToComparable({ id: 'j1', skills: ['sql'] });
-  assert.equal(comparable.id, 'j1');
-  assert.ok(!('description' in comparable));
+test('matchesKeywordGate ignore casse et accents', () => {
+  const set = new Set(['data', 'python']);
+  assert.equal(matchesKeywordGate('Data', set), true);
+  assert.equal(matchesKeywordGate('DATA', set), true);
+  assert.equal(matchesKeywordGate('js', set), false);
 });
 
-test('peerProfileToComparable (candidat) ne fabrique jamais de texte intégral', () => {
-  const comparable = peerProfileToComparable({ peerId: 'p1', role: 'candidate', capabilities: { skills: ['sql'] } });
+test('RoomRanker score une diffusion candidat pertinente et la classe', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job);
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('cand1', { peerId: 'cand1', displayName: 'Jean', searchKeyword: 'python', skills: ['python'], cvFileName: 'cv.docx', timestamp: 1 });
+
+  const last = events[events.length - 1];
+  assert.equal(last.length, 1);
+  assert.equal(last[0].displayName, 'Jean');
+  assert.equal(last[0].cvFileName, 'cv.docx');
+  assert.ok(last[0].total > 0);
+});
+
+test('RoomRanker filtre les diffusions sans aucun recoupement (§30-31)', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job);
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('cand2', { peerId: 'cand2', displayName: 'Ana', searchKeyword: 'python', skills: ['photographie'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 0);
+});
+
+test('RoomRanker déduplique une diffusion identique (même horodatage, §61)', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job);
+  let emitCount = 0;
+  ranker.onRankingChange(() => { emitCount += 1; });
+
+  ranker.ingestBroadcast('cand3', { peerId: 'cand3', searchKeyword: 'python', skills: ['python'], timestamp: 42 });
+  ranker.ingestBroadcast('cand3', { peerId: 'cand3', searchKeyword: 'python', skills: ['python'], timestamp: 42 });
+  assert.equal(emitCount, 1, 'la seconde diffusion identique ne doit pas redéclencher un événement');
+});
+
+test('RoomRanker met à jour un candidat déjà connu si sa diffusion change (nouvel horodatage)', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job);
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('cand4', { peerId: 'cand4', searchKeyword: 'python', skills: [], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 0);
+
+  ranker.ingestBroadcast('cand4', { peerId: 'cand4', searchKeyword: 'python', skills: ['python'], timestamp: 2 });
+  assert.equal(events[events.length - 1].length, 1);
+});
+
+test('RoomRanker.removePeer retire un candidat du classement', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job);
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('cand5', { peerId: 'cand5', searchKeyword: 'python', skills: ['python'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 1);
+
+  ranker.removePeer('cand5');
+  assert.equal(events[events.length - 1].length, 0);
+});
+
+test('candidateBroadcastToComparable ne fabrique jamais de texte intégral', () => {
+  const comparable = candidateBroadcastToComparable({ peerId: 'p1', skills: ['sql'] });
   assert.equal(comparable.id, 'p1');
   assert.ok(!('fullText' in comparable));
 });

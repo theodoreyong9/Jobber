@@ -9,7 +9,7 @@ import { buildCandidateProfile, buildJobProfile } from '../src/core/extraction/b
 import { normalizeSkill, compareSkillSets } from '../src/core/normalization/normalize.js';
 import { computeMatchScore, TriState } from '../src/core/scoring/scoreEngine.js';
 import { passesCpuFilter, matchCandidateAgainstJobs } from '../src/core/matching/matchEngine.js';
-import { validateSemanticAnalysis, validateIncomingMessage, validatePeerProfile } from '../src/core/validation/schema.js';
+import { validateSemanticAnalysis, validateIncomingMessage, validateCandidateBroadcast } from '../src/core/validation/schema.js';
 
 const CV_TEXT = `
 Jean Dupont
@@ -174,12 +174,22 @@ test('validateIncomingMessage rejette un message trop volumineux', () => {
   assert.equal(result.ok, false);
 });
 
-test('validatePeerProfile refuse un profil contenant le texte intégral du CV', () => {
-  const result = validatePeerProfile({
+test('validateCandidateBroadcast refuse une diffusion contenant le texte intégral du CV', () => {
+  const result = validateCandidateBroadcast({
     peerId: 'abc',
-    role: 'candidate',
-    capabilities: { skills: ['python'] },
+    skills: ['python'],
     fullText: 'texte intégral du cv...',
   });
   assert.equal(result.ok, false);
+});
+
+test('validateCandidateBroadcast accepte une diffusion minimale valide', () => {
+  const result = validateCandidateBroadcast({ peerId: 'abc', displayName: 'Jean', searchKeyword: 'python', skills: ['python'], cvFileName: 'cv.docx' });
+  assert.equal(result.ok, true);
+});
+
+test('validateCandidateBroadcast exige un mot-clé de recherche', () => {
+  const result = validateCandidateBroadcast({ peerId: 'abc', skills: ['python'] });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.includes('searchKeyword')));
 });

@@ -1,59 +1,64 @@
 // src/app/main.js
 //
-// Point d'entrée. Relie UI <-> core (parsing/scoring) <-> llm/provider
-// (Worker WebLLM) <-> p2p (Nostr + Trystero) <-> storage (IndexedDB).
-// Ce fichier reste un chef d'orchestre : la logique métier vit dans
-// src/core, jamais ici.
+// Point d'entrée. Flux volontairement asymétrique et simple :
+//
+//   CANDIDAT  : nom + CV (fichier) -> "Rechercher en direct" -> le CPU
+//               extrait des mots-clés localement, puis les DIFFUSE (avec le
+//               CV en pièce jointe) à tous les pairs connectés. Pas de
+//               modèle à choisir, pas d'IA ici.
+//
+//   RECRUTEUR : nom + une ou plusieurs salles d'annonce (texte collé, jamais
+//               de fichier, jamais publié). Pour chaque salle, le CPU extrait
+//               des mots-clés localement. Quand une diffusion candidat
+//               arrive, elle est comparée localement aux mots-clés de
+//               CHAQUE salle -> score -> classement (§30, §33-36).
+//
+// Aucune IA (WebLLM) dans ce flux pour l'instant — le code reste présent
+// dans src/llm/ et src/worker/ pour une intégration future, simplement
+// déconnecté de l'interface.
 
 import { parseDocument } from '../core/parser/documentParser.js';
 import { extractFacts } from '../core/extraction/heuristicExtractor.js';
 import { buildCandidateProfile, buildJobProfile } from '../core/extraction/buildProfile.js';
-import { DEFAULT_VISIBILITY_THRESHOLD, MAX_POSTINGS_PER_RECRUITER } from '../config/matching.js';
+import { MAX_POSTINGS_PER_RECRUITER } from '../config/matching.js';
 
-import * as llm from '../llm/provider.js';
-import { MODEL_CATALOG } from '../models/catalog.js';
-
-import { MatchingRanker } from '../p2p/discovery.js';
+import { RoomRanker } from '../p2p/discovery.js';
 import { joinMatchingRoom } from '../p2p/trystero.js';
-import { createLocalIdentity, subscribeToDiscovery, publishProfile } from '../p2p/nostr.js';
-import { MessageType, createChatRequest, createChatResponse, createChatMessage, createThresholdUpdate } from '../p2p/protocol.js';
+import { MessageType, createCandidateBroadcast, createChatRequest, createMeetingProposal, createChatResponse, createChatMessage } from '../p2p/protocol.js';
 
-import * as profilesStore from '../storage/profiles.js';
-import * as cacheStore from '../storage/cache.js';
 import * as chatStore from '../storage/chat.js';
 import * as blocklist from '../storage/blocklist.js';
+import * as identityStore from '../storage/identity.js';
 import { wipeAllLocalData } from '../storage/idb.js';
+import { validateCandidateBroadcast } from '../core/validation/schema.js';
 
 import {
-  renderRoleSelect, renderCandidateWorkspace, renderRecruiterWorkspace, renderPostingsList,
-  renderMatchList, renderMatchDetail, renderChat, renderLog, renderModelStatus,
+  renderRoleSelect, renderCandidateWorkspace, renderProposalList,
+  renderRecruiterWorkspace, renderRoomsList, renderCandidateDetail,
+  renderChat, renderLog,
 } from '../ui/render.js';
 
 const APP_ROOM_ID = 'jobmatch-p2p-v1';
-const THRESHOLD_PUBLISH_DEBOUNCE_MS = 800;
 
-/** État applicatif en mémoire. Le CV/annonce brut ne quitte jamais cet état. */
 const state = {
   role: null, // 'candidate' | 'recruiter'
-  identity: null,
+  identity: null, // { id, displayName }
   trystero: null,
-  nostrSub: null,
-  nostrLib: null,
-  nostrPool: null,
   blockedPeers: new Set(),
-  webgpuAvailable: false,
-  displayName: null,
+  isLive: false,
 
   // --- mode candidat ---
-  localProfile: null, // CandidateProfile
-  ranker: null,       // MatchingRanker (role='candidate')
+  localProfile: null,     // CandidateProfile (mots-clés extraits localement)
+  cvFile: null,           // File original, jamais envoyé sauf en pièce jointe P2P
+  searchKeyword: null,    // mot-clé déclaré par le candidat (filtre côté recruteur)
+  proposals: [],          // demandes de chat / rendez-vous reçues
 
   // --- mode recruteur ---
-  /** @type {Map<string, { id: string, title: string, profile: any, threshold: number, ranker: MatchingRanker }>} */
-  postings: new Map(),
+  /** @type {Map<string, { id: string, title: string, jobProfile: any, ranker: RoomRanker }>} */
+  rooms: new Map(),
+  /** @type {Map<string, string>} peerId -> object URL du CV reçu */
+  receivedCvUrls: new Map(),
 };
-
-let publishTimer = null;
 
 function log(message) {
   const line = `[${new Date().toLocaleTimeString()}] ${message}`;
@@ -62,337 +67,258 @@ function log(message) {
 }
 
 async function init() {
-  state.webgpuAvailable = await llm.detectWebGpuSupport();
-  llm.onModelProgress((p) => renderModelStatus(p));
+  state.identity = await identityStore.loadOrCreateIdentity();
+  state.blockedPeers = new Set((await blocklist.listBlockedPeers()).map((b) => b.peerId));
 
-  const savedRole = await cacheStore.getCacheValue('role');
+  const savedRole = await getSavedRole();
   if (savedRole) await startWorkspace(savedRole);
   else renderRoleSelect(onRoleSelected);
 }
 
+// Le rôle est un simple indicateur d'écran, pas une donnée sensible :
+// on le garde en mémoire de session (pas besoin d'IndexedDB dédié) et on
+// retombe sur le choix de rôle à chaque nouvelle session de navigateur —
+// évite la confusion "je suis resté en mode candidat malgré moi".
+let sessionRole = null;
+async function getSavedRole() { return sessionRole; }
+
 async function onRoleSelected(role) {
-  await cacheStore.setCacheValue('role', role);
+  sessionRole = role;
   await startWorkspace(role);
+}
+
+async function saveDisplayName(name) {
+  state.identity = await identityStore.setDisplayName(name);
+  log(`Nom mis à jour : ${state.identity.displayName || '(vide)'}.`);
+  if (state.trystero) broadcastIfCandidate(); // republie avec le nouveau nom
 }
 
 async function startWorkspace(role) {
   state.role = role;
-  state.blockedPeers = new Set((await blocklist.listBlockedPeers()).map((b) => b.peerId));
-
   if (role === 'candidate') {
-    state.ranker = new MatchingRanker(null, 'candidate'); // localProfile posé après upload
     renderCandidateWorkspace({
-      webgpuAvailable: state.webgpuAvailable,
-      models: MODEL_CATALOG,
-      onDocumentSubmit: handleCandidateDocumentSubmit,
-      onLoadModel: handleLoadModel,
-      onResetLocalData: handleResetLocalData,
+      identity: state.identity,
+      isLive: state.isLive,
+      onSaveName: saveDisplayName,
       onChangeRole: changeRole,
+      onStartLive: startCandidateLive,
+      onResetLocalData: handleResetLocalData,
     });
+    renderProposalList(state.proposals, { onAccept: acceptProposal, onDecline: declineProposal });
   } else {
     renderRecruiterWorkspace({
-      webgpuAvailable: state.webgpuAvailable,
-      models: MODEL_CATALOG,
-      postings: [],
-      onAddPosting: handleAddPosting,
-      onLoadModel: handleLoadModel,
-      onResetLocalData: handleResetLocalData,
+      identity: state.identity,
+      rooms: [],
+      onSaveName: saveDisplayName,
       onChangeRole: changeRole,
-      onRemovePosting: removePosting,
-      onThresholdInput: handleThresholdInput,
-      onThresholdCommit: handleThresholdCommit,
-      onOpenCandidate: onOpenCandidateMatch,
+      onCreateRoom: createRoom,
+      onResetLocalData: handleResetLocalData,
     });
+    refreshRoomsUi();
   }
-  log(`Mode ${role === 'candidate' ? 'candidat' : 'recruteur'} activé.`);
+  log(`Mode ${role === 'candidate' ? 'candidat' : 'annonceur'} activé.`);
 }
 
-/** Revient à l'écran de choix de rôle sans effacer les données déjà stockées (§13). */
 async function changeRole() {
-  state.nostrSub?.close();
   state.trystero?.leave();
-  state.nostrSub = null;
   state.trystero = null;
+  state.isLive = false;
   state.localProfile = null;
-  state.postings = new Map();
-  await cacheStore.deleteCacheValue('role');
+  state.cvFile = null;
+  state.searchKeyword = null;
+  state.proposals = [];
+  state.rooms = new Map();
+  sessionRole = null;
   renderRoleSelect(onRoleSelected);
 }
 
-async function handleLoadModel(modelId) {
-  if (!modelId) { log('Aucun modèle sélectionné : le matching reste déterministe (CPU).'); return; }
-  log(`Chargement du modèle ${modelId}...`);
+// =====================================================================
+// Réseau : une seule room Trystero partagée par tout le monde.
+// =====================================================================
+
+async function ensureNetwork() {
+  if (state.trystero) return;
+  log('Connexion au réseau P2P...');
   try {
-    await llm.loadModel(modelId);
-    log('Modèle prêt.');
+    const trysteroLib = await import('trystero/nostr');
+    // `selfId` fixe : garde le même identifiant réseau d'une session à
+    // l'autre (identité visible et persistante).
+    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID, selfId: state.identity.id }, APP_ROOM_ID);
+    state.trystero.onMessage(handleIncomingMessage);
+    state.trystero.onFile(handleIncomingFile);
+    state.trystero.onPeerJoin((peerId) => {
+      log(`Pair connecté : ${peerId.slice(0, 8)}…`);
+      broadcastIfCandidate(peerId); // se présente immédiatement au nouveau venu
+    });
+    state.trystero.onPeerLeave((peerId) => {
+      log(`Pair déconnecté : ${peerId.slice(0, 8)}…`);
+      for (const room of state.rooms.values()) room.ranker.removePeer(peerId);
+      refreshRoomsUi();
+    });
   } catch (e) {
-    log(`Échec du chargement du modèle : ${e.message}. Le matching déterministe reste disponible.`);
+    log(`Réseau P2P indisponible (${e.message}).`);
   }
 }
 
-/** Parse + extrait + (optionnel) analyse sémantique un document déposé. */
-async function analyzeInput(input, kind, documentId) {
-  let mammothLib = null;
-  if (input.file?.name?.toLowerCase().endsWith('.docx')) {
-    mammothLib = await import('mammoth').catch(() => null);
-    if (!mammothLib) log('mammoth.js indisponible : impossible de lire ce .docx dans ce contexte.');
+function broadcastIfCandidate(targetPeerId) {
+  if (state.role !== 'candidate' || !state.localProfile || !state.searchKeyword) return;
+  const msg = createCandidateBroadcast({
+    displayName: state.identity.displayName,
+    searchKeyword: state.searchKeyword,
+    skills: state.localProfile.skills.map((s) => s.name),
+    domains: state.localProfile.domains,
+    seniority: state.localProfile.seniority,
+    locations: state.localProfile.preferences?.locations ?? [],
+    languages: state.localProfile.languages,
+    cvFileName: state.cvFile?.name ?? null,
+  });
+  state.trystero?.send(msg, targetPeerId);
+  if (state.cvFile) {
+    state.trystero?.sendFile(state.cvFile, { name: state.cvFile.name, mimeType: state.cvFile.type }, targetPeerId);
   }
-  const doc = await parseDocument({ file: input.file, text: input.text, kind, id: documentId, mammothLib });
-  const { facts } = extractFacts(doc);
-
-  let semantic = null;
-  if (input.useSemanticAnalysis) {
-    log('Analyse sémantique WebLLM...');
-    try {
-      const result = await llm.analyzeDocument(kind, doc.rawText);
-      semantic = result.value;
-      if (result.usedFallback) log('WebLLM indisponible ou sortie invalide : repli sur extraction déterministe seule.');
-    } catch (e) {
-      log(`WebLLM indisponible (${e.message}) : repli sur extraction déterministe seule.`);
-    }
-  }
-  return { doc, facts, semantic };
 }
 
 // =====================================================================
 // Mode candidat
 // =====================================================================
 
-async function handleCandidateDocumentSubmit(input) {
+async function startCandidateLive(file, searchKeyword) {
   const documentId = `cv_${Date.now()}`;
-  log('Analyse locale du CV (CPU)...');
-  const { facts, semantic } = await analyzeInput(input, 'cv', documentId);
+  state.searchKeyword = searchKeyword;
+  log('Analyse locale du CV (CPU, mots-clés uniquement)...');
 
-  const profile = buildCandidateProfile({ documentId, facts, semantic });
-  state.localProfile = profile;
-  state.displayName = input.displayName || null;
-  state.ranker.localProfile = profile;
+  let mammothLib = null;
+  if (file.name.toLowerCase().endsWith('.docx')) {
+    mammothLib = await import('mammoth').catch(() => null);
+    if (!mammothLib) { log('mammoth.js indisponible : impossible de lire ce .docx ici.'); return; }
+  }
+  const doc = await parseDocument({ file, kind: 'cv', id: documentId, mammothLib });
+  const { facts } = extractFacts(doc);
+  state.localProfile = buildCandidateProfile({ documentId, facts });
+  state.cvFile = file;
 
-  await profilesStore.saveProfile(profile);
-  log('Profil de matching prêt (le CV original reste local et inchangé).');
+  log(`Mots-clés extraits : ${state.localProfile.skills.map((s) => s.name).join(', ') || '(aucun détecté)'}`);
 
   await ensureNetwork();
-  await publishOwnProfile();
+  state.isLive = true;
+  broadcastIfCandidate(); // diffusion initiale à tous les pairs déjà présents
+  log('En direct : votre CV (mots-clés + pièce jointe) est diffusé aux annonceurs connectés.');
+  await startWorkspace('candidate');
 }
 
-function onOpenCandidateMatchForCandidate(entry) {
-  renderMatchDetail(entry, {
-    onProposeChat: () => proposeChat(entry.peerId, entry.postingId),
-    onBlockPeer: () => blockPeerFromUi(entry.peerId),
-    onIgnorePeer: () => { state.ranker.removePeer(entry.peerId); log(`Profil de ${entry.peerId.slice(0, 8)}… retiré du classement pour cette session.`); },
-  });
+function addProposal(proposal) {
+  state.proposals.push(proposal);
+  renderProposalList(state.proposals, { onAccept: acceptProposal, onDecline: declineProposal });
+}
+
+function acceptProposal(proposal) {
+  const response = createChatResponse({ toPeerId: proposal.peerId, requestId: proposal.id, accepted: true });
+  state.trystero?.send(response, proposal.peerId);
+  state.proposals = state.proposals.filter((p) => p.id !== proposal.id);
+  renderProposalList(state.proposals, { onAccept: acceptProposal, onDecline: declineProposal });
+  openChatThread(proposal.peerId, proposal.fromName);
+}
+
+function declineProposal(proposal) {
+  const response = createChatResponse({ toPeerId: proposal.peerId, requestId: proposal.id, accepted: false });
+  state.trystero?.send(response, proposal.peerId);
+  state.proposals = state.proposals.filter((p) => p.id !== proposal.id);
+  renderProposalList(state.proposals, { onAccept: acceptProposal, onDecline: declineProposal });
 }
 
 // =====================================================================
-// Mode recruteur — annonces multiples (§1, §15)
+// Mode recruteur — salles d'annonce multiples (§1, §15)
 // =====================================================================
 
-async function handleAddPosting(input) {
-  if (state.postings.size >= MAX_POSTINGS_PER_RECRUITER) {
-    log(`Limite atteinte : ${MAX_POSTINGS_PER_RECRUITER} annonces actives maximum.`);
+async function createRoom({ title, text }) {
+  if (state.rooms.size >= MAX_POSTINGS_PER_RECRUITER) {
+    log(`Limite atteinte : ${MAX_POSTINGS_PER_RECRUITER} salles actives maximum.`);
     return;
   }
-  const postingId = `job_${Date.now()}_${Math.floor(Math.random() * 1e4)}`;
-  log('Analyse locale de l\'annonce (CPU)...');
-  const { facts, semantic } = await analyzeInput(input, 'job', postingId);
-  const profile = buildJobProfile({ documentId: postingId, facts, semantic });
-  await profilesStore.saveProfile(profile);
+  const roomLocalId = `room_${Date.now()}_${Math.floor(Math.random() * 1e4)}`;
+  log('Analyse locale de l\'annonce (CPU, mots-clés uniquement)...');
+  const doc = await parseDocument({ text, kind: 'job', id: roomLocalId });
+  const { facts } = extractFacts(doc);
+  const jobProfile = buildJobProfile({ documentId: roomLocalId, facts });
 
-  const title = input.displayName || profile.responsibilities?.[0]?.slice(0, 60) || 'Annonce sans titre';
-  const ranker = new MatchingRanker(profile, 'recruiter');
-  ranker.onRankingChange(() => refreshPostingsUi());
+  const finalTitle = title || text.split('\n')[0].slice(0, 60) || 'Annonce sans titre';
+  const ranker = new RoomRanker(jobProfile, finalTitle);
+  ranker.onRankingChange(() => refreshRoomsUi());
 
-  state.postings.set(postingId, { id: postingId, title, profile, threshold: DEFAULT_VISIBILITY_THRESHOLD, ranker });
-  log(`Annonce publiée : « ${title} ».`);
+  state.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, jobProfile, ranker });
+  log(`Salle publiée : « ${finalTitle} » (mots-clés : ${jobProfile.requiredSkills.map((s) => s.name).join(', ') || 'aucun détecté'}).`);
 
   await ensureNetwork();
-  await publishOwnProfile();
-  refreshPostingsUi();
+  refreshRoomsUi();
 }
 
-function removePosting(postingId) {
-  state.postings.delete(postingId);
-  log('Annonce retirée.');
-  publishOwnProfile();
-  refreshPostingsUi();
+function removeRoom(roomId) {
+  state.rooms.delete(roomId);
+  log('Salle d\'annonce retirée.');
+  refreshRoomsUi();
 }
 
-/** Retour temps réel pendant le drag du curseur : filtre local uniquement, pas de réseau à chaque pixel. */
-function handleThresholdInput(postingId, value) {
-  const posting = state.postings.get(postingId);
-  if (!posting) return;
-  posting.threshold = value;
-  posting.ranker.setOwnThreshold(value);
-
-  // Diffusion immédiate aux pairs déjà connectés — c'est CE canal qui rend
-  // le curseur "temps réel" pour les candidats déjà présents sur le
-  // réseau, sans attendre une republication Nostr (plus lente).
-  state.trystero?.send(createThresholdUpdate({ postingId, threshold: value }));
-
-  refreshPostingsUi();
-}
-
-/** Au relâchement du curseur : republie le profil complet sur Nostr (débounced, §78 — éviter le bruit réseau). */
-function handleThresholdCommit(postingId, value) {
-  handleThresholdInput(postingId, value);
-  clearTimeout(publishTimer);
-  publishTimer = setTimeout(() => publishOwnProfile(), THRESHOLD_PUBLISH_DEBOUNCE_MS);
-}
-
-function refreshPostingsUi() {
-  const postings = Array.from(state.postings.values()).map((p) => ({
-    id: p.id,
-    title: p.title,
-    threshold: p.threshold,
-    candidates: Array.from(p.ranker.scores.entries()).map(([peerId, s]) => ({
-      ...s,
-      peerId,
-      visible: s.total >= p.threshold,
-    })).sort((a, b) => b.total - a.total),
+function refreshRoomsUi() {
+  const rooms = Array.from(state.rooms.values()).map((r) => ({
+    id: r.id,
+    title: r.title,
+    candidates: Array.from(r.ranker.scores.entries()).map(([peerId, s]) => ({ ...s, peerId })).sort((a, b) => b.total - a.total),
   }));
-  renderPostingsList(postings, {
-    onRemovePosting: removePosting,
-    onThresholdInput: handleThresholdInput,
-    onThresholdCommit: handleThresholdCommit,
-    onOpenCandidate: onOpenCandidateMatch,
-  });
+  renderRoomsList(rooms, { onOpenCandidate: onOpenCandidateDetail, onRemoveRoom: removeRoom });
 }
 
-function onOpenCandidateMatch(entry, posting) {
-  renderMatchDetail(entry, {
-    onProposeChat: () => proposeChat(entry.peerId, posting.id),
-    onBlockPeer: () => blockPeerFromUi(entry.peerId),
-    onIgnorePeer: () => { posting.ranker.removePeer(entry.peerId); refreshPostingsUi(); },
-  });
-}
-
-// =====================================================================
-// Réseau : Trystero (transport) + Nostr (découverte/signalisation)
-// =====================================================================
-
-async function ensureNetwork() {
-  if (state.trystero && state.nostrSub) return;
-  log('Connexion au réseau P2P...');
-
-  try {
-    const trysteroLib = await import('trystero/nostr');
-    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID }, APP_ROOM_ID);
-    state.trystero.onMessage(handleIncomingMessage);
-    state.trystero.onPeerJoin((peerId) => log(`Pair connecté : ${peerId.slice(0, 8)}…`));
-    state.trystero.onPeerLeave((peerId) => {
-      log(`Pair déconnecté : ${peerId.slice(0, 8)}…`);
-      state.ranker?.removePeer(peerId);
-      for (const p of state.postings.values()) p.ranker.removePeer(peerId);
-      refreshPostingsUi();
-    });
-  } catch (e) {
-    log(`Trystero indisponible (${e.message}). Le matching reste local uniquement.`);
-  }
-
-  try {
-    const nostrLib = await import('nostr-tools');
-    state.nostrLib = nostrLib;
-    state.identity = state.identity || createLocalIdentity(nostrLib);
-    state.nostrSub = subscribeToDiscovery(nostrLib, (profile) => {
-      if (state.blockedPeers.has(profile.peerId)) return; // (§75)
-      ingestDiscoveredProfile(profile);
-    });
-    state.nostrPool = state.nostrSub.pool;
-  } catch (e) {
-    log(`Nostr indisponible (${e.message}). Découverte désactivée pour cette session.`);
-  }
-}
-
-function ingestDiscoveredProfile(profile) {
-  if (state.role === 'candidate') {
-    state.ranker?.ingestPeerProfile(profile.peerId, profile);
-    renderMatchList(rankingFor(state.ranker), onOpenCandidateMatchForCandidate);
-  } else {
-    for (const posting of state.postings.values()) posting.ranker.ingestPeerProfile(profile.peerId, profile);
-    refreshPostingsUi();
-  }
-}
-
-/** Rejoue le classement courant filtré d'un ranker (mode candidat) sans dépendre d'un état d'événement en attente. */
-function rankingFor(ranker) {
-  const rows = Array.from(ranker.scores.entries()).map(([key, s]) => ({ ...s, _key: key }))
-    .filter((e) => e.total >= (ranker.thresholds.get(e._key) ?? 0));
-  rows.sort((a, b) => b.total - a.total);
-  return rows;
-}
-
-/** Construit et publie le PeerProfile minimal courant (§11, §51) — jamais le document complet. */
-async function publishOwnProfile() {
-  if (!state.identity || !state.nostrLib || !state.nostrPool) return;
-  const profile = buildOwnPeerProfile();
-  try {
-    await publishProfile(state.nostrLib, state.nostrPool, state.identity, profile);
-    log('Profil minimal (re)publié sur Nostr (le document original n\'est jamais publié).');
-  } catch (e) {
-    log(`Publication Nostr échouée (${e.message}).`);
-  }
-  // Diffusion immédiate aux pairs déjà connectés via Trystero (plus rapide que d'attendre les relais Nostr).
-  state.trystero?.send({ type: MessageType.PROFILE_ANNOUNCEMENT, version: 1, id: `local_${Date.now()}`, timestamp: Date.now(), profile });
-}
-
-function buildOwnPeerProfile() {
-  const peerId = state.identity.publicKey;
-  if (state.role === 'candidate') {
-    const p = state.localProfile;
-    return {
-      peerId,
-      role: 'candidate',
-      capabilities: {
-        displayName: state.displayName ?? undefined,
-        skills: (p?.skills ?? []).map((s) => s.name),
-        domains: p?.domains ?? [],
-        seniority: p?.seniority ?? undefined,
-        locations: p?.preferences?.locations ?? [],
-        languages: p?.languages ?? [],
-      },
-      updatedAt: Date.now(),
-    };
-  }
-  return {
-    peerId,
-    role: 'recruiter',
-    capabilities: {
-      displayName: state.displayName ?? undefined,
-      postings: Array.from(state.postings.values()).map((posting) => ({
-        id: posting.id,
-        title: posting.title,
-        skills: (posting.profile.requiredSkills ?? []).map((s) => s.name),
-        domains: posting.profile.domains ?? [],
-        seniority: posting.profile.seniority ?? undefined,
-        locations: posting.profile.locations ?? [],
-        languages: posting.profile.languages ?? [],
-        visibilityThreshold: posting.threshold,
-      })),
+function onOpenCandidateDetail(entry, room) {
+  renderCandidateDetail(entry, {
+    cvUrl: state.receivedCvUrls.get(entry.peerId) || null,
+    onOpenChat: () => {
+      const msg = createChatRequest({ toPeerId: entry.peerId, roomTitle: room.title, fromName: state.identity.displayName });
+      state.trystero?.send(msg, entry.peerId);
+      log(`Proposition de chat envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
     },
-    updatedAt: Date.now(),
-  };
+    onProposeMeeting: (note) => {
+      const msg = createMeetingProposal({ toPeerId: entry.peerId, roomTitle: room.title, note, fromName: state.identity.displayName });
+      state.trystero?.send(msg, entry.peerId);
+      log(`Proposition de rendez-vous envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
+    },
+    onBlockPeer: () => blockPeerFromUi(entry.peerId),
+    onIgnorePeer: () => { room.ranker.removePeer(entry.peerId); refreshRoomsUi(); },
+  });
 }
+
+// =====================================================================
+// Réception réseau
+// =====================================================================
 
 function handleIncomingMessage(message, peerId) {
-  if (state.blockedPeers.has(peerId)) return; // pair bloqué : silence total (§75)
+  if (state.blockedPeers.has(peerId)) return; // (§75)
 
   switch (message.type) {
-    case MessageType.PROFILE_ANNOUNCEMENT:
-      ingestDiscoveredProfile(message.profile);
-      break;
-    case MessageType.THRESHOLD_UPDATE:
-      if (state.role === 'candidate') {
-        state.ranker.applyThresholdUpdate(peerId, message.postingId, message.threshold);
-        renderMatchList(rankingFor(state.ranker), onOpenCandidateMatchForCandidate);
+    case MessageType.CANDIDATE_BROADCAST: {
+      const validation = validateCandidateBroadcast({ ...message, peerId });
+      if (!validation.ok) { console.warn('[main] diffusion candidat rejetée', peerId, validation.errors); break; }
+      if (state.role === 'recruiter') {
+        for (const room of state.rooms.values()) {
+          room.ranker.ingestBroadcast(peerId, validation.value);
+        }
+        refreshRoomsUi();
       }
       break;
+    }
     case MessageType.CHAT_REQUEST:
-      log(`Proposition de chat reçue de ${peerId.slice(0, 8)}…`);
-      renderChat.showIncomingRequest?.(peerId, message, (accepted) => respondToChatRequest(peerId, message, accepted), () => blockPeerFromUi(peerId));
+      if (state.role === 'candidate') {
+        log(`Proposition de chat reçue.`);
+        addProposal({ id: message.id, type: message.type, peerId, fromName: message.fromName, roomTitle: message.roomTitle });
+      }
+      break;
+    case MessageType.MEETING_PROPOSAL:
+      if (state.role === 'candidate') {
+        log(`Proposition de rendez-vous reçue.`);
+        addProposal({ id: message.id, type: message.type, peerId, fromName: message.fromName, roomTitle: message.roomTitle, note: message.note });
+      }
       break;
     case MessageType.CHAT_RESPONSE:
       if (message.accepted) openChatThread(peerId);
-      else log(`Chat refusé par ${peerId.slice(0, 8)}…`);
+      else log(`Proposition refusée par ${peerId.slice(0, 8)}…`);
       break;
     case MessageType.CHAT_MESSAGE:
       chatStore.saveMessage({ id: message.id, peerId, senderId: peerId, timestamp: message.timestamp, text: message.text });
@@ -403,42 +329,24 @@ function handleIncomingMessage(message, peerId) {
   }
 }
 
+function handleIncomingFile(blob, meta, peerId) {
+  if (state.blockedPeers.has(peerId)) return;
+  if (state.role !== 'recruiter') return;
+  const url = URL.createObjectURL(blob);
+  const previous = state.receivedCvUrls.get(peerId);
+  if (previous) URL.revokeObjectURL(previous);
+  state.receivedCvUrls.set(peerId, url);
+  log(`CV reçu de ${peerId.slice(0, 8)}… (${meta?.name || 'fichier'}).`);
+}
+
 // =====================================================================
 // Chat P2P (§38-41)
 // =====================================================================
 
-function proposeChat(peerId, postingId) {
-  const msg = createChatRequest({ toPeerId: peerId, jobOrCandidateRef: postingId || state.localProfile?.id });
-  state.trystero?.send(msg, peerId);
-  log(`Proposition de chat envoyée à ${peerId.slice(0, 8)}… (double consentement requis, §38)`);
-}
-
-function respondToChatRequest(peerId, requestMessage, accepted) {
-  const response = createChatResponse({ toPeerId: peerId, requestId: requestMessage.id, accepted });
-  state.trystero?.send(response, peerId);
-  if (accepted) openChatThread(peerId);
-}
-
-async function openChatThread(peerId) {
+async function openChatThread(peerId, peerName) {
   await chatStore.saveThread({ peerId, createdAt: Date.now(), active: true });
   const history = await chatStore.listMessagesForPeer(peerId);
-  const peerName = findKnownDisplayName(peerId);
   renderChat.open(peerId, history, (text) => sendChatMessage(peerId, text), peerName);
-}
-
-/** Cherche le nom affiché connu pour un pair, côté candidat (clés composites) ou recruteur (clé simple). */
-function findKnownDisplayName(peerId) {
-  if (state.role === 'candidate' && state.ranker) {
-    for (const entry of state.ranker.peerProfiles.values()) {
-      if (entry.peerId === peerId && entry.displayName) return entry.displayName;
-    }
-  } else {
-    for (const posting of state.postings.values()) {
-      const raw = posting.ranker.peerProfiles.get(peerId);
-      if (raw?.capabilities?.displayName) return raw.capabilities.displayName;
-    }
-  }
-  return null;
 }
 
 function sendChatMessage(peerId, text) {
@@ -455,14 +363,12 @@ function sendChatMessage(peerId, text) {
 async function blockPeerFromUi(peerId) {
   await blocklist.blockPeer(peerId);
   state.blockedPeers.add(peerId);
-  state.ranker?.removePeer(peerId);
-  for (const p of state.postings.values()) p.ranker.removePeer(peerId);
-  refreshPostingsUi();
+  for (const room of state.rooms.values()) room.ranker.removePeer(peerId);
+  refreshRoomsUi();
   log(`Pair bloqué : ${peerId.slice(0, 8)}… (aucune notification envoyée au pair)`);
 }
 
 async function handleResetLocalData() {
-  state.nostrSub?.close();
   state.trystero?.leave();
   await wipeAllLocalData();
   log('Toutes les données locales ont été supprimées (§54).');
