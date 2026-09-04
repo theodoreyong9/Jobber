@@ -3,50 +3,75 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Jobber</title>
-<link rel="stylesheet" href="style.css" />
+<title>Jobber — Adapt your CV. No account needed.</title>
+<meta name="description" content="Adapte ton CV .docx à une offre d'emploi, 100% local dans ton navigateur, aucun compte requis." />
+<link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>Jobber</h1>
-      <p class="tagline">Adapt your CV. No account needed.</p>
-    </header>
 
-    <main>
-      <label class="file-drop">
-        <input type="file" id="cv-file" accept=".docx" />
-        <span id="file-name">Charger ton CV (.docx)</span>
-      </label>
+<header class="topbar">
+  <h1>Jobber</h1>
+  <p class="tagline">Adapt your CV. No account needed.</p>
+</header>
 
-      <div id="job-list"></div>
-      <div class="job-controls">
-        <button id="add-job-btn" type="button" class="secondary-btn">+ Ajouter une offre</button>
-        <span id="job-count" class="hint">Aucune offre collée</span>
-      </div>
+<main class="grid">
 
-      <select id="model-select" aria-label="Modèle">
-        <option value="auto">Modèle : Auto</option>
-        <option value="small">Modèle : Petit</option>
-        <option value="medium">Modèle : Moyen</option>
-        <option value="large">Modèle : Grand</option>
-      </select>
+  <!-- Etape 1 : CV -->
+  <section class="card" id="card-cv">
+    <h2>1 · Ton CV</h2>
+    <label class="dropzone" id="cv-dropzone">
+      <input type="file" id="cv-input" accept=".docx" hidden />
+      <span id="cv-filename">Choisir un fichier .docx</span>
+    </label>
+    <p class="hint">Traité entièrement dans ton navigateur. Rien n'est envoyé sur un serveur.</p>
+  </section>
 
-      <button id="run-btn" disabled>Adapter mon CV</button>
-      <button id="stop-btn" type="button" class="secondary-btn" hidden>Stop</button>
-      <div class="progress-outer"><div id="progress-bar" class="progress-inner"></div></div>
-      <p id="status" class="status">Charge un CV et colle une offre pour commencer.</p>
+  <!-- Etape 2 : annonces -->
+  <section class="card" id="card-ads">
+    <h2>2 · Annonce(s)</h2>
+    <div id="ads-list">
+      <textarea class="ad-textarea" placeholder="Colle ici le texte de l'annonce…"></textarea>
+    </div>
+    <button id="add-ad" class="btn-secondary" type="button">+ Ajouter une autre annonce</button>
+  </section>
 
-      <div id="download-area"></div>
+  <!-- Etape 3 : modèle -->
+  <section class="card" id="card-model">
+    <h2>3 · Modèle WebLLM</h2>
+    <select id="model-select">
+      <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B Instruct (rapide, léger)</option>
+      <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini Instruct (équilibré)</option>
+      <option value="Qwen2.5-7B-Instruct-q4f16_1-MLC">Qwen 2.5 7B Instruct (plus qualitatif, plus lourd)</option>
+    </select>
+    <p class="hint">Le modèle tourne localement via WebGPU (Chrome/Edge récent recommandé).</p>
+  </section>
 
-      <details>
-        <summary>Journal technique</summary>
-        <pre id="log"></pre>
-      </details>
-    </main>
-  </div>
+  <!-- Go -->
+  <section class="card card-go">
+    <button id="go-btn" class="btn-primary" type="button" disabled>Go</button>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+      <span id="progress-pct">0%</span>
+    </div>
+    <details id="log-details">
+      <summary>Journal technique</summary>
+      <pre id="log-output"></pre>
+    </details>
+  </section>
 
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script type="module" src="app.js"></script>
+  <!-- Résultats -->
+  <section class="card" id="card-results" hidden>
+    <h2>Résultats</h2>
+    <ul id="results-list"></ul>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>100% client-side · aucune donnée envoyée à un serveur · code source sur GitHub</span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

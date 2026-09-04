@@ -1,243 +1,132 @@
 # Jobber
 
-Adapte un CV `.docx` à une ou plusieurs offres d'emploi **entièrement dans
-le navigateur** — aucun serveur, aucune API, aucun compte. Le CV et les
-offres ne quittent jamais l'appareil. La mise en page d'origine (styles,
-polices, couleurs, tableaux, photo) est conservée à l'identique ; seuls
-certains textes sont reformulés.
+**Adapt your CV. No account needed.**
 
-## Principe
+Application web 100% statique et 100% client-side : elle adapte un CV `.docx`
+au texte d'une ou plusieurs offres d'emploi, en réécrivant certaines
+sections avec un modèle de langage qui tourne **directement dans le
+navigateur** ([WebLLM](https://github.com/mlc-ai/web-llm), via WebGPU).
+Aucun serveur, aucun compte, aucune donnée envoyée nulle part.
 
-Le code décide ce qui est autorisé à changer et pourquoi. Le modèle de
-langage (LLM) ne fait que rédiger de courtes phrases, une à la fois, avec
-un vocabulaire déjà validé. Rien n'est laissé à l'appréciation du modèle :
-ni quelles parties du CV toucher, ni quels mots-clés utiliser, ni si le
-résultat est acceptable — tout ça est décidé et vérifié par du code
-déterministe, avant et après chaque appel au modèle.
+## Démo
 
-Deux modèles locaux, deux rôles distincts :
-- **[WebLLM](https://github.com/mlc-ai/web-llm)** (WebGPU) — rédige. Seul
-  endroit du pipeline où du texte est généré.
-- **[Transformers.js](https://github.com/huggingface/transformers.js)**
-  (WASM/CPU) — calcule des embeddings pour affiner la pertinence CV ↔
-  offre. Optionnel : si indisponible, le pipeline continue avec un
-  matching par mots-clés seul. Tourne toujours en CPU, jamais en WebGPU,
-  pour ne jamais se disputer le GPU avec WebLLM.
+Une fois déployé sur GitHub Pages : `https://<ton-user>.github.io/<ton-repo>/`
 
-## Pipeline
+Navigateur recommandé : Chrome ou Edge récent (support WebGPU requis).
 
-```
-CV (.docx)                                    OFFRE(S) D'EMPLOI (texte)
-    │                                                  │
-    ▼                                                  ▼
-parsing local (JSZip + DOMParser)            extraction de mots-clés
-    │                                        (fréquence, stopwords, fluff,
-    ▼                                         synonymes — déterministe)
-classification par rôle
-(déterministe)                                         │
-    │                                                   │
-    ├── gelé : coordonnées, photo, diplômes,            │
-    │   loisirs, lignes "poste — dates",                │
-    │   listes de compétences...                        │
-    │                                                   │
-    └── éditable : titre / profil / description ────────┤
-        de poste                                        │
-              │                                          │
-              ▼                                          │
-    matching par segment ◄───────────────────────────────┘
-    (mots-clés + embeddings si
-     disponibles ; max 3 mots-clés
-     retenus par segment)
-              │
-              ▼
-    plan d'adaptation
-    KEEP / LIGHT_REWRITE / STRONG_REWRITE
-    (calculé et journalisé avant
-     tout appel au modèle)
-              │
-     ┌────────┴─────────┐
-     ▼                   ▼
-      KEEP           LIGHT / STRONG
-  → conservé tel        → WebLLM rédige
-    quel, PAS envoyé       (1 segment, jusqu'à
-    au modèle                3 mots-clés autorisés)
-                              │
-                              ▼
-                    validateur local
-                    - gabarit/offre recopiés ?
-                    - longueur hors contrainte ?
-                    - langue changée ?
-                    - dérive hors-sujet ?
-                    - fait/techno/chiffre inventé ?
-                              │
-                    rejeté → nouvelle tentative
-                    accepté → écrit dans le CV
-```
+## Déploiement automatique (le "bot")
 
-## Étapes
+Ce repo contient `.github/workflows/deploy.yml` : à chaque `push` sur `main`,
+GitHub Actions publie automatiquement le contenu du repo sur GitHub Pages.
+Aucune étape de build n'est nécessaire (JS vanilla, pas de bundler).
 
-1. **Lecture** — le `.docx` est ouvert comme une archive zip (JSZip),
-   `word/document.xml` est parsé comme du XML natif. Le texte original
-   intact est conservé en mémoire : chaque offre traitée repart d'un clone
-   frais de ce texte, jamais du résultat d'une offre précédente — les
-   offres ne se contaminent jamais entre elles.
+Pour l'activer sur ton repo :
 
-2. **Classification par rôle** (`classifyRuns()`) — chaque segment de
-   texte est classé par des règles simples (gras, position, longueur, nom
-   de section, motifs de contact) en :
-   - **gelé** : nom, coordonnées, photo, diplômes/formation, langues,
-     loisirs, lignes "poste — entreprise — dates", listes de
-     compétences/technologies.
-   - **éditable**, avec un rôle qui détermine la consigne donnée au
-     modèle : `headline` (titre, 5 mots max), `profile` (résumé, ton
-     affirmatif, 4 phrases max), `job-description` (mission, ton factuel,
-     longueur équivalente). Chaque consigne inclut un exemple concret
-     (extrait → réponse) — un petit modèle local suit un exemple bien
-     plus fiablement qu'une règle de style abstraite.
+1. Crée un repo GitHub (public ou privé) et pousse ce dossier dedans :
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit: Jobber"
+   git branch -M main
+   git remote add origin https://github.com/<ton-user>/<ton-repo>.git
+   git push -u origin main
+   ```
+2. Dans le repo GitHub : **Settings → Pages → Build and deployment → Source
+   → "GitHub Actions"**.
+3. Le premier push déclenche automatiquement le workflow. Le site est en
+   ligne en 1-2 minutes, et se redéploie tout seul à chaque nouveau push.
 
-3. **Extraction des mots-clés de l'offre** (`extractJobKeywords()`) —
-   fréquence pondérée des termes (majuscules/acronymes comptent double),
-   filtrage d'un stoplist de "fluff" d'annonce (Senior, Strong, Looking,
-   Team...), détection de bigrammes techniques usuels (REST API, CI/CD,
-   machine learning...). Le modèle ne reçoit jamais le texte complet de
-   l'offre — seulement cette liste de mots-clés et un court extrait de
-   contexte.
-
-4. **Matching par segment** (`segmentKeywordMatches()`) — pour chaque
-   description de poste, retient jusqu'à 3 mots-clés de l'offre ayant un
-   vrai écho dans ce segment (racine de mot + petit dictionnaire de
-   synonymes `SYNONYM_CLUSTERS` : `psql`/`PostgreSQL`, `AWS`/`Amazon`,
-   `REST`/`RESTful`...). Un segment sans aucune correspondance n'est même
-   pas envoyé au modèle. Si un modèle d'embeddings a pu se charger, un
-   score de similarité cosinus vient s'ajouter au comptage de mots-clés —
-   la décision retenue est toujours la plus "forte" des deux signaux.
-
-5. **Plan d'adaptation** (`buildAdaptationPlan()`) — calculé une fois pour
-   tout le CV, avant tout appel au modèle : `KEEP` (non pertinent),
-   `LIGHT_REWRITE` (budget de sortie réduit) ou `STRONG_REWRITE` (plein
-   budget) pour chaque description de poste. Seule source de vérité
-   utilisée ensuite par les prompts et le validateur.
-
-6. **Réécriture** (`rewriteSegment()`) — un appel au modèle par segment,
-   séquentiel : le rôle, jusqu'à 3 mots-clés autorisés, l'extrait — rien
-   de plus. En cas de perte du contexte GPU, le moteur est rechargé et le
-   segment retenté, dans la limite d'un budget global de tentatives pour
-   toute la série d'offres.
-
-7. **Validation locale** (`validateSegmentOutput()`), sur chaque sortie
-   avant acceptation :
-   - rejette un texte qui recopie le gabarit du prompt ou un passage de
-     l'offre ;
-   - rejette un titre/profil hors contrainte de longueur ;
-   - rejette toute sortie dans la mauvaise langue : la cible est celle de
-     **l'offre** (détectée une fois pour toute l'adaptation), pas
-     forcément celle de l'extrait d'origine — un CV en anglais qui
-     postule à une offre en français est reformulé en français. Repli sur
-     la langue de l'extrait d'origine si celle de l'offre n'a pas pu être
-     déterminée ;
-   - rejette un titre ou un profil ayant dérivé au point de ne garder
-     presque aucun mot en commun avec l'original (fabrication générique
-     ou hors-sujet — le seuil tient compte de leur brièveté) ;
-   - rejette toute description de poste mentionnant une technologie, un
-     nom propre ou un chiffre absent de l'extrait original
-     (`validateFactsPreserved`).
-
-   Règle absolue, revérifiée indépendamment de tout matching en amont :
-   un mot-clé présent uniquement dans l'offre ne devient jamais un fait
-   autorisé pour le CV — il doit aussi avoir une présence dans le texte
-   original du candidat. Un segment rejeté est retenté (jusqu'à 3 fois) ;
-   s'il échoue encore, il reste inchangé plutôt que d'injecter du texte
-   incorrect.
-
-8. **Écriture** — seul le texte (`<w:t>`/`<w:br/>`) du segment est
-   remplacé ; sa mise en forme (police, couleur, gras) reste l'élément XML
-   d'origine intact.
-
-9. **Réassemblage** — le zip est reconstruit avec ce `document.xml`
-   modifié et proposé au téléchargement, un fichier par offre traitée.
-
-## Plusieurs offres à la suite
-
-Le modèle (WebLLM) est chargé **une seule fois** pour toute la série
-d'offres collées, pas une fois par offre — le rechargement d'un modèle de
-plusieurs centaines de Mo à chaque offre serait inutilement coûteux. Le
-moteur et son Worker dédié sont explicitement détruits (`resetWebllmState()`)
-une fois la série entière terminée, pas entre deux offres. Chaque offre
-produit son propre fichier `.docx`, indépendant des autres.
-
-## Fiabilité face à un GPU/pilote instable
-
-WebLLM tourne entièrement sur le GPU via WebGPU, et certains GPU/pilotes
-peuvent perdre le contexte en cours d'inférence (`DXGI_ERROR_DEVICE_HUNG`,
-"Device lost"). Le pipeline est conçu pour survivre à ça :
-
-- un appel au modèle = un segment (pas de lot groupé) : plus petit, plus
-  rapide à générer, moins de risque de dépasser le seuil de patience du
-  pilote (TDR — les GPU intégrés y sont particulièrement sensibles) ;
-- rechargement automatique du moteur avec un budget de tentatives global
-  pour toute la série, réellement utilisé jusqu'au bout ;
-- "reprises" complètes en fin de série sur tout ce qui a échoué (2
-  tentatives par segment, jusqu'à 3 reprises), jusqu'à ce que tout soit
-  traité ou qu'un plafond de sécurité soit atteint — plafonné pour éviter
-  qu'un segment récalcitrant ne cumule des dizaines d'appels à lui seul ;
-- verrou d'interface dédié : le bouton "Adapter mon CV" reste désactivé du
-  premier au dernier instant, même pendant les rechargements internes,
-  pour empêcher un double-clic de lancer deux séries en parallèle.
-
-## Utilisation
-
-1. Charge un `.docx`.
-2. Colle une offre d'emploi (bouton "+ Ajouter une offre" pour en traiter
-   plusieurs à la suite sur ce même CV).
-3. Choisis un modèle (Auto / Petit / Moyen / Grand).
-4. Clique sur **Adapter mon CV** : le modèle se charge automatiquement,
-   puis chaque offre est traitée à son tour. Un fichier par offre.
-
-Le premier chargement télécharge le modèle (quelques centaines de Mo à
-plusieurs Go selon la taille choisie), puis il reste en cache navigateur.
-
-## Déploiement sur GitHub Pages
-
-Ce repo contient un workflow (`.github/workflows/deploy.yml`) qui déploie
-automatiquement sur GitHub Pages à chaque push sur `main`.
-
-1. Pousse ce repo sur GitHub (`main` comme branche par défaut).
-2. Dans **Settings → Pages**, source **GitHub Actions**.
-3. Pousse un commit sur `main` : le site est déployé sur
-   `https://<ton-user>.github.io/<nom-du-repo>/`.
-
-Aucune étape de build : HTML/CSS/JS pur, bibliothèques chargées depuis un
-CDN directement dans le navigateur.
-
-## Limites à connaître
-
-- **Classification par heuristiques** : couvre bien les CV classiques,
-  peut se tromper sur une mise en page très inhabituelle — relire le
-  résultat avant de l'envoyer.
-- **Extraction de mots-clés et matching approximatifs** : fréquence +
-  racine de mot + un petit dictionnaire de synonymes ; les embeddings
-  affinent la pertinence globale mais n'en font pas une vraie analyse
-  sémantique complète.
-- **Modèle local, donc plus faible qu'un modèle cloud** : même avec les
-  garde-fous anti-invention, une reformulation peut rester maladroite —
-  relire le résultat.
-- **GPU/pilote instable** : sur certaines machines, l'inférence WebGPU
-  peut planter fréquemment ; le pipeline retente automatiquement, mais un
-  segment peut rester inchangé faute de mieux. Mettre à jour les pilotes
-  GPU et vérifier `chrome://gpu` (accélération matérielle active) aide.
-- **Compétences/technologies gelées par design** : jamais reformulées,
-  même si l'offre en mentionne d'autres — pour ne jamais risquer d'ajouter
-  une compétence non maîtrisée par la personne.
-
-## Structure du repo
+## Architecture
 
 ```
-index.html                  page unique
-style.css                   styles
-app.js                      logique complète : parsing/écriture XML,
-                             classification par rôle, extraction de
-                             mots-clés, matching, plan d'adaptation,
-                             moteur WebLLM (chargement, récupération GPU),
-                             prompts par rôle, validation, réassemblage
-.github/workflows/deploy.yml   CI de déploiement Pages
+index.html            interface (compacte, sombre, mobile-friendly)
+css/style.css
+js/
+  main.js              orchestration du pipeline complet (étapes 4 à 18)
+  docxParser.js         lecture du .docx (JSZip + DOMParser sur word/document.xml)
+  sectionExtractor.js   heuristique de détection des sections du CV (étape 8)
+  langDetect.js         détection de langue par fréquence de stopwords (étape 7)
+  keywords.js            listes A (CV) et B (annonce) de mots-clés (étapes 9-10)
+  semanticMatch.js       association A → B, CPU only, sans modèle (étape 11)
+  llmClient.js            API thread principal vers le Web Worker WebLLM
+  llmWorker.js            Web Worker isolé qui charge et exécute WebLLM (étape 18)
+  docxWriter.js           réinjection du texte réécrit dans le XML d'origine (étapes 12-16)
+  progress.js             barre de progression générale + journal technique (étape 17)
+  stopwords.js            listes de mots vides FR/EN/ES/DE/IT/PT
 ```
+
+### Pipeline (correspondance avec le cahier des charges)
+
+1. **Titre** — `Jobber`.
+2. **Sous-titre** — *Adapt your CV. No account needed.*
+3. **Chargement du CV** — lecture du `.docx` entièrement dans le navigateur
+   via [JSZip](https://stuk.github.io/jszip/) (aucun upload).
+4. **Annonce(s)** — un ou plusieurs champs de texte, ajout dynamique.
+5. **Choix du modèle WebLLM** — menu déroulant (Llama 3.2 3B, Phi-3.5 mini,
+   Qwen2.5 7B).
+6. **Bouton Go**.
+7. **Détection de langue** — comptage de stopwords par langue candidate
+   (`langDetect.js`), appliqué au CV et à chaque annonce séparément.
+8. **Détection des sections du CV** — un paragraphe est retenu s'il
+   contient une date, ou s'il est écrit dans la plus grande police du
+   document, ou s'il fait plus de 10 mots ; il est ignoré s'il ressemble à
+   des coordonnées, fait moins de 3 mots, ou est intégralement en gras
+   (sauf s'il est dans la plus grande police). Les paragraphes écrits dans
+   la plus grande police servent de titres de section.
+9. **Liste A** — tous les mots-clés uniques des sections retenues du CV.
+10. **Liste B** — par annonce, tous les mots-clés issus de phrases de plus
+    de 3 mots.
+11. **Association A → B** — pour chaque mot de la liste A, jusqu'à 3 mots
+    de la liste B jugés proches (racine morphologique + similarité de
+    bigrammes ; approche lexicale "CPU", volontairement sans modèle
+    d'embedding pour rester simple et rapide — voir *Limites* ci-dessous).
+12. **Prompt WebLLM** — pour chaque section, un prompt demande de réécrire
+    le texte dans la langue de l'annonce, en utilisant les mots associés, en
+    conservant tous les chiffres et ce qu'ils désignent.
+13. **Réponse** — le Web Worker renvoie le texte réécrit au thread
+    principal.
+14. **Réinjection** — le texte est réinjecté dans le XML `word/document.xml`
+    d'origine, run par run, sans toucher au reste du document.
+15. **Conservation photos / mise en page** — seuls les `<w:t>` des
+    paragraphes de section sont modifiés ; tout le reste du zip `.docx`
+    (images, styles, en-têtes, sections `w:sectPr`...) reste identique.
+16. **Téléchargement** — un `.docx` par annonce. Le texte est toujours écrit
+    via `textContent` (jamais de concaténation de chaînes XML à la main),
+    ce qui échappe automatiquement `& < >` et évite les "documents illisibles
+    / réparation nécessaire" que Word affiche sur un XML mal formé.
+17. **Indicateur d'avancement** — une seule barre de progression globale ;
+    le détail du chargement du modèle et chaque étape technique vont dans le
+    journal repliable ("Journal technique"), jamais dans une barre séparée.
+18. **Nettoyage mémoire** — `llmClient.terminate()` décharge le moteur
+    WebLLM (`engine.unload()`) puis détruit le Web Worker
+    (`worker.terminate()` côté page + `self.close()` côté worker).
+
+## Limites connues / pistes d'amélioration
+
+- L'association "sémantique" (étape 11) est **lexicale**, pas basée sur des
+  embeddings : elle capte bien les variantes morphologiques d'un même mot
+  (FR/EN) mais pas les synonymes purs sans racine commune. On peut la
+  remplacer par un petit modèle d'embeddings tournant lui aussi en local
+  (ex. via `transformers.js`) sans changer le reste du pipeline —
+  `semanticMatch.js` expose une seule fonction `associateKeywords(A, B)`
+  à cet effet.
+- La détection de langue est un vote de stopwords, robuste sur des textes de
+  quelques phrases mais pas un détecteur de langue de qualité industrielle.
+- La détection des sections repose sur des heuristiques de mise en forme
+  (police, gras, longueur). Un CV très atypique (tableaux, colonnes
+  multiples complexes) peut nécessiter des ajustements dans
+  `sectionExtractor.js`.
+- Testé pour des `.docx` "classiques" (Word/LibreOffice). Les `.doc`
+  binaires ne sont pas supportés.
+
+## Vie privée
+
+Aucune donnée (CV, annonces, texte généré) ne quitte le navigateur. Le seul
+trafic réseau est le téléchargement du modèle WebLLM (poids du modèle,
+plusieurs centaines de Mo à quelques Go selon le modèle choisi, mis en
+cache par le navigateur après le premier chargement) et des librairies JS
+via CDN.
+
+## Licence
+
+MIT.

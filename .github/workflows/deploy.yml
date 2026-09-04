@@ -1,5 +1,6 @@
-name: Deploy to GitHub Pages
+name: Deploy Jobber to GitHub Pages
 
+# Se déclenche automatiquement à chaque push sur main : c'est le "bot" de déploiement.
 on:
   push:
     branches: ["main"]
@@ -30,6 +31,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          # Site 100% statique, aucun build requis (vanilla JS)
           path: "."
 
       - name: Deploy to GitHub Pages
