@@ -14,28 +14,44 @@
 Application web statique. Aucun backend applicatif, aucun compte, aucune IA
 cloud, **aucune réécriture de document**.
 
-## Trois modes, un seul affiché à la fois
+## Six modes, un seul affiché à la fois
 
-En haut de l'écran, trois puces : 🧑‍💼 **Candidat** · 🏢 **Annonceur** ·
-💞 **Rencontre**. **Un seul panneau est affiché à la fois** (bascule
-exclusive, comme des onglets) — mais chaque mode **continue de tourner en
-arrière-plan** avec sa propre identité pendant qu'on regarde un autre :
-la connexion réseau reste active, les messages continuent d'arriver, un
-badge numérique apparaît sur la puce d'un mode non affiché s'il y a de
-l'activité. Rien ne s'empile visuellement, rien n'est perdu en changeant
-de mode.
+Trois paires, groupées par le même fonctionnement interne :
 
-Chaque panneau suit la même structure :
+| Paire | Chercheur (dépose un document, cherche) | Offreur (publie une/des salle(s)) |
+|---|---|---|
+| Emploi | 🧑‍💼 **Candidat** (CV) | 🏢 **Employeur** (poste) |
+| Mission | 📣 **Annonceur** (propal + texte) | 🤝 **Client** (besoin) |
+
+Et un mode symétrique dupliqué en deux thématiques (tout le monde diffuse
+à la fois ce qu'il est et ce qu'il recherche, pas de rôle chercheur/offreur) :
+
+| | |
+|---|---|
+| 💞 **Rencontre** | profil + âge (affiché, hors score) |
+| 🔧 **Service** | profil + lien (affiché, hors score) |
+
+**Un seul panneau est affiché à la fois** (bascule exclusive, comme des
+onglets) — mais chaque mode **continue de tourner en arrière-plan** avec sa
+propre identité pendant qu'on regarde un autre : la connexion réseau reste
+active, les messages continuent d'arriver, un badge numérique apparaît sur
+la puce d'un mode non affiché s'il y a de l'activité. Rien ne s'empile
+visuellement, rien n'est perdu en changeant de mode.
+
+Chaque panneau suit la même structure (les trois paires ci-dessus
+réutilisent littéralement le même code de rendu et la même logique
+réseau, seuls les libellés et deux ou trois champs changent) :
 1. **Bloc identité** (repliable, à côté du bloc "détails") : id visible,
    renommage, restauration d'un ID noté ailleurs, invalidation d'un ID
    compromis, et suppression des données **de ce mode uniquement**.
 2. **Détails** repliables (les champs de profil/recherche du mode).
-3. **Boost IA** optionnel (candidat emploi et rencontre uniquement).
+3. **Boost IA** optionnel (candidat, annonceur-mission, rencontre, service
+   — jamais côté employeur/client, qui restent CPU seul).
 4. **Lancement** — désactivé tant que les champs obligatoires ne sont pas
    remplis.
 5. **Onglets** avec badge de notification — conversations (candidat,
-   rencontre) ou salles d'annonce (annonceur) — et à l'intérieur, le chat
-   avec défilement automatique.
+   annonceur, rencontre, service) ou salles (employeur, client) — et à
+   l'intérieur, le chat avec défilement automatique.
 
 ## Candidat (emploi)
 

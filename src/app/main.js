@@ -1,11 +1,16 @@
 // src/app/main.js
 //
-// Point d'entree. Trois modes, un seul VISIBLE a la fois (bascule
-// exclusive), mais chacun continue de tourner en arriere-plan avec sa
-// propre identite quand on n'est pas dessus :
-//   - jobCandidate : mots-cles + ville + pays (tous obligatoires) + CV, boost IA optionnel
-//   - jobRecruiter : salles d'annonce (titre, ville, pays obligatoires, anciennete min/max), CPU seul
-//   - dating       : profil (intitule, ville, pays obligatoires, age optionnel, texte, photo) + demande
+// Point d'entree. Six modes, un seul VISIBLE a la fois, groupes en trois
+// patterns generiques reutilises :
+//
+//   SEEKER (candidat-like)   : jobCandidate (CV) / missionSeeker (propal + texte)
+//   POSTER (employeur-like)  : jobRecruiter="Employeur" / missionClient="Client"
+//   SYMMETRIQUE (rencontre)  : dating="Rencontre" (age) / service="Service" (lien)
+//
+// Chaque mode a sa propre identite (namespace separe) et continue de
+// tourner en arriere-plan quand il n'est pas affiche. Une seule connexion
+// P2P partagee ; chaque message est tague `domain` pour router vers le bon
+// mode sans jamais les melanger.
 
 import { parseDocument } from '../core/parser/documentParser.js';
 import { extractFacts } from '../core/extraction/heuristicExtractor.js';
@@ -30,15 +35,46 @@ import { MODEL_CATALOG } from '../models/catalog.js';
 
 import {
   renderShell, setVisibleMode, setModeBadge,
-  renderJobCandidatePanel, renderJobRecruiterPanel, renderCandidateDetail,
-  renderDatingPanel, renderDatingMatches, renderDatingMatchDetail,
+  renderJobCandidatePanel, renderMissionSeekerPanel,
+  renderJobRecruiterPanel, renderMissionClientPanel, JOB_RECRUITER_CFG, MISSION_CLIENT_CFG,
+  renderCandidateDetail,
+  renderDatingPanel, renderServicePanel,
+  renderDatingMatches, renderServiceMatches,
+  renderDatingMatchDetail, renderServiceMatchDetail,
   renderConversations, renderConversationView, renderLog,
 } from '../ui/render.js';
 
 const AI_MODEL_ID = MODEL_CATALOG.find((m) => m.tier === 'light')?.id ?? MODEL_CATALOG[0].id;
 const APP_ROOM_ID = 'jobmatch-p2p-v1';
-const NAMESPACE = { jobCandidate: 'job_candidate', jobRecruiter: 'job_recruiter', dating: 'dating' };
-const DOMAIN_OF = { jobCandidate: Domain.JOB, jobRecruiter: Domain.JOB, dating: Domain.DATING };
+
+const NAMESPACE = {
+  jobCandidate: 'job_candidate', jobRecruiter: 'job_recruiter',
+  missionSeeker: 'mission_seeker', missionClient: 'mission_client',
+  dating: 'dating', service: 'service',
+};
+const DOMAIN_OF = {
+  jobCandidate: Domain.JOB, jobRecruiter: Domain.JOB,
+  missionSeeker: Domain.MISSION, missionClient: Domain.MISSION,
+  dating: Domain.DATING, service: Domain.SERVICE,
+};
+const SEEKER_MODE_FOR_DOMAIN = { [Domain.JOB]: 'jobCandidate', [Domain.MISSION]: 'missionSeeker' };
+const POSTER_MODE_FOR_DOMAIN = { [Domain.JOB]: 'jobRecruiter', [Domain.MISSION]: 'missionClient' };
+const SYMMETRIC_MODE_FOR_DOMAIN = { [Domain.DATING]: 'dating', [Domain.SERVICE]: 'service' };
+
+const SEEKER_RENDER_FN = { jobCandidate: renderJobCandidatePanel, missionSeeker: renderMissionSeekerPanel };
+const SEEKER_CONTAINERS = {
+  jobCandidate: { tabsId: 'jc-tabs', convId: 'jc-conversation' },
+  missionSeeker: { tabsId: 'ms-tabs', convId: 'ms-conversation' },
+};
+const POSTER_RENDER_FN = { jobRecruiter: renderJobRecruiterPanel, missionClient: renderMissionClientPanel };
+const POSTER_CFG = { jobRecruiter: JOB_RECRUITER_CFG, missionClient: MISSION_CLIENT_CFG };
+const SYMMETRIC_RENDER_FN = { dating: renderDatingPanel, service: renderServicePanel };
+const SYMMETRIC_MATCHES_FN = { dating: renderDatingMatches, service: renderServiceMatches };
+const SYMMETRIC_MATCH_DETAIL_FN = { dating: renderDatingMatchDetail, service: renderServiceMatchDetail };
+const SYMMETRIC_CONTAINERS = {
+  dating: { tabsId: 'dt-tabs', convId: 'dt-conversation' },
+  service: { tabsId: 'sv-tabs', convId: 'sv-conversation' },
+};
 
 const NOSTR_RELAY_URLS = [
   'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://nostr.wine', 'wss://offchain.pub',
@@ -58,32 +94,44 @@ function loadMammothBrowserBundle() {
   return mammothLoadPromise;
 }
 
+function freshSeekerState() {
+  return {
+    identity: null, localProfile: null, cvFile: null, cvRawText: null,
+    searchKeywords: [], cities: [], countries: [],
+    boostStatus: 'off', isLive: false,
+    conversations: new Map(), activeConversationId: null,
+  };
+}
+function freshPosterState() {
+  return {
+    identity: null, rooms: new Map(), activeRoomId: null,
+    openCandidateContext: null, receivedCvUrls: new Map(), knownChatPeers: new Set(),
+    openChatPeerId: null, openChatHistory: [],
+  };
+}
+function freshSymmetricState() {
+  return {
+    identity: null, myProfile: null, myTitle: null, myAge: null, myLink: null,
+    photoFile: null, bioRawText: null,
+    ranker: null, demandKeywords: [], cities: [], countries: [],
+    boostStatus: 'off', isLive: false, receivedPhotoUrls: new Map(),
+    conversations: new Map(), activeConversationId: null,
+  };
+}
+
 const state = {
   webgpuAvailable: false,
   trystero: null,
   blockedPeers: new Set(),
   visibleMode: null,
-  initializedModes: { jobCandidate: false, jobRecruiter: false, dating: false },
+  initializedModes: { jobCandidate: false, jobRecruiter: false, missionSeeker: false, missionClient: false, dating: false, service: false },
 
-  jobCandidate: {
-    identity: null, localProfile: null, cvFile: null, cvRawText: null,
-    searchKeywords: [], cities: [], countries: [],
-    boostStatus: 'off', isLive: false,
-    conversations: new Map(), activeConversationId: null,
-  },
-
-  jobRecruiter: {
-    identity: null, rooms: new Map(), activeRoomId: null,
-    openCandidateContext: null, receivedCvUrls: new Map(), knownChatPeers: new Set(),
-    openChatPeerId: null, openChatHistory: [],
-  },
-
-  dating: {
-    identity: null, myProfile: null, myTitle: null, myAge: null, photoFile: null, bioRawText: null,
-    ranker: null, demandKeywords: [], cities: [], countries: [],
-    boostStatus: 'off', isLive: false, receivedPhotoUrls: new Map(),
-    conversations: new Map(), activeConversationId: null,
-  },
+  jobCandidate: freshSeekerState(),
+  missionSeeker: freshSeekerState(),
+  jobRecruiter: freshPosterState(),
+  missionClient: freshPosterState(),
+  dating: freshSymmetricState(),
+  service: freshSymmetricState(),
 };
 
 function log(message) {
@@ -122,15 +170,13 @@ async function ensureNetwork() {
     state.trystero.onFile(handleIncomingFile);
     state.trystero.onPeerJoin((peerId) => {
       log(`Pair connecté : ${peerId.slice(0, 8)}…`);
-      broadcastJobCandidateIfLive(peerId);
-      broadcastDatingIfLive(peerId);
+      for (const m of Object.keys(SEEKER_RENDER_FN)) broadcastSeekerIfLive(m, peerId);
+      for (const m of Object.keys(SYMMETRIC_RENDER_FN)) broadcastSymmetricIfLive(m, peerId);
     });
     state.trystero.onPeerLeave((peerId) => {
       log(`Pair déconnecté : ${peerId.slice(0, 8)}…`);
-      for (const room of state.jobRecruiter.rooms.values()) room.ranker.removePeer(peerId);
-      state.dating.ranker?.removePeer(peerId);
-      refreshRecruiterUi();
-      refreshDatingMatches();
+      for (const m of Object.keys(POSTER_RENDER_FN)) { for (const room of state[m].rooms.values()) room.ranker.removePeer(peerId); refreshPosterUi(m); }
+      for (const m of Object.keys(SYMMETRIC_RENDER_FN)) { state[m].ranker?.removePeer(peerId); refreshSymmetricMatches(m); }
     });
   } catch (e) {
     log(`Réseau P2P indisponible (${e.message}).`);
@@ -145,16 +191,14 @@ function identityCallbacks(modeKey) {
       state[modeKey].identity = await identityStore.setDisplayName(namespace, name);
       log(`[${modeKey}] Nom mis à jour.`);
       rerender(modeKey);
-      if (modeKey === 'jobCandidate') broadcastJobCandidateIfLive();
-      if (modeKey === 'dating') broadcastDatingIfLive();
+      broadcastSeekerIfLive(modeKey); broadcastSymmetricIfLive(modeKey);
     },
     onRestoreId: async (id) => {
       try {
         state[modeKey].identity = await identityStore.restoreIdentity(namespace, id);
         log(`[${modeKey}] Identité restaurée : id ${state[modeKey].identity.id}.`);
         rerender(modeKey);
-        if (modeKey === 'jobCandidate') broadcastJobCandidateIfLive();
-        if (modeKey === 'dating') broadcastDatingIfLive();
+        broadcastSeekerIfLive(modeKey); broadcastSymmetricIfLive(modeKey);
       } catch (e) {
         log(`Restauration impossible : ${e.message}`);
       }
@@ -166,8 +210,7 @@ function identityCallbacks(modeKey) {
       state[modeKey].identity = await identityStore.regenerateId(namespace);
       log(`[${modeKey}] ID invalidé. Nouvel ID : ${state[modeKey].identity.id}.`);
       rerender(modeKey);
-      if (live && modeKey === 'jobCandidate') broadcastJobCandidateIfLive();
-      if (live && modeKey === 'dating') broadcastDatingIfLive();
+      if (live) { broadcastSeekerIfLive(modeKey); broadcastSymmetricIfLive(modeKey); }
     },
     onWipeMode: () => wipeModeData(modeKey),
   };
@@ -179,32 +222,18 @@ async function wipeModeData(modeKey) {
   const domain = DOMAIN_OF[modeKey];
   if (s.isLive) state.trystero?.send(createIdentityRetired({ domain, retiredId: s.identity.id }));
 
-  // Purge l'historique de chat local des pairs connus de CE mode (§ demande : par mode, pas global).
   const peerIds = new Set();
-  if (modeKey === 'jobCandidate' || modeKey === 'dating') {
+  if (SEEKER_RENDER_FN[modeKey] || SYMMETRIC_RENDER_FN[modeKey]) {
     for (const peerId of s.conversations.keys()) peerIds.add(peerId);
-  } else if (modeKey === 'jobRecruiter') {
+  } else if (POSTER_RENDER_FN[modeKey]) {
     for (const peerId of s.knownChatPeers) peerIds.add(peerId);
   }
   await Promise.all(Array.from(peerIds).map((peerId) => chatStore.deleteThread(peerId).catch(() => {})));
 
-  if (modeKey === 'jobCandidate') {
-    Object.assign(s, {
-      localProfile: null, cvFile: null, cvRawText: null, searchKeywords: [], cities: [], countries: [],
-      boostStatus: 'off', isLive: false, conversations: new Map(), activeConversationId: null,
-    });
-  } else if (modeKey === 'jobRecruiter') {
-    Object.assign(s, {
-      rooms: new Map(), activeRoomId: null, openCandidateContext: null,
-      receivedCvUrls: new Map(), knownChatPeers: new Set(), openChatPeerId: null, openChatHistory: [],
-    });
-  } else if (modeKey === 'dating') {
-    Object.assign(s, {
-      myProfile: null, myTitle: null, myAge: null, photoFile: null, bioRawText: null, ranker: null,
-      demandKeywords: [], cities: [], countries: [], boostStatus: 'off', isLive: false,
-      receivedPhotoUrls: new Map(), conversations: new Map(), activeConversationId: null,
-    });
-  }
+  if (SEEKER_RENDER_FN[modeKey]) Object.assign(s, freshSeekerState(), { identity: null });
+  else if (POSTER_RENDER_FN[modeKey]) Object.assign(s, freshPosterState(), { identity: null });
+  else if (SYMMETRIC_RENDER_FN[modeKey]) Object.assign(s, freshSymmetricState(), { identity: null });
+
   identityStore.clearIdentity(namespace);
   s.identity = await identityStore.loadOrCreateIdentity(namespace);
   log(`[${modeKey}] Données locales et identité supprimées (nouvel ID généré).`);
@@ -212,37 +241,37 @@ async function wipeModeData(modeKey) {
 }
 
 function rerender(modeKey) {
-  if (modeKey === 'jobCandidate') renderJobCandidateUi();
-  else if (modeKey === 'jobRecruiter') renderRecruiterUi();
-  else if (modeKey === 'dating') renderDatingUi();
+  if (SEEKER_RENDER_FN[modeKey]) renderSeekerUi(modeKey);
+  else if (POSTER_RENDER_FN[modeKey]) refreshPosterUi(modeKey);
+  else if (SYMMETRIC_RENDER_FN[modeKey]) renderSymmetricUi(modeKey);
 }
 
-function renderJobCandidateUi() {
-  if (state.visibleMode !== 'jobCandidate') return;
-  const s = state.jobCandidate;
-  renderJobCandidatePanel({
-    identity: s.identity,
-    isLive: s.isLive,
-    hasProfile: Boolean(s.localProfile),
-    profile: s.localProfile,
-    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostJobCandidateKeywords },
-    ...identityCallbacks('jobCandidate'),
-    onFileSelected: analyzeCv,
-    onStartLive: startJobCandidateLive,
-    onResetSearch: resetJobCandidateSearch,
+function renderSeekerUi(seekerMode) {
+  if (state.visibleMode !== seekerMode) return;
+  const s = state[seekerMode];
+  SEEKER_RENDER_FN[seekerMode]({
+    identity: s.identity, isLive: s.isLive,
+    hasProfile: Boolean(s.localProfile), profile: s.localProfile,
+    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: () => boostSeekerKeywords(seekerMode) },
+    ...identityCallbacks(seekerMode),
+    onFileSelected: (file) => analyzeSeekerFile(seekerMode, file),
+    onStartLive: (kw, city, country, extraText) => startSeekerLive(seekerMode, kw, city, country, extraText),
+    onResetSearch: () => resetSeekerSearch(seekerMode),
   });
-  renderConversations('jc-tabs', 'jc-conversation', Array.from(s.conversations.values()), s.activeConversationId, {
-    onSelect: (id) => selectConversation('jobCandidate', id),
-    onAccept: (id) => acceptConversation('jobCandidate', id),
-    onDecline: (id) => declineConversation('jobCandidate', id),
-    onSend: (id, text) => sendConversationMessage('jobCandidate', id, text),
+  const c = SEEKER_CONTAINERS[seekerMode];
+  renderConversations(c.tabsId, c.convId, Array.from(s.conversations.values()), s.activeConversationId, {
+    onSelect: (id) => selectConversation(seekerMode, id),
+    onAccept: (id) => acceptConversation(seekerMode, id),
+    onDecline: (id) => declineConversation(seekerMode, id),
+    onSend: (id, text) => sendConversationMessage(seekerMode, id, text),
   });
 }
 
-async function analyzeCv(file) {
-  const s = state.jobCandidate;
-  const documentId = `cv_${Date.now()}`;
-  log('Analyse locale du CV (CPU, mots-clés uniquement)...');
+async function analyzeSeekerFile(seekerMode, file) {
+  const s = state[seekerMode];
+  const documentId = `${seekerMode}_${Date.now()}`;
+  const kindLabel = seekerMode === 'missionSeeker' ? 'propal' : 'CV';
+  log(`Analyse locale du ${kindLabel} (CPU, mots-clés uniquement)...`);
 
   let mammothLib = null;
   if (file.name.toLowerCase().endsWith('.docx')) {
@@ -257,14 +286,14 @@ async function analyzeCv(file) {
   s.boostStatus = 'off';
 
   log(`Mots-clés extraits : ${s.localProfile.keywords.join(', ') || '(aucun détecté)'}.`);
-  renderJobCandidateUi();
+  renderSeekerUi(seekerMode);
 }
 
-async function boostJobCandidateKeywords() {
-  const s = state.jobCandidate;
+async function boostSeekerKeywords(seekerMode) {
+  const s = state[seekerMode];
   if (!s.localProfile || !s.cvRawText) return;
-  await runBoost(s, () => broadcastJobCandidateIfLive());
-  renderJobCandidateUi();
+  await runBoost(s, () => broadcastSeekerIfLive(seekerMode));
+  renderSeekerUi(seekerMode);
 }
 
 async function runBoost(modeState, onDone) {
@@ -295,9 +324,10 @@ async function runBoost(modeState, onDone) {
   onDone?.();
 }
 
-async function startJobCandidateLive(kwRaw, cityRaw, countryRaw) {
-  const s = state.jobCandidate;
-  if (!s.localProfile || !s.cvFile) { log('Déposez et laissez analyser votre CV avant de lancer la recherche.'); return; }
+async function startSeekerLive(seekerMode, kwRaw, cityRaw, countryRaw, extraText) {
+  const s = state[seekerMode];
+  const kindLabel = seekerMode === 'missionSeeker' ? 'propal' : 'CV';
+  if (!s.localProfile || !s.cvFile) { log(`Déposez et laissez analyser votre ${kindLabel} avant de lancer la recherche.`); return; }
   const keywords = parseCommaList(kwRaw);
   const cities = parseCommaList(cityRaw);
   const countries = parseCommaList(countryRaw);
@@ -305,20 +335,28 @@ async function startJobCandidateLive(kwRaw, cityRaw, countryRaw) {
     log('Mot-clé, ville et pays sont tous obligatoires.');
     return;
   }
+  if (seekerMode === 'missionSeeker') {
+    if (!extraText || !extraText.trim()) { log('Le texte de l\'offre est obligatoire.'); return; }
+    const doc = await parseDocument({ text: extraText, kind: 'cv', id: `${s.localProfile.id}_extra` });
+    const { facts } = extractFacts(doc);
+    const extra = buildCandidateProfile({ documentId: s.localProfile.id, facts });
+    const existing = new Set(s.localProfile.keywords);
+    for (const kw of extra.keywords) if (!existing.has(kw)) { existing.add(kw); s.localProfile.keywords.push(kw); }
+  }
   s.searchKeywords = keywords; s.cities = cities; s.countries = countries;
 
   await ensureNetwork();
   s.isLive = true;
-  broadcastJobCandidateIfLive();
-  log(`[candidat] En direct : "${s.searchKeywords.join(', ')}" · ${s.cities.join(', ')} · ${s.countries.join(', ')} — CV diffusé.`);
-  renderJobCandidateUi();
+  broadcastSeekerIfLive(seekerMode);
+  log(`[${seekerMode}] En direct : "${s.searchKeywords.join(', ')}" · ${s.cities.join(', ')} · ${s.countries.join(', ')} — document diffusé.`);
+  renderSeekerUi(seekerMode);
 }
 
-function broadcastJobCandidateIfLive(targetPeerId) {
-  const s = state.jobCandidate;
-  if (!s.isLive || !s.localProfile || s.searchKeywords.length === 0) return;
+function broadcastSeekerIfLive(seekerMode, targetPeerId) {
+  const s = state[seekerMode];
+  if (!SEEKER_RENDER_FN[seekerMode] || !s.isLive || !s.localProfile || s.searchKeywords.length === 0) return;
   const msg = createCandidateBroadcast({
-    domain: Domain.JOB,
+    domain: DOMAIN_OF[seekerMode],
     senderId: s.identity.id, displayName: s.identity.displayName,
     searchKeywords: s.searchKeywords, skills: s.localProfile.keywords,
     cities: s.cities, countries: s.countries,
@@ -327,49 +365,52 @@ function broadcastJobCandidateIfLive(targetPeerId) {
     cvFileName: s.cvFile?.name ?? null,
   });
   state.trystero?.send(msg, targetPeerId);
-  if (s.cvFile) state.trystero?.sendFile(s.cvFile, { name: s.cvFile.name, mimeType: s.cvFile.type, kind: 'cv' }, targetPeerId);
+  if (s.cvFile) state.trystero?.sendFile(s.cvFile, { name: s.cvFile.name, mimeType: s.cvFile.type, kind: seekerMode === 'missionSeeker' ? 'propal' : 'cv', domain: DOMAIN_OF[seekerMode] }, targetPeerId);
 }
 
-async function resetJobCandidateSearch() {
-  const s = state.jobCandidate;
+function resetSeekerSearch(seekerMode) {
+  const s = state[seekerMode];
   if (s.isLive) {
-    state.trystero?.send(createIdentityRetired({ domain: Domain.JOB, retiredId: s.identity.id }));
-    log('[candidat] Recherche arrêtée.');
+    state.trystero?.send(createIdentityRetired({ domain: DOMAIN_OF[seekerMode], retiredId: s.identity.id }));
+    log(`[${seekerMode}] Recherche arrêtée.`);
   }
-  s.localProfile = null; s.cvFile = null; s.cvRawText = null;
-  s.searchKeywords = []; s.cities = []; s.countries = []; s.boostStatus = 'off'; s.isLive = false;
-  renderJobCandidateUi();
+  const identity = s.identity;
+  Object.assign(s, freshSeekerState(), { identity });
+  renderSeekerUi(seekerMode);
 }
 
-function renderRecruiterUi() {
-  if (state.visibleMode !== 'jobRecruiter') return;
-  const s = state.jobRecruiter;
+function refreshPosterUi(posterMode) {
+  if (state.visibleMode !== posterMode) return;
+  const s = state[posterMode];
   const rooms = Array.from(s.rooms.values()).map((r) => ({
     id: r.id, title: r.title, text: r.text, unread: r.unread || 0,
     candidates: Array.from(r.ranker.scores.values()).sort((a, b) => b.total - a.total),
   }));
   if (!s.activeRoomId && rooms.length > 0) s.activeRoomId = rooms[0].id;
-  renderJobRecruiterPanel({
+  POSTER_RENDER_FN[posterMode]({
     identity: s.identity, rooms, activeRoomId: s.activeRoomId,
-    ...identityCallbacks('jobRecruiter'),
-    onCreateRoom: createRoom, onSelectRoom: selectRoom, onOpenCandidate: onOpenCandidateDetail, onRemoveRoom: removeRoom,
+    ...identityCallbacks(posterMode),
+    onCreateRoom: (data) => createPosterRoom(posterMode, data),
+    onSelectRoom: (id) => selectPosterRoom(posterMode, id),
+    onOpenCandidate: (entry, room) => onOpenPosterCandidateDetail(posterMode, entry, room),
+    onRemoveRoom: (id) => removePosterRoom(posterMode, id),
   });
-  reopenPendingCandidateDetail();
+  reopenPendingPosterDetail(posterMode);
 }
 
-async function createRoom({ title, text, city, country, minYearsRequired, maxYearsRequired }) {
-  const s = state.jobRecruiter;
-  if (!city || !country || !text.trim()) { log('Ville, pays et texte de l\'annonce sont obligatoires.'); return; }
+async function createPosterRoom(posterMode, { title, text, city, country, minYearsRequired, maxYearsRequired }) {
+  const s = state[posterMode];
+  if (!city || !country || !text.trim()) { log('Ville, pays et texte sont obligatoires.'); return; }
   if (s.rooms.size >= MAX_POSTINGS_PER_RECRUITER) { log(`Limite atteinte : ${MAX_POSTINGS_PER_RECRUITER} salles maximum.`); return; }
   const roomLocalId = `room_${Date.now()}_${Math.floor(Math.random() * 1e4)}`;
-  log('Analyse locale de l\'annonce (CPU, mots-clés uniquement)...');
+  log('Analyse locale (CPU, mots-clés uniquement)...');
   const doc = await parseDocument({ text, kind: 'job', id: roomLocalId });
   const { facts } = extractFacts(doc);
   const jobProfile = buildJobProfile({ documentId: roomLocalId, facts, rawText: text, minYearsRequired, maxYearsRequired, country, city });
 
   const finalTitle = title || text.split('\n')[0].slice(0, 60) || 'Annonce sans titre';
   const ranker = new RoomRanker(jobProfile, finalTitle);
-  ranker.onRankingChange(() => refreshRecruiterUi());
+  ranker.onRankingChange(() => refreshPosterUi(posterMode));
 
   s.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, text, jobProfile, ranker, unread: 0 });
   s.activeRoomId = roomLocalId;
@@ -377,55 +418,53 @@ async function createRoom({ title, text, city, country, minYearsRequired, maxYea
   log(`Salle publiée : « ${finalTitle} » (${jobProfile.city}, ${jobProfile.country}${rangeNote}, mots-clés : ${jobProfile.keywords.join(', ') || 'aucun'}).`);
 
   await ensureNetwork();
-  refreshRecruiterUi();
+  refreshPosterUi(posterMode);
 }
 
-function removeRoom(roomId) {
-  state.jobRecruiter.rooms.delete(roomId);
-  if (state.jobRecruiter.activeRoomId === roomId) {
-    const remaining = Array.from(state.jobRecruiter.rooms.keys());
-    state.jobRecruiter.activeRoomId = remaining[0] || null;
-  }
-  log('Salle d\'annonce retirée.');
-  refreshRecruiterUi();
+function removePosterRoom(posterMode, roomId) {
+  const s = state[posterMode];
+  s.rooms.delete(roomId);
+  if (s.activeRoomId === roomId) { const remaining = Array.from(s.rooms.keys()); s.activeRoomId = remaining[0] || null; }
+  log('Salle retirée.');
+  refreshPosterUi(posterMode);
 }
 
-function selectRoom(roomId) {
-  state.jobRecruiter.activeRoomId = roomId;
-  state.jobRecruiter.openCandidateContext = null;
-  const room = state.jobRecruiter.rooms.get(roomId);
+function selectPosterRoom(posterMode, roomId) {
+  const s = state[posterMode];
+  s.activeRoomId = roomId;
+  s.openCandidateContext = null;
+  const room = s.rooms.get(roomId);
   if (room) room.unread = 0;
-  refreshRecruiterUi();
+  refreshPosterUi(posterMode);
 }
 
-function refreshRecruiterUi() { renderRecruiterUi(); }
-
-function reopenPendingCandidateDetail() {
-  const s = state.jobRecruiter;
+function reopenPendingPosterDetail(posterMode) {
+  const s = state[posterMode];
   const ctx = s.openCandidateContext;
   if (ctx && ctx.roomId === s.activeRoomId) {
     const room = s.rooms.get(ctx.roomId);
     const entry = room && Array.from(room.ranker.scores.values()).find((sc) => sc.peerId === ctx.peerId);
-    if (room && entry) onOpenCandidateDetail(entry, room, { skipContextUpdate: true });
+    if (room && entry) onOpenPosterCandidateDetail(posterMode, entry, room, { skipContextUpdate: true });
   } else if (s.openChatPeerId) {
-    renderRecruiterChatView();
+    renderPosterChatView(posterMode);
   }
 }
 
-function onOpenCandidateDetail(entry, room, opts = {}) {
-  const s = state.jobRecruiter;
+function onOpenPosterCandidateDetail(posterMode, entry, room, opts = {}) {
+  const s = state[posterMode];
   if (!opts.skipContextUpdate) { s.openCandidateContext = { roomId: room.id, peerId: entry.peerId }; s.openChatPeerId = null; }
-  renderCandidateDetail(entry, {
+  renderCandidateDetail(POSTER_CFG[posterMode].detailZoneId, entry, {
     cvUrl: s.receivedCvUrls.get(entry.peerId) || null,
     onProposeContact: (note) => {
       const who = entry.displayName || entry.peerId.slice(0, 8) + '…';
       s.knownChatPeers.add(entry.peerId);
+      const domain = DOMAIN_OF[posterMode];
       if (note) {
-        const msg = createMeetingProposal({ domain: Domain.JOB, toPeerId: entry.peerId, roomTitle: room.title, note, fromName: s.identity.displayName, fromId: s.identity.id });
+        const msg = createMeetingProposal({ domain, toPeerId: entry.peerId, roomTitle: room.title, note, fromName: s.identity.displayName, fromId: s.identity.id });
         state.trystero?.send(msg, entry.peerId);
         log(`Proposition de rendez-vous envoyée à ${who}.`);
       } else {
-        const msg = createChatRequest({ domain: Domain.JOB, toPeerId: entry.peerId, roomTitle: room.title, fromName: s.identity.displayName, fromId: s.identity.id });
+        const msg = createChatRequest({ domain, toPeerId: entry.peerId, roomTitle: room.title, fromName: s.identity.displayName, fromId: s.identity.id });
         state.trystero?.send(msg, entry.peerId);
         log(`Proposition de chat envoyée à ${who}.`);
       }
@@ -433,67 +472,67 @@ function onOpenCandidateDetail(entry, room, opts = {}) {
   });
 }
 
-async function openRecruiterChatThread(peerId) {
-  const s = state.jobRecruiter;
+async function openPosterChatThread(posterMode, peerId) {
+  const s = state[posterMode];
   s.openChatPeerId = peerId;
   s.openCandidateContext = null;
   await chatStore.saveThread({ peerId, createdAt: Date.now(), active: true });
   const history = await chatStore.listMessagesForPeer(peerId);
   s.openChatHistory = history.map((m) => ({ senderId: m.senderId, text: m.text, timestamp: m.timestamp }));
-  renderRecruiterChatView();
+  renderPosterChatView(posterMode);
 }
 
-function renderRecruiterChatView() {
-  const s = state.jobRecruiter;
+function renderPosterChatView(posterMode) {
+  const s = state[posterMode];
   const conv = { id: s.openChatPeerId, status: 'active', history: s.openChatHistory || [] };
-  renderConversationView('detail-zone', conv, {
+  renderConversationView(POSTER_CFG[posterMode].detailZoneId, conv, {
     onAccept: () => {}, onDecline: () => {},
-    onSend: (_id, text) => sendRecruiterChatMessage(text),
+    onSend: (_id, text) => sendPosterChatMessage(posterMode, text),
   });
 }
 
-function sendRecruiterChatMessage(text) {
-  const s = state.jobRecruiter;
+function sendPosterChatMessage(posterMode, text) {
+  const s = state[posterMode];
   const peerId = s.openChatPeerId;
   if (!peerId) return;
-  const msg = createChatMessage({ domain: Domain.JOB, toPeerId: peerId, text });
+  const msg = createChatMessage({ domain: DOMAIN_OF[posterMode], toPeerId: peerId, text });
   state.trystero?.send(msg, peerId);
   chatStore.saveMessage({ id: msg.id, peerId, senderId: 'me', timestamp: msg.timestamp, text: msg.text });
   s.openChatHistory.push({ senderId: 'me', text: msg.text, timestamp: msg.timestamp });
-  renderRecruiterChatView();
+  renderPosterChatView(posterMode);
 }
 
-function appendRecruiterChatMessage(peerId, message) {
-  const s = state.jobRecruiter;
+function appendPosterChatMessage(posterMode, peerId, message) {
+  const s = state[posterMode];
   if (s.openChatPeerId !== peerId) return;
   s.openChatHistory.push(message);
-  renderRecruiterChatView();
+  renderPosterChatView(posterMode);
 }
 
-function renderDatingUi() {
-  if (state.visibleMode !== 'dating') return;
-  const s = state.dating;
-  renderDatingPanel({
+function renderSymmetricUi(mode) {
+  if (state.visibleMode !== mode) return;
+  const s = state[mode];
+  SYMMETRIC_RENDER_FN[mode]({
     identity: s.identity, isLive: s.isLive,
-    hasPhoto: Boolean(s.photoFile),
-    profile: s.myProfile,
-    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostDatingKeywords },
-    ...identityCallbacks('dating'),
+    hasPhoto: Boolean(s.photoFile), profile: s.myProfile,
+    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: () => boostSymmetricKeywords(mode) },
+    ...identityCallbacks(mode),
     onPhotoSelected: (file) => { s.photoFile = file; log(`Photo sélectionnée : ${file.name}.`); },
-    onStartLive: startDatingLive,
-    onResetSearch: resetDatingSearch,
+    onStartLive: (data) => startSymmetricLive(mode, data),
+    onResetSearch: () => resetSymmetricSearch(mode),
   });
-  refreshDatingMatches();
-  renderConversations('dt-tabs', 'dt-conversation', Array.from(s.conversations.values()), s.activeConversationId, {
-    onSelect: (id) => selectConversation('dating', id),
-    onAccept: (id) => acceptConversation('dating', id),
-    onDecline: (id) => declineConversation('dating', id),
-    onSend: (id, text) => sendConversationMessage('dating', id, text),
+  refreshSymmetricMatches(mode);
+  const c = SYMMETRIC_CONTAINERS[mode];
+  renderConversations(c.tabsId, c.convId, Array.from(s.conversations.values()), s.activeConversationId, {
+    onSelect: (id) => selectConversation(mode, id),
+    onAccept: (id) => acceptConversation(mode, id),
+    onDecline: (id) => declineConversation(mode, id),
+    onSend: (id, text) => sendConversationMessage(mode, id, text),
   });
 }
 
-async function startDatingLive({ title, demand, city, country, age, bio }) {
-  const s = state.dating;
+async function startSymmetricLive(mode, { title, demand, city, country, extra, bio }) {
+  const s = state[mode];
   const cities = parseCommaList(city);
   const countries = parseCommaList(country);
   const demandKeywords = parseCommaList(demand);
@@ -501,86 +540,89 @@ async function startDatingLive({ title, demand, city, country, age, bio }) {
     log('Mot-clé de demande, ville, pays et description sont tous obligatoires.');
     return;
   }
-
-  const documentId = `dating_${Date.now()}`;
+  const documentId = `${mode}_${Date.now()}`;
   const doc = await parseDocument({ text: bio, kind: 'cv', id: documentId });
   const { facts } = extractFacts(doc);
 
   s.myProfile = buildJobProfile({ documentId, facts, rawText: bio, country: countries[0], city: cities[0] });
   s.myTitle = title?.trim() || 'Profil sans titre';
-  s.myAge = age ? Number(age) : null;
+  if (mode === 'dating') s.myAge = extra ? Number(extra) : null;
+  else s.myLink = extra?.trim() || null;
   s.bioRawText = bio;
-  s.cities = cities;
-  s.countries = countries;
-  s.demandKeywords = demandKeywords;
+  s.cities = cities; s.countries = countries; s.demandKeywords = demandKeywords;
   s.boostStatus = 'off';
 
   s.ranker = new RoomRanker(s.myProfile, s.myTitle);
-  s.ranker.onRankingChange(() => refreshDatingMatches());
+  s.ranker.onRankingChange(() => refreshSymmetricMatches(mode));
 
   await ensureNetwork();
   s.isLive = true;
-  broadcastDatingIfLive();
-  log(`[rencontre] En direct : « ${s.myTitle} » · ${s.cities.join(', ')} · ${s.countries.join(', ')} — profil + photo diffusés.`);
-  renderDatingUi();
+  broadcastSymmetricIfLive(mode);
+  log(`[${mode}] En direct : « ${s.myTitle} » · ${s.cities.join(', ')} · ${s.countries.join(', ')} — profil + photo diffusés.`);
+  renderSymmetricUi(mode);
 }
 
-function broadcastDatingIfLive(targetPeerId) {
-  const s = state.dating;
-  if (!s.isLive || !s.myProfile) return;
+function broadcastSymmetricIfLive(mode, targetPeerId) {
+  const s = state[mode];
+  if (!SYMMETRIC_RENDER_FN[mode] || !s.isLive || !s.myProfile) return;
   const msg = createCandidateBroadcast({
-    domain: Domain.DATING,
+    domain: DOMAIN_OF[mode],
     senderId: s.identity.id, displayName: s.identity.displayName || s.myTitle,
     searchKeywords: s.demandKeywords, skills: s.myProfile.keywords,
-    cities: s.cities, countries: s.countries, age: s.myAge,
+    cities: s.cities, countries: s.countries,
+    age: mode === 'dating' ? s.myAge : undefined,
+    link: mode === 'service' ? s.myLink : undefined,
     cvFileName: s.photoFile?.name ?? null,
   });
   state.trystero?.send(msg, targetPeerId);
-  if (s.photoFile) state.trystero?.sendFile(s.photoFile, { name: s.photoFile.name, mimeType: s.photoFile.type, kind: 'photo' }, targetPeerId);
+  if (s.photoFile) state.trystero?.sendFile(s.photoFile, { name: s.photoFile.name, mimeType: s.photoFile.type, kind: 'photo', domain: DOMAIN_OF[mode] }, targetPeerId);
 }
 
-async function boostDatingKeywords() {
-  const s = state.dating;
+async function boostSymmetricKeywords(mode) {
+  const s = state[mode];
   if (!s.myProfile || !s.bioRawText) return;
-  await runBoost(s, () => broadcastDatingIfLive());
-  renderDatingUi();
+  await runBoost(s, () => broadcastSymmetricIfLive(mode));
+  renderSymmetricUi(mode);
 }
 
-async function resetDatingSearch() {
-  const s = state.dating;
+function resetSymmetricSearch(mode) {
+  const s = state[mode];
   if (s.isLive) {
-    state.trystero?.send(createIdentityRetired({ domain: Domain.DATING, retiredId: s.identity.id }));
-    log('[rencontre] Recherche arrêtée.');
+    state.trystero?.send(createIdentityRetired({ domain: DOMAIN_OF[mode], retiredId: s.identity.id }));
+    log(`[${mode}] Recherche arrêtée.`);
   }
-  s.myProfile = null; s.myTitle = null; s.myAge = null; s.photoFile = null; s.bioRawText = null;
-  s.ranker = null; s.demandKeywords = []; s.cities = []; s.countries = []; s.boostStatus = 'off'; s.isLive = false;
-  renderDatingUi();
+  const identity = s.identity;
+  Object.assign(s, freshSymmetricState(), { identity });
+  renderSymmetricUi(mode);
 }
 
-function refreshDatingMatches() {
-  if (state.visibleMode !== 'dating') return;
-  if (!state.dating.ranker) { renderDatingMatches([], { onOpen: () => {} }); return; }
-  const matches = Array.from(state.dating.ranker.scores.values()).map((sc) => ({
-    ...sc, photoUrl: state.dating.receivedPhotoUrls.get(sc.peerId) || null,
+function refreshSymmetricMatches(mode) {
+  if (state.visibleMode !== mode) return;
+  const s = state[mode];
+  if (!s.ranker) { SYMMETRIC_MATCHES_FN[mode]([], { onOpen: () => {} }); return; }
+  const matches = Array.from(s.ranker.scores.values()).map((sc) => ({
+    ...sc, photoUrl: s.receivedPhotoUrls.get(sc.peerId) || null,
   })).sort((a, b) => b.total - a.total);
-  renderDatingMatches(matches, { onOpen: onOpenDatingMatch });
+  SYMMETRIC_MATCHES_FN[mode](matches, { onOpen: (entry) => onOpenSymmetricMatch(mode, entry) });
 }
 
-function onOpenDatingMatch(entry) {
-  renderDatingMatchDetail(entry, {
-    photoUrl: state.dating.receivedPhotoUrls.get(entry.peerId) || null,
+function onOpenSymmetricMatch(mode, entry) {
+  const s = state[mode];
+  SYMMETRIC_MATCH_DETAIL_FN[mode](entry, {
+    photoUrl: s.receivedPhotoUrls.get(entry.peerId) || null,
     onProposeContact: (note) => {
       const who = entry.displayName || entry.peerId.slice(0, 8) + '…';
+      const domain = DOMAIN_OF[mode];
       if (note) {
-        const msg = createMeetingProposal({ domain: Domain.DATING, toPeerId: entry.peerId, note, fromName: state.dating.identity.displayName, fromId: state.dating.identity.id });
+        const msg = createMeetingProposal({ domain, toPeerId: entry.peerId, note, fromName: s.identity.displayName, fromId: s.identity.id });
         state.trystero?.send(msg, entry.peerId);
       } else {
-        const msg = createChatRequest({ domain: Domain.DATING, toPeerId: entry.peerId, fromName: state.dating.identity.displayName, fromId: state.dating.identity.id });
+        const msg = createChatRequest({ domain, toPeerId: entry.peerId, fromName: s.identity.displayName, fromId: s.identity.id });
         state.trystero?.send(msg, entry.peerId);
       }
-      state.dating.conversations.set(entry.peerId, { id: entry.peerId, peerId: entry.peerId, displayName: entry.displayName, status: 'pending', direction: 'outgoing', history: [], unread: 0 });
+      s.conversations.set(entry.peerId, { id: entry.peerId, peerId: entry.peerId, displayName: entry.displayName, status: 'pending', direction: 'outgoing', history: [], unread: 0 });
       log(`Proposition envoyée à ${who}.`);
-      renderDatingUi();
+      renderSymmetricUi(mode);
     },
   });
 }
@@ -648,68 +690,68 @@ function addIncomingProposal(modeKey, message, peerId, kind) {
 }
 
 function refreshModeBadges() {
-  const jcUnread = Array.from(state.jobCandidate.conversations.values()).reduce((n, c) => n + (c.unread || 0), 0);
-  const dtUnread = Array.from(state.dating.conversations.values()).reduce((n, c) => n + (c.unread || 0), 0);
-  const jrUnread = Array.from(state.jobRecruiter.rooms.values()).reduce((n, r) => n + (r.unread || 0), 0);
-  setModeBadge('jobCandidate', jcUnread);
-  setModeBadge('jobRecruiter', jrUnread);
-  setModeBadge('dating', dtUnread);
+  for (const m of Object.keys(SEEKER_RENDER_FN)) setModeBadge(m, Array.from(state[m].conversations.values()).reduce((n, c) => n + (c.unread || 0), 0));
+  for (const m of Object.keys(SYMMETRIC_RENDER_FN)) setModeBadge(m, Array.from(state[m].conversations.values()).reduce((n, c) => n + (c.unread || 0), 0));
+  for (const m of Object.keys(POSTER_RENDER_FN)) setModeBadge(m, Array.from(state[m].rooms.values()).reduce((n, r) => n + (r.unread || 0), 0));
 }
 
 function handleIncomingMessage(message, peerId) {
   if (state.blockedPeers.has(peerId)) return;
   const domain = message.domain || Domain.JOB;
+  const symmetricMode = SYMMETRIC_MODE_FOR_DOMAIN[domain];
+  const seekerMode = SEEKER_MODE_FOR_DOMAIN[domain];
+  const posterMode = POSTER_MODE_FOR_DOMAIN[domain];
 
   switch (message.type) {
     case MessageType.CANDIDATE_BROADCAST: {
       const validation = validateCandidateBroadcast({ ...message, peerId });
       if (!validation.ok) { console.warn('[main] diffusion rejetée', peerId, validation.errors); break; }
-      if (domain === Domain.DATING) {
-        if (state.dating.ranker) state.dating.ranker.ingestBroadcast(peerId, validation.value);
-        refreshDatingMatches();
-      } else if (state.initializedModes.jobRecruiter) {
-        for (const room of state.jobRecruiter.rooms.values()) room.ranker.ingestBroadcast(peerId, validation.value);
-        refreshRecruiterUi();
+      if (symmetricMode) {
+        if (state[symmetricMode].ranker) state[symmetricMode].ranker.ingestBroadcast(peerId, validation.value);
+        refreshSymmetricMatches(symmetricMode);
+      } else if (posterMode && state.initializedModes[posterMode]) {
+        for (const room of state[posterMode].rooms.values()) room.ranker.ingestBroadcast(peerId, validation.value);
+        refreshPosterUi(posterMode);
       }
       break;
     }
     case MessageType.IDENTITY_RETIRED:
-      if (domain === Domain.DATING) { state.dating.ranker?.retireIdentity(message.retiredId); refreshDatingMatches(); }
-      else { for (const room of state.jobRecruiter.rooms.values()) room.ranker.retireIdentity(message.retiredId); refreshRecruiterUi(); }
+      if (symmetricMode) { state[symmetricMode].ranker?.retireIdentity(message.retiredId); refreshSymmetricMatches(symmetricMode); }
+      else if (posterMode) { for (const room of state[posterMode].rooms.values()) room.ranker.retireIdentity(message.retiredId); refreshPosterUi(posterMode); }
       break;
     case MessageType.CHAT_REQUEST:
     case MessageType.MEETING_PROPOSAL: {
       const kind = message.type === MessageType.MEETING_PROPOSAL ? 'meeting' : 'chat';
-      if (domain === Domain.DATING && state.initializedModes.dating) addIncomingProposal('dating', message, peerId, kind);
-      else if (domain === Domain.JOB && state.initializedModes.jobCandidate) addIncomingProposal('jobCandidate', message, peerId, kind);
+      const targetMode = symmetricMode || seekerMode;
+      if (targetMode && state.initializedModes[targetMode]) addIncomingProposal(targetMode, message, peerId, kind);
       break;
     }
     case MessageType.CHAT_RESPONSE: {
-      if (domain === Domain.DATING && state.dating.conversations.has(peerId)) {
-        const conv = state.dating.conversations.get(peerId);
+      if (symmetricMode && state[symmetricMode].conversations.has(peerId)) {
+        const conv = state[symmetricMode].conversations.get(peerId);
         if (message.accepted) { conv.status = 'active'; chatStore.saveThread({ peerId, createdAt: Date.now(), active: true }); }
-        else state.dating.conversations.delete(peerId);
-        rerender('dating');
-      } else if (domain === Domain.JOB && state.jobRecruiter.knownChatPeers.has(peerId)) {
-        if (message.accepted) openRecruiterChatThread(peerId);
+        else state[symmetricMode].conversations.delete(peerId);
+        rerender(symmetricMode);
+      } else if (posterMode && state[posterMode].knownChatPeers.has(peerId)) {
+        if (message.accepted) openPosterChatThread(posterMode, peerId);
         else log(`Proposition refusée par ${peerId.slice(0, 8)}…`);
       }
       break;
     }
     case MessageType.CHAT_MESSAGE: {
       chatStore.saveMessage({ id: message.id, peerId, senderId: peerId, timestamp: message.timestamp, text: message.text });
-      if (domain === Domain.DATING && state.dating.conversations.has(peerId)) {
-        const conv = state.dating.conversations.get(peerId);
+      if (symmetricMode && state[symmetricMode].conversations.has(peerId)) {
+        const conv = state[symmetricMode].conversations.get(peerId);
         conv.history.push({ senderId: peerId, text: message.text, timestamp: message.timestamp });
-        if (state.dating.activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
-        rerender('dating'); refreshModeBadges();
-      } else if (domain === Domain.JOB && state.jobCandidate.conversations.has(peerId)) {
-        const conv = state.jobCandidate.conversations.get(peerId);
+        if (state[symmetricMode].activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
+        rerender(symmetricMode); refreshModeBadges();
+      } else if (seekerMode && state[seekerMode].conversations.has(peerId)) {
+        const conv = state[seekerMode].conversations.get(peerId);
         conv.history.push({ senderId: peerId, text: message.text, timestamp: message.timestamp });
-        if (state.jobCandidate.activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
-        rerender('jobCandidate'); refreshModeBadges();
-      } else if (domain === Domain.JOB && state.jobRecruiter.knownChatPeers.has(peerId)) {
-        appendRecruiterChatMessage(peerId, { senderId: peerId, text: message.text, timestamp: message.timestamp });
+        if (state[seekerMode].activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
+        rerender(seekerMode); refreshModeBadges();
+      } else if (posterMode && state[posterMode].knownChatPeers.has(peerId)) {
+        appendPosterChatMessage(posterMode, peerId, { senderId: peerId, text: message.text, timestamp: message.timestamp });
       }
       break;
     }
@@ -720,18 +762,26 @@ function handleIncomingMessage(message, peerId) {
 function handleIncomingFile(blob, meta, peerId) {
   if (state.blockedPeers.has(peerId)) return;
   const url = URL.createObjectURL(blob);
+  const domain = meta?.domain || Domain.JOB;
+
   if (meta?.kind === 'photo') {
-    const previous = state.dating.receivedPhotoUrls.get(peerId);
+    const mode = SYMMETRIC_MODE_FOR_DOMAIN[domain];
+    if (!mode) return;
+    const s = state[mode];
+    const previous = s.receivedPhotoUrls.get(peerId);
     if (previous) URL.revokeObjectURL(previous);
-    state.dating.receivedPhotoUrls.set(peerId, url);
+    s.receivedPhotoUrls.set(peerId, url);
     log(`Photo reçue de ${peerId.slice(0, 8)}…`);
-    refreshDatingMatches();
+    refreshSymmetricMatches(mode);
   } else {
-    const previous = state.jobRecruiter.receivedCvUrls.get(peerId);
+    const posterMode = POSTER_MODE_FOR_DOMAIN[domain];
+    if (!posterMode) return;
+    const s = state[posterMode];
+    const previous = s.receivedCvUrls.get(peerId);
     if (previous) URL.revokeObjectURL(previous);
-    state.jobRecruiter.receivedCvUrls.set(peerId, url);
-    log(`CV reçu de ${peerId.slice(0, 8)}… (${meta?.name || 'fichier'}).`);
-    if (state.jobRecruiter.openCandidateContext?.peerId === peerId) refreshRecruiterUi();
+    s.receivedCvUrls.set(peerId, url);
+    log(`Document reçu de ${peerId.slice(0, 8)}… (${meta?.name || 'fichier'}).`);
+    if (s.openCandidateContext?.peerId === peerId) refreshPosterUi(posterMode);
   }
 }
 

@@ -128,6 +128,9 @@ export function validateCandidateBroadcast(broadcast) {
   if (b.age !== undefined && b.age !== null) {
     if (typeof b.age !== 'number' || b.age < 0 || b.age > 130) errors.push('age invalide.');
   }
+  if (b.link !== undefined && b.link !== null) {
+    if (typeof b.link !== 'string' || b.link.length > 300) errors.push('link invalide.');
+  }
 
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: b };

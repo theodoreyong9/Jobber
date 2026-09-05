@@ -18,7 +18,7 @@ export const MessageType = Object.freeze({
   CHAT_MESSAGE: 'chat_message',
 });
 
-export const Domain = Object.freeze({ JOB: 'job', DATING: 'dating' });
+export const Domain = Object.freeze({ JOB: 'job', DATING: 'dating', MISSION: 'mission', SERVICE: 'service' });
 
 let counter = 0;
 function nextId() {
@@ -30,7 +30,7 @@ function base(type) {
   return { type, version: PROTOCOL_VERSION, id: nextId(), timestamp: Date.now() };
 }
 
-export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displayName, searchKeywords, skills, cities, countries, yearsOfExperience, yearsOfExperienceEstimated, age, cvFileName }) {
+export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displayName, searchKeywords, skills, cities, countries, yearsOfExperience, yearsOfExperienceEstimated, age, link, cvFileName }) {
   return {
     ...base(MessageType.CANDIDATE_BROADCAST),
     domain,
@@ -43,6 +43,7 @@ export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displa
     yearsOfExperience: typeof yearsOfExperience === 'number' ? yearsOfExperience : null,
     yearsOfExperienceEstimated: Boolean(yearsOfExperienceEstimated),
     age: typeof age === 'number' ? age : null,
+    link: typeof link === 'string' ? link.slice(0, 300) : null,
     cvFileName: cvFileName || null,
   };
 }
