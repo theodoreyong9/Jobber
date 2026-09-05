@@ -21,11 +21,15 @@ import { PAYLOAD_LIMITS } from '../config/matching.js';
 
 /**
  * Rejoint une "room" Trystero partagée par tous (candidats + recruteurs).
- * `selfId`, s'il est fourni, garde le même identifiant réseau d'une session
- * à l'autre — c'est ce qui permet de "retrouver sa session" (§ identité
- * visible et persistante).
+ * Config minimale volontairement : `appId` seul. Ne pas essayer de forcer
+ * un `selfId` personnalisé — les stratégies de signalisation de Trystero
+ * (dont `trystero/nostr`) ont des attentes internes sur ce format qu'un ID
+ * applicatif générique ne respecte pas forcément, et une valeur invalide
+ * fait planter la connexion plutôt que d'être simplement ignorée. La
+ * reconnaissance d'une même personne d'une connexion à l'autre se fait au
+ * niveau applicatif (voir p2p/discovery.js), pas au niveau du transport.
  * @param {{ joinRoom: (config: any, roomId: string) => any }} trysteroLib
- * @param {{ appId: string, selfId?: string }} config
+ * @param {{ appId: string }} config
  * @param {string} roomId
  */
 export function joinMatchingRoom(trysteroLib, config, roomId) {

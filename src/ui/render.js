@@ -194,7 +194,11 @@ export function renderRoomsList(rooms, { onOpenCandidate, onRemoveRoom } = {}) {
         el('strong', { style: 'font-family:var(--serif); font-size:1.1rem;', text: room.title || 'Annonce sans titre' }),
         el('button', { class: 'link-button', style: 'color:var(--copper);', text: 'retirer', onclick: () => onRemoveRoom?.(room.id) }),
       ]),
-      el('div', { class: 'lede', style: 'font-size:0.8rem; margin:0.2rem 0 0.6rem;', text: `${room.candidates.length} candidat(s) découvert(s), classés par score` }),
+      room.text ? el('details', { class: 'room-text-details' }, [
+        el('summary', { text: 'Voir le texte publié' }),
+        el('p', { class: 'room-text-preview', text: room.text }),
+      ]) : null,
+      el('div', { class: 'lede', style: 'font-size:0.8rem; margin:0.4rem 0 0.6rem;', text: `${room.candidates.length} candidat(s) découvert(s), classés par score` }),
       el('ul', { class: 'ledger' }, ledgerItems),
     ]));
   }

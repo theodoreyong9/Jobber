@@ -5,6 +5,12 @@
 // ces mots-clés à ceux de son annonce et maintient un classement (§34-36).
 // L'annonce elle-même ne quitte jamais l'appareil du recruteur — seule la
 // comparaison a lieu, en local, quand une diffusion arrive (§30, §33).
+//
+// Le classement est indexé par IDENTITÉ APPLICATIVE (`broadcast.senderId`,
+// stable pour la durée de l'onglet du candidat — voir storage/identity.js),
+// PAS par l'identifiant de transport Trystero (éphémère, change à chaque
+// reconnexion). Sans ça, une simple coupure réseau ferait apparaître le
+// même candidat comme un nouveau profil dupliqué.
 
 import { passesCpuFilter } from '../core/matching/matchEngine.js';
 import { computeMatchScore } from '../core/scoring/scoreEngine.js';
@@ -29,10 +35,9 @@ function buildRoomKeywordSet(jobProfile, title) {
 
 /**
  * Vérifie qu'un mot-clé déclaré par un candidat correspond à la salle
- * d'annonce, AVANT toute analyse (§ nouveau : éviter de surcharger le
- * recruteur avec des candidats hors sujet). Comparaison normalisée
- * (accents/casse) + tolérance de sous-chaîne dans les deux sens pour capter
- * les variantes ("data" <-> "data engineer").
+ * d'annonce, AVANT toute analyse (évite de surcharger le recruteur avec des
+ * candidats hors sujet). Comparaison normalisée (accents/casse) +
+ * tolérance de sous-chaîne dans les deux sens ("data" <-> "data engineer").
  * @param {string} candidateKeyword
  * @param {Set<string>} roomKeywordSet
  */
@@ -45,7 +50,6 @@ export function matchesKeywordGate(candidateKeyword, roomKeywordSet) {
   return false;
 }
 
-
 /**
  * Convertit une diffusion candidat (mots-clés uniquement) en objet
  * comparable au scoring (forme CandidateProfile). Rien n'est inventé : les
@@ -55,7 +59,7 @@ export function matchesKeywordGate(candidateKeyword, roomKeywordSet) {
 export function candidateBroadcastToComparable(broadcast) {
   const skills = (broadcast.skills || []).map((name) => ({ name, provenance: 'explicit', sourceDocumentId: 'broadcast' }));
   return {
-    id: broadcast.peerId,
+    id: broadcast.senderId || broadcast.peerId,
     skills,
     domains: broadcast.domains || [],
     languages: broadcast.languages || [],
@@ -82,10 +86,12 @@ export class RoomRanker {
   constructor(jobProfile, title) {
     this.jobProfile = jobProfile;
     this.keywordSet = buildRoomKeywordSet(jobProfile, title);
-    /** @type {Map<string, any>} peerId -> dernière diffusion brute reçue */
+    /** @type {Map<string, any>} identityKey -> dernière diffusion brute reçue */
     this.broadcasts = new Map();
-    /** @type {Map<string, any>} peerId -> MatchScore */
+    /** @type {Map<string, any>} identityKey -> MatchScore (inclut le peerId de transport courant) */
     this.scores = new Map();
+    /** @type {Map<string, string>} peerId de transport courant -> identityKey (pour le nettoyage à la déconnexion) */
+    this.peerIdToKey = new Map();
     /** @type {Set<(ranking: any[]) => void>} */
     this.listeners = new Set();
   }
@@ -97,49 +103,57 @@ export class RoomRanker {
 
   _emit() {
     const ranking = Array.from(this.scores.entries())
-      .map(([peerId, score]) => ({ ...score, peerId }))
+      .map(([identityKey, score]) => ({ ...score, identityKey }))
       .sort((a, b) => b.total - a.total);
     this.listeners.forEach((fn) => fn(ranking));
   }
 
   /**
    * Traite une diffusion candidat reçue (§61 : dédupliquée par horodatage).
-   * Le mot-clé déclaré par le candidat doit correspondre à cette salle,
-   * sinon la diffusion est ignorée AVANT toute analyse (pas de filtre CPU,
-   * pas de scoring) — c'est le premier tri, le moins coûteux.
-   * @param {string} peerId
+   * Indexée par identité applicative (`broadcast.senderId`), pas par
+   * l'identifiant de transport éphémère — une reconnexion du même candidat
+   * met à jour SA ligne au lieu d'en créer une nouvelle.
+   * @param {string} peerId identifiant de transport Trystero courant
    * @param {import('../core/validation/schema.js').CandidateBroadcast} broadcast
    */
   ingestBroadcast(peerId, broadcast) {
-    const previous = this.broadcasts.get(peerId);
+    const identityKey = broadcast.senderId || peerId;
+    this.peerIdToKey.set(peerId, identityKey);
+
+    const previous = this.broadcasts.get(identityKey);
     if (previous && previous.timestamp === broadcast.timestamp) return; // déduplication (§61)
 
     if (!matchesKeywordGate(broadcast.searchKeyword, this.keywordSet)) {
-      const hadEntry = this.scores.delete(peerId);
-      this.broadcasts.delete(peerId);
+      const hadEntry = this.scores.delete(identityKey);
+      this.broadcasts.delete(identityKey);
       if (hadEntry) this._emit(); // le candidat était visible et a changé de mot-clé : on retire la ligne
       return; // mot-clé hors sujet pour cette salle : on ne va pas plus loin
     }
 
-    this.broadcasts.set(peerId, broadcast);
+    this.broadcasts.set(identityKey, broadcast);
     const candidate = candidateBroadcastToComparable(broadcast);
     if (!passesCpuFilter(candidate, this.jobProfile)) {
-      this.scores.delete(peerId);
+      this.scores.delete(identityKey);
       this._emit();
       return;
     }
     const score = computeMatchScore(candidate, this.jobProfile);
-    this.scores.set(peerId, {
+    this.scores.set(identityKey, {
       ...score,
+      peerId, // identifiant de transport courant : utilisé pour router les messages (chat, rendez-vous)
       displayName: broadcast.displayName || null,
       cvFileName: broadcast.cvFileName || null,
     });
     this._emit();
   }
 
+  /** Appelé à la déconnexion d'un pair (identifiant de transport). */
   removePeer(peerId) {
-    const had = this.scores.delete(peerId);
-    this.broadcasts.delete(peerId);
+    const identityKey = this.peerIdToKey.get(peerId);
+    this.peerIdToKey.delete(peerId);
+    if (!identityKey) return;
+    const had = this.scores.delete(identityKey);
+    this.broadcasts.delete(identityKey);
     if (had) this._emit();
   }
 }

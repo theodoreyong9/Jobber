@@ -40,6 +40,27 @@ import {
 
 const APP_ROOM_ID = 'jobmatch-p2p-v1';
 
+let mammothLoadPromise = null;
+/**
+ * Charge le bundle navigateur officiel de mammoth.js via un tag <script>
+ * (approche recommandée par mammoth pour un usage client, plus fiable que
+ * la résolution ESM d'un paquet pensé pour Node via un CDN générique — ce
+ * qui causait des échecs silencieux). Idempotent : un seul chargement,
+ * réutilisé pour tous les documents suivants.
+ */
+function loadMammothBrowserBundle() {
+  if (typeof window !== 'undefined' && window.mammoth) return Promise.resolve(window.mammoth);
+  if (mammothLoadPromise) return mammothLoadPromise;
+  mammothLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js';
+    script.onload = () => (window.mammoth ? resolve(window.mammoth) : reject(new Error('mammoth chargé mais window.mammoth est absent.')));
+    script.onerror = () => reject(new Error('échec du chargement du script mammoth (réseau ou CDN indisponible).'));
+    document.head.appendChild(script);
+  });
+  return mammothLoadPromise;
+}
+
 const state = {
   role: null, // 'candidate' | 'recruiter'
   identity: null, // { id, displayName }
@@ -141,9 +162,15 @@ async function ensureNetwork() {
   log('Connexion au réseau P2P...');
   try {
     const trysteroLib = await import('trystero/nostr');
-    // `selfId` fixe : garde le même identifiant réseau d'une session à
-    // l'autre (identité visible et persistante).
-    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID, selfId: state.identity.id }, APP_ROOM_ID);
+    // Config minimale : `appId` seul. On avait tenté de forcer `selfId` sur
+    // notre propre identité pour garder le même identifiant réseau d'une
+    // session à l'autre, mais le format ne convient pas à ce qu'attend en
+    // interne la stratégie `trystero/nostr` — ça faisait planter la
+    // connexion. Trystero génère donc son propre identifiant de transport,
+    // éphémère ; la reconnaissance "c'est la même personne" se fait
+    // maintenant au niveau applicatif, via l'identité transportée DANS les
+    // messages (voir broadcastIfCandidate ci-dessous et p2p/discovery.js).
+    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID }, APP_ROOM_ID);
     state.trystero.onMessage(handleIncomingMessage);
     state.trystero.onFile(handleIncomingFile);
     state.trystero.onPeerJoin((peerId) => {
@@ -163,6 +190,7 @@ async function ensureNetwork() {
 function broadcastIfCandidate(targetPeerId) {
   if (state.role !== 'candidate' || !state.localProfile || !state.searchKeyword) return;
   const msg = createCandidateBroadcast({
+    senderId: state.identity.id,
     displayName: state.identity.displayName,
     searchKeyword: state.searchKeyword,
     skills: state.localProfile.skills.map((s) => s.name),
@@ -189,8 +217,12 @@ async function startCandidateLive(file, searchKeyword) {
 
   let mammothLib = null;
   if (file.name.toLowerCase().endsWith('.docx')) {
-    mammothLib = await import('mammoth').catch(() => null);
-    if (!mammothLib) { log('mammoth.js indisponible : impossible de lire ce .docx ici.'); return; }
+    try {
+      mammothLib = await loadMammothBrowserBundle();
+    } catch (e) {
+      log(`Lecture du .docx impossible (${e.message}). Réessayez, ou utilisez un fichier .txt en attendant.`);
+      return;
+    }
   }
   const doc = await parseDocument({ file, kind: 'cv', id: documentId, mammothLib });
   const { facts } = extractFacts(doc);
@@ -245,7 +277,7 @@ async function createRoom({ title, text }) {
   const ranker = new RoomRanker(jobProfile, finalTitle);
   ranker.onRankingChange(() => refreshRoomsUi());
 
-  state.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, jobProfile, ranker });
+  state.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, text, jobProfile, ranker });
   log(`Salle publiée : « ${finalTitle} » (mots-clés : ${jobProfile.requiredSkills.map((s) => s.name).join(', ') || 'aucun détecté'}).`);
 
   await ensureNetwork();
@@ -262,7 +294,8 @@ function refreshRoomsUi() {
   const rooms = Array.from(state.rooms.values()).map((r) => ({
     id: r.id,
     title: r.title,
-    candidates: Array.from(r.ranker.scores.entries()).map(([peerId, s]) => ({ ...s, peerId })).sort((a, b) => b.total - a.total),
+    text: r.text,
+    candidates: Array.from(r.ranker.scores.values()).sort((a, b) => b.total - a.total),
   }));
   renderRoomsList(rooms, { onOpenCandidate: onOpenCandidateDetail, onRemoveRoom: removeRoom });
 }
@@ -271,12 +304,12 @@ function onOpenCandidateDetail(entry, room) {
   renderCandidateDetail(entry, {
     cvUrl: state.receivedCvUrls.get(entry.peerId) || null,
     onOpenChat: () => {
-      const msg = createChatRequest({ toPeerId: entry.peerId, roomTitle: room.title, fromName: state.identity.displayName });
+      const msg = createChatRequest({ toPeerId: entry.peerId, roomTitle: room.title, fromName: state.identity.displayName, fromId: state.identity.id });
       state.trystero?.send(msg, entry.peerId);
       log(`Proposition de chat envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
     },
     onProposeMeeting: (note) => {
-      const msg = createMeetingProposal({ toPeerId: entry.peerId, roomTitle: room.title, note, fromName: state.identity.displayName });
+      const msg = createMeetingProposal({ toPeerId: entry.peerId, roomTitle: room.title, note, fromName: state.identity.displayName, fromId: state.identity.id });
       state.trystero?.send(msg, entry.peerId);
       log(`Proposition de rendez-vous envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
     },

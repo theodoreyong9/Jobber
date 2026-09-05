@@ -79,10 +79,17 @@ maintenir : la découverte "en direct" se fait simplement en rejoignant la
 même room.
 
 L'identité (`src/storage/identity.js`) est un identifiant stable généré une
-fois et persisté (pas une paire de clés cryptographiques ici, juste un ID
-technique). Il est réutilisé comme `selfId` Trystero d'une session à
-l'autre, et affiché à l'écran — ce qui permet de retrouver sa session après
-un rechargement de page.
+fois par ONGLET et stocké dans `sessionStorage` (pas une paire de clés
+cryptographiques ici, juste un ID technique) — délibérément pas dans
+IndexedDB/localStorage, qui sont partagés par tout le navigateur et
+donneraient la même identité à deux onglets ouverts en parallèle (ex. un
+onglet candidat + un onglet annonceur pour tester les deux côtés). Il est
+affiché à l'écran, et surtout **transporté dans le contenu des messages**
+(`senderId` d'une diffusion candidat, `fromId` d'une proposition) : c'est ce
+qui permet de reconnaître la même personne d'une reconnexion réseau à
+l'autre, indépendamment de l'identifiant de transport Trystero (lui,
+éphémère — voir `RoomRanker` dans `src/p2p/discovery.js`, indexé par
+identité applicative et non par ID de transport).
 
 ## Ce qui ne quitte jamais l'appareil
 
@@ -133,7 +140,7 @@ src/
 │   ├── protocol.js        messages typés et versionnés
 │   ├── trystero.js        transport P2P (messages JSON + CV en binaire)
 │   └── discovery.js       RoomRanker : scoring live par salle d'annonce
-├── storage/               IndexedDB : identité, chat, cache, pairs bloqués
+├── storage/               identité (sessionStorage), chat/cache/blocklist (IndexedDB)
 └── config/matching.js     pondérations, seuils, limites
 tests/                     tests unitaires (Node --test, sans dépendance)
 ```

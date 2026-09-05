@@ -126,3 +126,21 @@ test('candidateBroadcastToComparable ne fabrique jamais de texte intégral', () 
   assert.equal(comparable.id, 'p1');
   assert.ok(!('fullText' in comparable));
 });
+
+test("un candidat reconnecte (nouveau peerId de transport, meme senderId) met a jour sa ligne au lieu d'en creer une nouvelle", () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('tcp-abc', { peerId: 'tcp-abc', senderId: 'candidat-stable-1', searchKeyword: 'python', displayName: 'Jean', skills: ['python'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 1);
+
+  ranker.removePeer('tcp-abc');
+  assert.equal(events[events.length - 1].length, 0);
+
+  ranker.ingestBroadcast('tcp-xyz', { peerId: 'tcp-xyz', senderId: 'candidat-stable-1', searchKeyword: 'python', displayName: 'Jean', skills: ['python'], timestamp: 2 });
+  const last = events[events.length - 1];
+  assert.equal(last.length, 1, 'une seule ligne, pas un doublon');
+  assert.equal(last[0].peerId, 'tcp-xyz', 'le peerId de routage est mis a jour vers la connexion courante');
+});

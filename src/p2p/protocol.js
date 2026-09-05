@@ -33,20 +33,23 @@ function base(type) {
 
 /**
  * Diffusé par un candidat à tous les pairs connectés (recruteurs) :
- * son nom, un mot-clé de recherche qu'il choisit lui-même (ex. "Data
- * Engineer", "Python"), les mots-clés extraits localement du CV, et une
- * référence au fichier CV (transmis séparément en binaire, voir
- * p2p/trystero.js). Jamais de texte intégral dans ce message — juste des
- * mots-clés (§11, §51).
+ * son identité applicative stable (`senderId`, distincte de l'ID de
+ * transport Trystero — c'est elle qui permet de reconnaître le même
+ * candidat d'une reconnexion à l'autre), son nom, un mot-clé de recherche
+ * qu'il choisit lui-même (ex. "Data Engineer", "Python"), les mots-clés
+ * extraits localement du CV, et une référence au fichier CV (transmis
+ * séparément en binaire, voir p2p/trystero.js). Jamais de texte intégral
+ * dans ce message — juste des mots-clés (§11, §51).
  *
  * Le `searchKeyword` sert de filtre grossier côté recruteur : une salle
  * d'annonce n'analyse une diffusion QUE si ce mot-clé correspond à l'un des
  * siens (voir p2p/discovery.js, `matchesKeywordGate`) — ça évite de
  * surcharger le recruteur avec des candidats hors sujet.
  */
-export function createCandidateBroadcast({ displayName, searchKeyword, skills, domains, seniority, locations, languages, cvFileName }) {
+export function createCandidateBroadcast({ senderId, displayName, searchKeyword, skills, domains, seniority, locations, languages, cvFileName }) {
   return {
     ...base(MessageType.CANDIDATE_BROADCAST),
+    senderId: senderId || null,
     displayName: displayName || null,
     searchKeyword: searchKeyword || null,
     skills: skills || [],
@@ -59,13 +62,13 @@ export function createCandidateBroadcast({ displayName, searchKeyword, skills, d
 }
 
 /** Le recruteur propose d'ouvrir un canal de discussion avec un candidat précis. */
-export function createChatRequest({ toPeerId, roomTitle, fromName }) {
-  return { ...base(MessageType.CHAT_REQUEST), toPeerId, roomTitle: roomTitle || null, fromName: fromName || null };
+export function createChatRequest({ toPeerId, roomTitle, fromName, fromId }) {
+  return { ...base(MessageType.CHAT_REQUEST), toPeerId, roomTitle: roomTitle || null, fromName: fromName || null, fromId: fromId || null };
 }
 
 /** Le recruteur propose un rendez-vous (message libre : créneau, lien, etc.). */
-export function createMeetingProposal({ toPeerId, roomTitle, note, fromName }) {
-  return { ...base(MessageType.MEETING_PROPOSAL), toPeerId, roomTitle: roomTitle || null, note: String(note || '').slice(0, 500), fromName: fromName || null };
+export function createMeetingProposal({ toPeerId, roomTitle, note, fromName, fromId }) {
+  return { ...base(MessageType.MEETING_PROPOSAL), toPeerId, roomTitle: roomTitle || null, note: String(note || '').slice(0, 500), fromName: fromName || null, fromId: fromId || null };
 }
 
 export function createChatResponse({ toPeerId, requestId, accepted }) {

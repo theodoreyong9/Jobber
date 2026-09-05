@@ -242,3 +242,8 @@ select.model-select {
 
 /* --- Propositions reçues (candidat) --- */
 .proposal-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1rem; margin-bottom: 0.6rem; }
+
+/* --- Texte de l'annonce publiée, repliable --- */
+.room-text-details { margin: 0.4rem 0; }
+.room-text-details summary { cursor: pointer; font-size: 0.82rem; color: var(--signal); }
+.room-text-preview { white-space: pre-wrap; font-size: 0.88rem; color: var(--muted); background: var(--paper); border-radius: var(--radius); padding: 0.6rem 0.7rem; margin: 0.4rem 0 0; }

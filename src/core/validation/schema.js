@@ -81,7 +81,7 @@ export function validateIncomingMessage(raw, maxBytes) {
  * Valide une diffusion candidat reçue du réseau (§11, §51) — c'est la SEULE
  * donnée publiée en P2P dans ce flux : les annonces du recruteur, elles, ne
  * quittent jamais son appareil.
- * Forme : { peerId, displayName?, searchKeyword, skills, domains, seniority?, locations?, languages?, cvFileName? }
+ * Forme : { peerId, senderId?, displayName?, searchKeyword, skills, domains, seniority?, locations?, languages?, cvFileName? }
  * @param {unknown} broadcast
  */
 export function validateCandidateBroadcast(broadcast) {
@@ -93,6 +93,9 @@ export function validateCandidateBroadcast(broadcast) {
 
   if (isString(b.fullText) || isString(b.cvText) || isString(b.rawDocument)) {
     errors.push('La diffusion ne doit jamais contenir le texte intégral d\'un document.');
+  }
+  if (b.senderId !== undefined && b.senderId !== null && (!isString(b.senderId) || b.senderId.length > 64)) {
+    errors.push('senderId invalide.');
   }
   if (b.displayName !== undefined && b.displayName !== null) {
     if (!isString(b.displayName) || b.displayName.length > 80) errors.push('displayName doit être une chaîne de 80 caractères maximum.');
