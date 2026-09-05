@@ -144,3 +144,33 @@ test("un candidat reconnecte (nouveau peerId de transport, meme senderId) met a 
   assert.equal(last.length, 1, 'une seule ligne, pas un doublon');
   assert.equal(last[0].peerId, 'tcp-xyz', 'le peerId de routage est mis a jour vers la connexion courante');
 });
+
+test("retireIdentity retire immediatement une identite sans attendre une deconnexion", () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  ranker.ingestBroadcast('tcp-1', { peerId: 'tcp-1', senderId: 'candidat-a', searchKeyword: 'python', skills: ['python'], timestamp: 1 });
+  assert.equal(events[events.length - 1].length, 1);
+
+  ranker.retireIdentity('candidat-a');
+  assert.equal(events[events.length - 1].length, 0, "l'identite retiree ne doit plus apparaitre dans le classement");
+});
+
+test('removePeer nettoie toutes les identites vues depuis un meme peerId de transport (rotation en direct)', () => {
+  const job = jobWithSkill('python');
+  const ranker = new RoomRanker(job, 'Data Engineer');
+  const events = [];
+  ranker.onRankingChange((r) => events.push(r));
+
+  // Le meme peerId de transport diffuse d'abord sous une identite, puis sous une autre
+  // (cas d'une invalidation d'ID en direct, sans coupure reseau).
+  ranker.ingestBroadcast('tcp-rot', { peerId: 'tcp-rot', senderId: 'ancien-id', searchKeyword: 'python', skills: ['python'], timestamp: 1 });
+  ranker.ingestBroadcast('tcp-rot', { peerId: 'tcp-rot', senderId: 'nouvel-id', searchKeyword: 'python', skills: ['python'], timestamp: 2 });
+
+  // La deconnexion doit nettoyer les DEUX identites, pas seulement la derniere.
+  ranker.removePeer('tcp-rot');
+  const last = events[events.length - 1];
+  assert.equal(last.length, 0, 'plus aucune ligne, meme fantome, apres la deconnexion');
+});

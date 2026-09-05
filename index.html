@@ -11,14 +11,15 @@
   <link rel="stylesheet" href="./src/ui/style.css" />
 
   <!-- Résolution des dépendances via CDN (aucun bundler requis en V1, §4).
-       mammoth.js est chargé séparément via un tag <script> injecté au moment
-       où un .docx est lu (voir src/app/main.js, loadMammothBrowserBundle) :
-       leur bundle navigateur officiel est plus fiable que la résolution ESM
-       via import map pour ce paquet pensé pour Node. -->
+       On importe le paquet racine `trystero` (Nostr par défaut) — le
+       sous-chemin `trystero/nostr` est un alias de compatibilité déprécié
+       dont le comportement s'est révélé peu fiable en pratique.
+       mammoth.js est chargé séparément via un tag <script> injecté au
+       moment où un .docx est lu (voir src/app/main.js). -->
   <script type="importmap">
   {
     "imports": {
-      "trystero/nostr": "https://esm.run/trystero/nostr"
+      "trystero": "https://esm.run/trystero"
     }
   }
   </script>

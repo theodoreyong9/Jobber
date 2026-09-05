@@ -73,10 +73,12 @@ annonceurs), avec deux canaux :
 - `jm_cv` : octets bruts du CV, transmis en pièce jointe avec la diffusion
   candidat.
 
-Trystero s'appuie sur la stratégie `trystero/nostr` pour la signalisation
-WebRTC (relais Nostr publics) — pas de couche Nostr applicative maison à
-maintenir : la découverte "en direct" se fait simplement en rejoignant la
-même room.
+Trystero (paquet racine `trystero`, Nostr par défaut) s'appuie sur des
+relais Nostr publics pour la signalisation WebRTC — pas de couche Nostr
+applicative maison à maintenir : la découverte "en direct" se fait
+simplement en rejoignant la même room. Une liste de relais fiables est
+fixée explicitement (`NOSTR_RELAY_URLS` dans `src/app/main.js`) plutôt que
+de dépendre de la liste par défaut de Trystero.
 
 L'identité (`src/storage/identity.js`) est un identifiant stable généré une
 fois par ONGLET et stocké dans `sessionStorage` (pas une paire de clés
@@ -90,6 +92,22 @@ qui permet de reconnaître la même personne d'une reconnexion réseau à
 l'autre, indépendamment de l'identifiant de transport Trystero (lui,
 éphémère — voir `RoomRanker` dans `src/p2p/discovery.js`, indexé par
 identité applicative et non par ID de transport).
+
+Un bouton **"Invalider mon ID"** génère un nouvel identifiant en conservant
+le nom affiché — l'ancien ID devient orphelin. Si vous étiez en direct
+(candidat), un message `identity_retired` est diffusé AVANT la
+rediffusion sous le nouvel ID : les annonceurs déjà connectés retirent la
+ligne immédiatement plutôt que d'attendre une déconnexion (voir
+`RoomRanker.retireIdentity`). **"Supprimer toutes mes données locales"**
+invalide aussi l'ID au passage — un reset qui laisserait l'ancien ID actif
+ne serait pas un vrai reset.
+
+Un bouton **"Restaurer cet ID"** (à côté) permet à l'inverse de coller un ID
+noté ailleurs pour reprendre volontairement la même identité applicative.
+Aucun de ces mécanismes n'est une preuve cryptographique : quiconque
+connaît un ID peut se l'attribuer — "invalider" ne fait qu'abandonner l'ID
+compromis pour votre propre client, ça n'empêche pas un tiers de continuer
+à l'utiliser ailleurs.
 
 ## Ce qui ne quitte jamais l'appareil
 

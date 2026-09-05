@@ -54,8 +54,29 @@ function identityBar({ identity, onSaveName, onChangeRole }) {
   ]);
 }
 
+/** Bloc "Confidentialité" partagé : suppression des données + invalidation/restauration d'ID. */
+function privacySection({ onResetLocalData, onRestoreId, onInvalidateId }) {
+  const idInput = el('input', {
+    type: 'text', placeholder: 'Coller un ID pour restaurer cette identité…',
+    style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin:0.4rem 0;',
+  });
+  return el('div', {}, [
+    el('div', { class: 'section-title', text: 'Confidentialité' }),
+    el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
+    el('p', { class: 'lede', style: 'margin:0.6rem 0 0;', text: 'Supprime aussi votre ID actuel — il ne représentera plus personne.' }),
+
+    el('div', { class: 'section-title', text: 'ID compromis ?', style: 'font-size:0.95rem; margin-top:1.2rem;' }),
+    el('p', { class: 'lede', style: 'margin:0 0 0.4rem;', text: 'Si quelqu\'un d\'autre connaît votre ID, invalidez-le : un nouvel ID est généré, votre nom est conservé, et si vous étiez en direct, les annonceurs connectés oublient immédiatement l\'ancien.' }),
+    el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: onInvalidateId }),
+
+    el('p', { class: 'lede', style: 'margin:1rem 0 0;', text: 'Votre ID (affiché ci-dessus) identifie cet onglet. Si vous l\'avez noté ailleurs, vous pouvez le restaurer ici pour retrouver le même profil applicatif.' }),
+    idInput,
+    el('button', { class: 'btn secondary', text: 'Restaurer cet ID', onclick: () => { if (idInput.value.trim()) onRestoreId(idInput.value.trim()); } }),
+  ]);
+}
+
 // --- Écran candidat (§14, §66) : dépôt du CV + diffusion en direct ---
-export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChangeRole, onStartLive, onResetLocalData }) {
+export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChangeRole, onStartLive, onResetLocalData, onRestoreId, onInvalidateId }) {
   const root = app();
   root.innerHTML = '';
 
@@ -94,8 +115,7 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
     el('div', { class: 'section-title', text: 'Propositions reçues' }),
     el('ul', { class: 'ledger', id: 'proposal-ledger' }, [el('li', { class: 'empty-state', text: isLive ? 'En attente de propositions…' : 'Lancez la recherche en direct pour être visible.' })]),
 
-    el('div', { class: 'section-title', text: 'Confidentialité' }),
-    el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
+    privacySection({ onResetLocalData, onRestoreId, onInvalidateId }),
   ]));
 
   root.appendChild(el('div', { id: 'detail-zone' }));
@@ -124,7 +144,7 @@ export function renderProposalList(proposals, { onAccept, onDecline }) {
 }
 
 // --- Écran recruteur (§15, §67) : salles d'annonce multiples ---
-export function renderRecruiterWorkspace({ identity, rooms, onSaveName, onChangeRole, onCreateRoom, onResetLocalData }) {
+export function renderRecruiterWorkspace({ identity, rooms, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId }) {
   const root = app();
   root.innerHTML = '';
 
@@ -155,9 +175,8 @@ export function renderRecruiterWorkspace({ identity, rooms, onSaveName, onChange
     formContainer,
     el('div', { class: 'section-title', text: 'Mes salles d\'annonce' }),
     el('div', { id: 'rooms-container' }),
-    el('div', { class: 'section-title', text: 'Confidentialité' }),
-    el('p', { class: 'lede', style: 'margin-top:-0.3rem;', text: 'Le texte de vos annonces reste local : seuls des mots-clés de comparaison sont utilisés, jamais publiés.' }),
-    el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
+    el('p', { class: 'lede', style: 'margin:0.4rem 0 0;', text: 'Le texte de vos annonces reste local : seuls des mots-clés de comparaison sont utilisés, jamais publiés.' }),
+    privacySection({ onResetLocalData, onRestoreId, onInvalidateId }),
   ]));
 
   root.appendChild(el('div', { id: 'detail-zone' }));

@@ -15,6 +15,7 @@ import { PROTOCOL_VERSION, PAYLOAD_LIMITS } from '../config/matching.js';
 
 export const MessageType = Object.freeze({
   CANDIDATE_BROADCAST: 'candidate_broadcast',
+  IDENTITY_RETIRED: 'identity_retired',
   CHAT_REQUEST: 'chat_request',
   MEETING_PROPOSAL: 'meeting_proposal',
   CHAT_RESPONSE: 'chat_response',
@@ -59,6 +60,17 @@ export function createCandidateBroadcast({ senderId, displayName, searchKeyword,
     languages: languages || [],
     cvFileName: cvFileName || null,
   };
+}
+
+/**
+ * Diffusé quand un candidat "tue" son identité actuelle (§ ID compromis,
+ * remis en question par l'utilisateur) : indique aux pairs déjà connectés
+ * que `retiredId` ne représente plus personne, pour qu'ils retirent
+ * immédiatement la ligne correspondante plutôt que d'attendre une
+ * déconnexion réseau. Envoyé juste AVANT de rediffuser sous le nouvel ID.
+ */
+export function createIdentityRetired({ retiredId }) {
+  return { ...base(MessageType.IDENTITY_RETIRED), retiredId: retiredId || null };
 }
 
 /** Le recruteur propose d'ouvrir un canal de discussion avec un candidat précis. */

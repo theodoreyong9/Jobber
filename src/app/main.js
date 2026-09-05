@@ -24,7 +24,7 @@ import { MAX_POSTINGS_PER_RECRUITER } from '../config/matching.js';
 
 import { RoomRanker } from '../p2p/discovery.js';
 import { joinMatchingRoom } from '../p2p/trystero.js';
-import { MessageType, createCandidateBroadcast, createChatRequest, createMeetingProposal, createChatResponse, createChatMessage } from '../p2p/protocol.js';
+import { MessageType, createCandidateBroadcast, createIdentityRetired, createChatRequest, createMeetingProposal, createChatResponse, createChatMessage } from '../p2p/protocol.js';
 
 import * as chatStore from '../storage/chat.js';
 import * as blocklist from '../storage/blocklist.js';
@@ -60,6 +60,17 @@ function loadMammothBrowserBundle() {
   });
   return mammothLoadPromise;
 }
+
+// Relais Nostr publics connus pour leur fiabilité — fixés explicitement
+// plutôt que de dépendre de la liste par défaut de Trystero, dont certains
+// relais peuvent être temporairement indisponibles (502, etc.).
+const NOSTR_RELAY_URLS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://nostr.wine',
+  'wss://offchain.pub',
+];
 
 const state = {
   role: null, // 'candidate' | 'recruiter'
@@ -114,6 +125,39 @@ async function saveDisplayName(name) {
   if (state.trystero) broadcastIfCandidate(); // republie avec le nouveau nom
 }
 
+/** Restaure une identité à partir d'un ID noté ailleurs (§ demande : retrouver une session). */
+async function restoreIdentity(id) {
+  try {
+    state.identity = await identityStore.restoreIdentity(id);
+    log(`Identité restaurée : id ${state.identity.id}.`);
+    await startWorkspace(state.role); // réaffiche avec le nouvel ID visible
+    if (state.trystero) broadcastIfCandidate(); // republie sous la nouvelle identité si déjà en direct
+  } catch (e) {
+    log(`Restauration impossible : ${e.message}`);
+  }
+}
+
+/**
+ * "Tue" l'ID courant (§ ID compromis) : génère un nouvel identifiant, en
+ * conservant le nom affiché. Si on est candidat et déjà en direct, prévient
+ * D'ABORD les annonceurs connectés que l'ancien ID ne représente plus
+ * personne (ils retirent la ligne immédiatement), PUIS rediffuse sous le
+ * nouvel ID. Ne casse pas la connexion réseau elle-même — seule l'identité
+ * applicative change.
+ */
+async function invalidateIdentity() {
+  const oldId = state.identity.id;
+  if (state.role === 'candidate' && state.isLive) {
+    state.trystero?.send(createIdentityRetired({ retiredId: oldId }));
+  }
+  state.identity = await identityStore.regenerateId();
+  log(`ID invalidé. Nouvel ID : ${state.identity.id}.`);
+  await startWorkspace(state.role);
+  if (state.trystero && state.role === 'candidate' && state.isLive) {
+    broadcastIfCandidate(); // rediffuse immédiatement sous le nouvel ID
+  }
+}
+
 async function startWorkspace(role) {
   state.role = role;
   if (role === 'candidate') {
@@ -124,6 +168,8 @@ async function startWorkspace(role) {
       onChangeRole: changeRole,
       onStartLive: startCandidateLive,
       onResetLocalData: handleResetLocalData,
+      onRestoreId: restoreIdentity,
+      onInvalidateId: invalidateIdentity,
     });
     renderProposalList(state.proposals, { onAccept: acceptProposal, onDecline: declineProposal });
   } else {
@@ -134,6 +180,8 @@ async function startWorkspace(role) {
       onChangeRole: changeRole,
       onCreateRoom: createRoom,
       onResetLocalData: handleResetLocalData,
+      onRestoreId: restoreIdentity,
+      onInvalidateId: invalidateIdentity,
     });
     refreshRoomsUi();
   }
@@ -161,16 +209,14 @@ async function ensureNetwork() {
   if (state.trystero) return;
   log('Connexion au réseau P2P...');
   try {
-    const trysteroLib = await import('trystero/nostr');
-    // Config minimale : `appId` seul. On avait tenté de forcer `selfId` sur
-    // notre propre identité pour garder le même identifiant réseau d'une
-    // session à l'autre, mais le format ne convient pas à ce qu'attend en
-    // interne la stratégie `trystero/nostr` — ça faisait planter la
-    // connexion. Trystero génère donc son propre identifiant de transport,
-    // éphémère ; la reconnaissance "c'est la même personne" se fait
-    // maintenant au niveau applicatif, via l'identité transportée DANS les
-    // messages (voir broadcastIfCandidate ci-dessous et p2p/discovery.js).
-    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID }, APP_ROOM_ID);
+    const trysteroLib = await import('trystero');
+    // Config minimale : `appId` + une liste de relais Nostr fixée
+    // explicitement (voir NOSTR_RELAY_URLS ci-dessus). Ne pas essayer de
+    // forcer un `selfId` personnalisé : la reconnaissance "c'est la même
+    // personne" se fait au niveau applicatif, via l'identité transportée
+    // DANS les messages (voir broadcastIfCandidate plus bas), pas au
+    // niveau du transport.
+    state.trystero = joinMatchingRoom(trysteroLib, { appId: APP_ROOM_ID, relayConfig: { urls: NOSTR_RELAY_URLS } }, APP_ROOM_ID);
     state.trystero.onMessage(handleIncomingMessage);
     state.trystero.onFile(handleIncomingFile);
     state.trystero.onPeerJoin((peerId) => {
@@ -337,6 +383,12 @@ function handleIncomingMessage(message, peerId) {
       }
       break;
     }
+    case MessageType.IDENTITY_RETIRED:
+      if (state.role === 'recruiter' && message.retiredId) {
+        for (const room of state.rooms.values()) room.ranker.retireIdentity(message.retiredId);
+        refreshRoomsUi();
+      }
+      break;
     case MessageType.CHAT_REQUEST:
       if (state.role === 'candidate') {
         log(`Proposition de chat reçue.`);
@@ -402,9 +454,16 @@ async function blockPeerFromUi(peerId) {
 }
 
 async function handleResetLocalData() {
+  // Un reset complet doit aussi invalider l'identité : sinon l'ID survivrait
+  // à la suppression, ce qui viderait le geste de son sens (§ sécurité —
+  // un ID qu'on croit "tué" doit vraiment l'être).
+  if (state.role === 'candidate' && state.isLive) {
+    state.trystero?.send(createIdentityRetired({ retiredId: state.identity.id }));
+  }
   state.trystero?.leave();
   await wipeAllLocalData();
-  log('Toutes les données locales ont été supprimées (§54).');
+  identityStore.clearIdentity();
+  log('Toutes les données locales ont été supprimées, y compris l\'identité (§54).');
   window.location.reload();
 }
 

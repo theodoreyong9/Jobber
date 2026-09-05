@@ -44,3 +44,39 @@ export function setDisplayName(displayName) {
   persist(updated);
   return updated;
 }
+
+/**
+ * Restaure une identité à partir d'un ID noté précédemment (ex. affiché
+ * dans un autre onglet, ou avant un "supprimer mes données locales"). Ne
+ * vérifie ni ne garantit rien de cryptographique — c'est un identifiant
+ * technique simple, pas une preuve d'identité : quiconque connaît l'ID
+ * peut se l'attribuer. Le nom affiché est conservé tel quel s'il existe déjà.
+ * @param {string} id
+ */
+export function restoreIdentity(id) {
+  const trimmed = String(id || '').trim();
+  if (!trimmed) throw new Error('ID vide.');
+  const current = loadOrCreateIdentity();
+  const restored = { ...current, id: trimmed };
+  persist(restored);
+  return restored;
+}
+
+/**
+ * Génère un nouvel ID, abandonnant l'ancien (§ "tuer" un ID compromis). Le
+ * nom affiché est conservé ; seul l'identifiant technique change. L'ancien
+ * ID redevient un simple ID orphelin : il ne représente plus personne côté
+ * réseau une fois la diffusion "identité retirée" envoyée (voir
+ * p2p/protocol.js, createIdentityRetired, et app/main.js, invalidateIdentity).
+ */
+export function regenerateId() {
+  const current = loadOrCreateIdentity();
+  const rotated = { ...current, id: randomId() };
+  persist(rotated);
+  return rotated;
+}
+
+/** Efface complètement l'identité de cet onglet (utilisé par un reset total des données). */
+export function clearIdentity() {
+  try { sessionStorage.removeItem(KEY); } catch { /* ignore */ }
+}

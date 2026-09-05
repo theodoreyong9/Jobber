@@ -90,8 +90,8 @@ export class RoomRanker {
     this.broadcasts = new Map();
     /** @type {Map<string, any>} identityKey -> MatchScore (inclut le peerId de transport courant) */
     this.scores = new Map();
-    /** @type {Map<string, string>} peerId de transport courant -> identityKey (pour le nettoyage à la déconnexion) */
-    this.peerIdToKey = new Map();
+    /** @type {Map<string, Set<string>>} peerId de transport -> TOUTES les identityKey vues depuis ce pair (couvre une rotation d'ID en direct, §"tuer" un ID) */
+    this.peerIdHistory = new Map();
     /** @type {Set<(ranking: any[]) => void>} */
     this.listeners = new Set();
   }
@@ -118,7 +118,8 @@ export class RoomRanker {
    */
   ingestBroadcast(peerId, broadcast) {
     const identityKey = broadcast.senderId || peerId;
-    this.peerIdToKey.set(peerId, identityKey);
+    if (!this.peerIdHistory.has(peerId)) this.peerIdHistory.set(peerId, new Set());
+    this.peerIdHistory.get(peerId).add(identityKey);
 
     const previous = this.broadcasts.get(identityKey);
     if (previous && previous.timestamp === broadcast.timestamp) return; // déduplication (§61)
@@ -147,10 +148,28 @@ export class RoomRanker {
     this._emit();
   }
 
-  /** Appelé à la déconnexion d'un pair (identifiant de transport). */
+  /** Appelé à la déconnexion d'un pair (identifiant de transport). Nettoie
+   * TOUTES les identités jamais vues depuis ce pair, pas seulement la
+   * dernière — utile si l'identité a été régénérée en cours de session. */
   removePeer(peerId) {
-    const identityKey = this.peerIdToKey.get(peerId);
-    this.peerIdToKey.delete(peerId);
+    const keys = this.peerIdHistory.get(peerId) || new Set();
+    this.peerIdHistory.delete(peerId);
+    let changed = false;
+    for (const identityKey of keys) {
+      if (this.scores.delete(identityKey)) changed = true;
+      this.broadcasts.delete(identityKey);
+    }
+    if (changed) this._emit();
+  }
+
+  /**
+   * Retire immédiatement une identité précise, sans attendre une
+   * déconnexion réseau (§ "tuer" un ID compromis — voir
+   * p2p/protocol.js MessageType.IDENTITY_RETIRED). L'ancien ID redevient
+   * un simple identifiant orphelin, sans ligne associée dans le classement.
+   * @param {string} identityKey
+   */
+  retireIdentity(identityKey) {
     if (!identityKey) return;
     const had = this.scores.delete(identityKey);
     this.broadcasts.delete(identityKey);
