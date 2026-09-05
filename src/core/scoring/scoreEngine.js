@@ -18,10 +18,10 @@ function compareKeywords(candidateKeywords, requiredKeywords) {
   return { matched, missing };
 }
 
-function compareCity(candidateCities, jobRawText) {
+function compareCity(candidateCities, jobCity) {
+  if (!jobCity) return 'unknown';
   if (!candidateCities || candidateCities.length === 0) return 'unknown';
-  const haystack = (jobRawText || '').toLowerCase();
-  return candidateCities.some((c) => haystack.includes(c)) ? 'match' : 'mismatch';
+  return candidateCities.includes(jobCity) ? 'match' : 'mismatch';
 }
 
 function compareCountry(candidateCountries, jobCountry) {
@@ -46,7 +46,7 @@ function formatRange(min, max) {
 
 export function computeMatchScore(candidate, job) {
   const { matched, missing } = compareKeywords(candidate.keywords, job.keywords);
-  const cityStatus = compareCity(candidate.cities, job.rawText);
+  const cityStatus = compareCity(candidate.cities, job.city);
   const countryStatus = compareCountry(candidate.countries, job.country);
   const experienceStatus = compareExperience(candidate.yearsOfExperience, job.minYearsRequired, job.maxYearsRequired);
 
@@ -54,8 +54,8 @@ export function computeMatchScore(candidate, job) {
   for (const kw of matched) reasons.push({ type: 'positive', label: kw });
   for (const kw of missing) reasons.push({ type: 'warning', label: kw });
 
-  if (cityStatus === 'match') reasons.push({ type: 'positive', label: `Ville : ${candidate.cities.join(', ')}` });
-  else if (cityStatus === 'mismatch') reasons.push({ type: 'warning', label: `Ville(s) declaree(s) (${candidate.cities.join(', ')}) non mentionnee(s) dans l'annonce` });
+  if (cityStatus === 'match') reasons.push({ type: 'positive', label: `Ville : ${job.city}` });
+  else if (cityStatus === 'mismatch') reasons.push({ type: 'warning', label: `Ville(s) declaree(s) (${candidate.cities.join(', ')}) different de la ville de l'annonce (${job.city})` });
 
   if (countryStatus === 'match') reasons.push({ type: 'positive', label: `Pays : ${job.country}` });
   else if (countryStatus === 'mismatch') reasons.push({ type: 'warning', label: `Pays declare(s) (${candidate.countries.join(', ')}) different du pays de l'annonce (${job.country})` });

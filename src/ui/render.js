@@ -1,11 +1,14 @@
 // src/ui/render.js
 //
-// Rendu DOM vanilla. v4 : trois modes cumulables (candidat emploi,
-// annonceur emploi, rencontre), chacun avec son propre bloc identite
-// (id + recuperation + invalidation), un panneau "details de recherche"
-// repliable, un bouton de lancement, et des onglets (conversations pour
-// candidat/rencontre, salles pour annonceur) avec badge de notification et
-// chat a autoscroll.
+// Rendu DOM vanilla. v5 :
+//   - un seul mode visible a la fois (bascule exclusive, pas d'empilement) ;
+//   - dans chaque mode, bloc identite et bloc "details" cote a cote ;
+//   - bouton de lancement desactive tant que les champs requis ne sont pas
+//     remplis (verifie en direct) ;
+//   - suppression des donnees locales PAR MODE (plus de bouton global) ;
+//   - re-rendu complet qui restaure les valeurs de champs tapees (capture
+//     /restauration par attribut `name`), pour ne jamais perdre de saisie
+//     ni faire disparaitre une section a cause d'un re-rendu ailleurs.
 
 const app = () => document.getElementById('app');
 
@@ -28,14 +31,11 @@ function field(tag, attrs = {}) {
 }
 
 function panel(title, body, opts = {}) {
-  const marker = opts.marker || 'signal';
-  const meta = opts.meta || null;
-  const id = opts.id || null;
-  return el('div', { class: 'panel', id }, [
+  return el('div', { class: 'panel', id: opts.id || null }, [
     el('div', { class: 'panel-header' }, [
-      el('span', { class: `panel-marker ${marker}` }),
+      el('span', { class: `panel-marker ${opts.marker || 'signal'}` }),
       el('h3', { text: title }),
-      meta ? el('span', { class: 'panel-meta', text: meta }) : null,
+      opts.meta ? el('span', { class: 'panel-meta', text: opts.meta }) : null,
     ]),
     el('div', { class: 'panel-body' }, body),
   ]);
@@ -45,47 +45,60 @@ function badge(text, variant) {
   return el('span', { class: `badge ${variant || ''}`.trim(), text });
 }
 
-export function renderShell(enabledModes, onToggleMode) {
+function captureFields(root, names) {
+  const values = {};
+  for (const name of names) {
+    const node = root.querySelector(`[name="${name}"]`);
+    if (node) values[name] = node.value;
+  }
+  return values;
+}
+function restoreFields(root, values) {
+  for (const [name, value] of Object.entries(values)) {
+    if (!value) continue;
+    const node = root.querySelector(`[name="${name}"]`);
+    if (node) node.value = value;
+  }
+}
+
+const MODE_LABEL = { jobCandidate: '🧑\u200d💼 Candidat', jobRecruiter: '🏢 Annonceur', dating: '💞 Rencontre' };
+const MODE_CONTAINER = { jobCandidate: 'mode-job-candidate', jobRecruiter: 'mode-job-recruiter', dating: 'mode-dating' };
+
+export function renderShell(visibleMode, onToggleMode) {
   const root = app();
   root.innerHTML = '';
 
-  root.appendChild(el('div', { class: 'mode-nav' }, [
-    el('button', { class: `mode-chip ${enabledModes.jobCandidate ? 'active' : ''}`, onclick: () => onToggleMode('jobCandidate'), text: '🧑‍💼 Candidat' }),
-    el('button', { class: `mode-chip ${enabledModes.jobRecruiter ? 'active' : ''}`, onclick: () => onToggleMode('jobRecruiter'), text: '🏢 Annonceur' }),
-    el('button', { class: `mode-chip dating ${enabledModes.dating ? 'active' : ''}`, onclick: () => onToggleMode('dating'), text: '💞 Rencontre' }),
-  ]));
-  root.appendChild(el('p', { class: 'hint', text: 'Ces modes sont cumulables : activez-en plusieurs en meme temps, chacun avec sa propre identite. Vos documents restent sur cet appareil.' }));
+  root.appendChild(el('div', { class: 'mode-nav', id: 'mode-nav' }, Object.keys(MODE_LABEL).map((m) => el('button', {
+    class: `mode-chip ${m === 'dating' ? 'dating' : ''} ${visibleMode === m ? 'active' : ''}`,
+    'data-mode': m,
+    onclick: () => onToggleMode(m),
+  }, [MODE_LABEL[m], el('span', { class: 'mode-chip-badge', id: `badge-${m}` })]))));
+  root.appendChild(el('p', { class: 'hint', text: 'Un seul mode affiche a la fois, mais chacun continue de tourner en arriere-plan avec sa propre identite.' }));
 
-  root.appendChild(el('div', { id: 'mode-job-candidate', hidden: enabledModes.jobCandidate ? undefined : 'true' }));
-  root.appendChild(el('div', { id: 'mode-job-recruiter', hidden: enabledModes.jobRecruiter ? undefined : 'true' }));
-  root.appendChild(el('div', { id: 'mode-dating', hidden: enabledModes.dating ? undefined : 'true' }));
-
-  root.appendChild(el('details', { class: 'panel settings-details', id: 'global-settings' }, [
-    el('summary', { text: '⚙ Supprimer toutes mes donnees locales' }),
-    el('div', { class: 'settings-body', id: 'global-settings-body' }),
-  ]));
+  root.appendChild(el('div', { id: 'mode-job-candidate', hidden: 'true' }));
+  root.appendChild(el('div', { id: 'mode-job-recruiter', hidden: 'true' }));
+  root.appendChild(el('div', { id: 'mode-dating', hidden: 'true' }));
 }
 
-export function setModeVisibility(mode, visible) {
-  const idMap = { jobCandidate: 'mode-job-candidate', jobRecruiter: 'mode-job-recruiter', dating: 'mode-dating' };
-  const container = document.getElementById(idMap[mode]);
-  if (container) container.hidden = !visible;
-  const labelMap = { jobCandidate: '🧑\u200d💼 Candidat', jobRecruiter: '🏢 Annonceur', dating: '💞 Rencontre' };
+export function setVisibleMode(mode) {
+  for (const [m, containerId] of Object.entries(MODE_CONTAINER)) {
+    const container = document.getElementById(containerId);
+    if (container) container.hidden = m !== mode;
+  }
   document.querySelectorAll('.mode-chip').forEach((btn) => {
-    if (btn.textContent === labelMap[mode]) btn.classList.toggle('active', visible);
+    btn.classList.toggle('active', btn.dataset.mode === mode);
   });
 }
 
-export function renderGlobalSettings(callbacks) {
-  const body = document.getElementById('global-settings-body');
-  if (!body) return;
-  body.innerHTML = '';
-  body.appendChild(el('button', { class: 'btn secondary', text: 'Tout supprimer (toutes identites, tous modes)', onclick: callbacks.onResetLocalData }));
-  body.appendChild(el('p', { class: 'hint', text: 'Supprime les donnees locales et TOUTES les identites (candidat, annonceur, rencontre).' }));
+export function setModeBadge(mode, count) {
+  const badgeEl = document.getElementById(`badge-${mode}`);
+  if (!badgeEl) return;
+  badgeEl.textContent = count > 0 ? String(count) : '';
+  badgeEl.classList.toggle('visible', count > 0);
 }
 
 function identityBlock(identity, callbacks) {
-  const nameInput = field('input', { type: 'text', value: identity.displayName || '', placeholder: 'Votre nom' });
+  const nameInput = field('input', { type: 'text', name: 'displayName', value: identity.displayName || '', placeholder: 'Votre nom' });
   const save = () => callbacks.onSaveName(nameInput.value.trim());
   nameInput.addEventListener('blur', save);
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { save(); nameInput.blur(); } });
@@ -104,52 +117,62 @@ function identityBlock(identity, callbacks) {
       ]),
       el('p', { class: 'hint', text: 'ID compromis ? Genere un nouvel ID (nom conserve) et previent immediatement vos contacts en direct.' }),
       el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: callbacks.onInvalidateId }),
+      el('div', { class: 'section-divider' }),
+      el('button', { class: 'btn secondary', text: 'Supprimer mes donnees (ce mode)', onclick: callbacks.onWipeMode }),
+      el('p', { class: 'hint', text: 'Efface uniquement l\'identite et les donnees de CE mode - les autres modes ne sont pas affectes.' }),
     ]),
   ]);
 }
 
-function detailsReveal(title, fields, opts = {}) {
-  const openByDefault = opts.openByDefault !== false;
-  return el('details', { class: 'details-reveal', open: openByDefault ? 'true' : undefined }, [
+function topRow(a, b) {
+  return el('div', { class: 'row-of-details' }, [a, b]);
+}
+
+function detailsToggle(title, fields, opts = {}) {
+  return el('details', { class: 'details-reveal', open: opts.openByDefault !== false ? 'true' : undefined }, [
     el('summary', { text: `Details : ${title}` }),
     el('div', { class: 'details-reveal-body' }, fields),
   ]);
 }
 
-export function renderConversationTabs(containerId, conversations, activeId, onSelect) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  container.innerHTML = '';
-  if (conversations.length === 0) {
-    container.appendChild(el('p', { class: 'empty-state', text: 'Aucune conversation pour le moment.' }));
-    return;
+export function renderConversations(tabsContainerId, viewContainerId, conversations, activeId, callbacks) {
+  const tabs = document.getElementById(tabsContainerId);
+  if (tabs) {
+    tabs.innerHTML = '';
+    if (conversations.length > 0) {
+      tabs.appendChild(el('div', { class: 'segmented' }, conversations.map((c) => el('button', {
+        class: `segmented-item ${c.id === activeId ? 'active' : ''} ${c.status === 'pending' ? 'pending' : ''}`,
+        onclick: () => callbacks.onSelect(c.id),
+      }, [
+        (c.status === 'pending' && c.direction === 'incoming') ? '\u{1F514} ' : '',
+        c.displayName || `Pair ${c.id.slice(0, 8)}...`,
+        c.unread > 0 ? badge(String(c.unread), 'signal') : null,
+      ]))));
+    }
   }
-  container.appendChild(el('div', { class: 'segmented' }, conversations.map((c) => el('button', {
-    class: `segmented-item ${c.id === activeId ? 'active' : ''} ${c.status === 'pending' ? 'pending' : ''}`,
-    onclick: () => onSelect(c.id),
-  }, [
-    (c.status === 'pending' && c.direction === 'incoming') ? '\u{1F514} ' : '',
-    c.displayName || `Pair ${c.id.slice(0, 8)}...`,
-    c.unread > 0 ? badge(String(c.unread), 'signal') : null,
-  ]))));
+  const conv = conversations.find((c) => c.id === activeId) || null;
+  renderConversationView(viewContainerId, conversations.length === 0 ? undefined : conv, callbacks);
 }
 
-export function renderConversationView(containerId, conv, callbacks) {
-  const zone = document.getElementById(containerId);
-  if (!zone) return;
-  zone.innerHTML = '';
-  if (!conv) {
-    zone.appendChild(el('p', { class: 'empty-state', text: 'Selectionnez une conversation.' }));
-    return;
-  }
+/**
+ * Rend UNE conversation dans un conteneur, sans dépendre d'une barre
+ * d'onglets (réutilisé tel quel pour le fil unique du recruteur, où il n'y
+ * a pas d'onglets à afficher).
+ * `conv === undefined` -> rien du tout (pas d'état vide superflu).
+ * `conv === null` -> "Sélectionnez une conversation" (des onglets existent
+ * mais aucun n'est actif).
+ */
+export function renderConversationView(viewContainerId, conv, callbacks) {
+  const view = document.getElementById(viewContainerId);
+  if (!view) return;
+  view.innerHTML = '';
+  if (conv === undefined) return;
+  if (!conv) { view.appendChild(el('p', { class: 'empty-state', text: 'Selectionnez une conversation.' })); return; }
 
   if (conv.status === 'pending' && conv.direction === 'incoming') {
-    zone.appendChild(el('div', { class: 'panel nested' }, [
+    view.appendChild(el('div', { class: 'panel nested' }, [
       el('div', { class: 'panel-body' }, [
-        el('p', {}, [
-          el('strong', { text: conv.displayName || 'Un contact' }),
-          ` propose ${conv.kind === 'meeting' ? 'un rendez-vous' : 'un echange'}.`,
-        ]),
+        el('p', {}, [el('strong', { text: conv.displayName || 'Un contact' }), ` propose ${conv.kind === 'meeting' ? 'un rendez-vous' : 'un echange'}.`]),
         conv.note ? el('p', { class: 'hint', text: `« ${conv.note} »` }) : null,
         conv.roomTitle ? el('p', { class: 'hint', text: `A propos de : ${conv.roomTitle}` }) : null,
         el('div', { class: 'btn-row' }, [
@@ -160,25 +183,19 @@ export function renderConversationView(containerId, conv, callbacks) {
     ]));
     return;
   }
-
   if (conv.status === 'pending' && conv.direction === 'outgoing') {
-    zone.appendChild(el('p', { class: 'empty-state', text: `En attente de reponse de ${conv.displayName || 'ce contact'}...` }));
+    view.appendChild(el('p', { class: 'empty-state', text: `En attente de reponse de ${conv.displayName || 'ce contact'}...` }));
     return;
   }
 
   const messages = el('div', { class: 'chat-messages' });
-  for (const m of conv.history) {
-    messages.appendChild(el('div', { class: `chat-bubble ${m.senderId === 'me' ? 'me' : 'them'}`, text: m.text }));
-  }
+  for (const m of conv.history) messages.appendChild(el('div', { class: `chat-bubble ${m.senderId === 'me' ? 'me' : 'them'}`, text: m.text }));
   const input = field('input', { type: 'text', placeholder: 'Ecrire un message...' });
   const send = () => { if (!input.value.trim()) return; callbacks.onSend(conv.id, input.value.trim()); input.value = ''; };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
-  zone.appendChild(el('div', { class: 'panel nested' }, [
-    el('div', { class: 'panel-body' }, [
-      messages,
-      el('div', { class: 'chat-input-row' }, [input, el('button', { class: 'btn', text: 'Envoyer', onclick: send })]),
-    ]),
+  view.appendChild(el('div', { class: 'panel nested' }, [
+    el('div', { class: 'panel-body' }, [messages, el('div', { class: 'chat-input-row' }, [input, el('button', { class: 'btn', text: 'Envoyer', onclick: send })])]),
   ]));
   messages.scrollTop = messages.scrollHeight;
 }
@@ -186,13 +203,14 @@ export function renderConversationView(containerId, conv, callbacks) {
 export function renderJobCandidatePanel(props) {
   const root = document.getElementById('mode-job-candidate');
   if (!root) return;
+  const draft = captureFields(root, ['keywords', 'city', 'country']);
   root.innerHTML = '';
 
-  const keywordInput = field('input', { type: 'text', placeholder: 'Ex. Data Engineer, Python... (virgules pour plusieurs)' });
-  const cityInput = field('input', { type: 'text', placeholder: 'Vos ville(s) - obligatoire (virgules pour plusieurs)' });
-  const countryInput = field('input', { type: 'text', placeholder: 'Votre/vos pays (optionnel)' });
+  const keywordInput = field('input', { type: 'text', name: 'keywords', placeholder: 'Ex. Data Engineer, Python... (virgules pour plusieurs)' });
+  const cityInput = field('input', { type: 'text', name: 'city', placeholder: 'Ville - obligatoire' });
+  const countryInput = field('input', { type: 'text', name: 'country', placeholder: 'Pays - obligatoire' });
   const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
-  const fileLabel = el('p', { class: 'hint', text: 'Aucun CV selectionne.' });
+  const fileLabel = el('p', { class: 'hint', text: props.hasProfile ? 'CV analyse.' : 'Aucun CV selectionne.' });
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
     if (!file) { fileLabel.textContent = 'Aucun CV selectionne.'; return; }
@@ -200,36 +218,44 @@ export function renderJobCandidatePanel(props) {
     props.onFileSelected(file);
   });
 
+  const launchBtn = el('button', {
+    class: 'btn btn-block',
+    text: props.isLive ? '\u{1F534} En direct' : 'Lancement',
+    disabled: props.isLive ? 'true' : undefined,
+    onclick: () => props.onStartLive(keywordInput.value, cityInput.value, countryInput.value),
+  });
+  const checkValidity = () => {
+    const ok = props.hasProfile && keywordInput.value.trim() && cityInput.value.trim() && countryInput.value.trim();
+    launchBtn.disabled = props.isLive || !ok;
+  };
+  [keywordInput, cityInput, countryInput].forEach((i) => i.addEventListener('input', checkValidity));
+
   root.appendChild(panel('Candidat - emploi', [
-    identityBlock(props.identity, props),
-    detailsReveal('recherche', [
-      keywordInput, cityInput, countryInput,
-      el('div', { class: 'dropzone' }, [
-        el('div', { class: 'hint', text: 'Votre CV (.docx/.txt), analyse localement des le depot.' }),
-        fileInput,
-      ]),
-      fileLabel,
-      el('div', { id: 'jc-cv-analysis' }),
-    ], { openByDefault: !props.isLive }),
-    el('div', { class: 'btn-row' }, [
-      el('button', {
-        class: 'btn btn-block', text: props.isLive ? '\u{1F534} En direct' : 'Lancement',
-        disabled: props.isLive ? 'true' : undefined,
-        onclick: () => props.onStartLive(keywordInput.value, cityInput.value, countryInput.value),
-      }),
-    ]),
+    topRow(
+      identityBlock(props.identity, props),
+      detailsToggle('Recherche', [
+        keywordInput, cityInput, countryInput,
+        el('div', { class: 'dropzone' }, [el('div', { class: 'hint', text: 'Votre CV (.docx/.txt), analyse localement des le depot.' }), fileInput]),
+        fileLabel,
+        el('div', { id: 'jc-cv-analysis' }),
+      ], { openByDefault: !props.isLive }),
+    ),
+    launchBtn,
     el('div', { class: 'btn-row' }, [el('button', { class: 'btn secondary', text: 'Reinitialiser ma recherche', onclick: props.onResetSearch })]),
     el('div', { class: 'section-divider' }),
     el('div', { id: 'jc-tabs' }),
     el('div', { id: 'jc-conversation' }),
   ], { marker: 'signal', meta: props.isLive ? '🔴 en direct' : null }));
+
+  restoreFields(root, draft);
+  checkValidity();
+  if (props.profile) renderCvAnalysisSection('jc-cv-analysis', props.profile, props.analysisOpts);
 }
 
 export function renderCvAnalysisSection(containerId, profile, opts) {
   const zone = document.getElementById(containerId);
   if (!zone) return;
   zone.innerHTML = '';
-
   const expNote = profile.yearsOfExperience == null ? 'anciennete inconnue'
     : `${profile.yearsOfExperience} an(s)${profile.yearsOfExperienceEstimated ? ' (estimee)' : ''}`;
   const boostLabel = opts.boostStatus === 'loading' ? 'Chargement du modele...'
@@ -260,36 +286,37 @@ export function renderJobRecruiterPanel(props) {
   const addFormContainer = el('div', { class: 'add-room-popover' });
 
   function renderAddForm() {
+    const d = captureFields(addFormContainer, ['title', 'roomCity', 'roomCountry', 'minYears', 'maxYears', 'text']);
     addFormContainer.innerHTML = '';
     addFormContainer.hidden = !addFormVisible;
     if (!addFormVisible) return;
-    const titleInput = field('input', { type: 'text', placeholder: 'Intitule du poste' });
-    const minYearsInput = field('input', { type: 'number', min: '0', max: '60', placeholder: 'Anciennete min. (annees, optionnel)' });
-    const maxYearsInput = field('input', { type: 'number', min: '0', max: '60', placeholder: 'Anciennete max. (annees, optionnel)' });
-    const countryInput = field('input', { type: 'text', placeholder: 'Pays (optionnel)' });
-    const textArea = field('textarea', { placeholder: 'Collez ici le texte de l\'annonce...' });
+    const titleInput = field('input', { type: 'text', name: 'title', placeholder: 'Intitule du poste' });
+    const cityInput = field('input', { type: 'text', name: 'roomCity', placeholder: 'Ville - obligatoire' });
+    const countryInput = field('input', { type: 'text', name: 'roomCountry', placeholder: 'Pays - obligatoire' });
+    const minYearsInput = field('input', { type: 'number', name: 'minYears', min: '0', max: '60', placeholder: 'Anciennete min. (annees, optionnel)' });
+    const maxYearsInput = field('input', { type: 'number', name: 'maxYears', min: '0', max: '60', placeholder: 'Anciennete max. (annees, optionnel)' });
+    const textArea = field('textarea', { name: 'text', placeholder: 'Collez ici le texte de l\'annonce...' });
+    const publishBtn = el('button', {
+      class: 'btn btn-block', text: 'Publier et rechercher en direct', disabled: 'true',
+      onclick: () => {
+        props.onCreateRoom({
+          title: titleInput.value.trim() || null, text: textArea.value,
+          city: cityInput.value.trim(), country: countryInput.value.trim(),
+          minYearsRequired: minYearsInput.value.trim() ? Number(minYearsInput.value) : null,
+          maxYearsRequired: maxYearsInput.value.trim() ? Number(maxYearsInput.value) : null,
+        });
+        addFormVisible = props.rooms.length === 0;
+        renderAddForm();
+      },
+    });
+    const checkValidity = () => { publishBtn.disabled = !(cityInput.value.trim() && countryInput.value.trim() && textArea.value.trim()); };
+    [cityInput, countryInput, textArea].forEach((i) => i.addEventListener('input', checkValidity));
+
     addFormContainer.appendChild(el('div', { class: 'panel nested' }, [
-      el('div', { class: 'panel-body' }, [
-        titleInput, minYearsInput, maxYearsInput, countryInput, textArea,
-        el('div', { class: 'btn-row' }, [
-          el('button', {
-            class: 'btn btn-block', text: 'Publier et rechercher en direct',
-            onclick: () => {
-              if (!textArea.value.trim()) return;
-              props.onCreateRoom({
-                title: titleInput.value.trim() || null,
-                text: textArea.value,
-                minYearsRequired: minYearsInput.value.trim() ? Number(minYearsInput.value) : null,
-                maxYearsRequired: maxYearsInput.value.trim() ? Number(maxYearsInput.value) : null,
-                country: countryInput.value.trim() || null,
-              });
-              addFormVisible = props.rooms.length === 0;
-              renderAddForm();
-            },
-          }),
-        ]),
-      ]),
+      el('div', { class: 'panel-body' }, [titleInput, cityInput, countryInput, minYearsInput, maxYearsInput, textArea, el('div', { class: 'btn-row' }, [publishBtn])]),
     ]));
+    restoreFields(addFormContainer, d);
+    checkValidity();
   }
 
   const tabsRow = el('div', { class: 'tabs-with-add' }, [
@@ -299,7 +326,7 @@ export function renderJobRecruiterPanel(props) {
   renderAddForm();
 
   root.appendChild(panel('Annonceur - emploi', [
-    identityBlock(props.identity, props),
+    topRow(identityBlock(props.identity, props), el('div', { class: 'flex-spacer' })),
     tabsRow,
     addFormContainer,
     el('div', { id: 'room-content' }),
@@ -321,17 +348,12 @@ export function renderRoomsList(rooms, activeRoomId, callbacks) {
     content.appendChild(el('p', { class: 'empty-state', text: 'Aucune salle d\'annonce publiee - creez-en une avec le bouton "+ Nouvelle salle".' }));
     return;
   }
-
   const active = rooms.find((r) => r.id === activeRoomId) || rooms[0];
 
   tabs.appendChild(el('div', { class: 'segmented' }, rooms.map((room) => el('button', {
     class: `segmented-item ${room.id === active.id ? 'active' : ''}`,
     onclick: () => callbacks.onSelectRoom?.(room.id),
-  }, [
-    room.unread > 0 ? '\u{1F514} ' : '',
-    room.title || 'Sans titre',
-    room.candidates.length > 0 ? badge(String(room.candidates.length)) : null,
-  ]))));
+  }, [room.unread > 0 ? '\u{1F514} ' : '', room.title || 'Sans titre', room.candidates.length > 0 ? badge(String(room.candidates.length)) : null]))));
 
   const ledgerItems = active.candidates.length === 0
     ? [el('li', { class: 'empty-state', text: '🔴 En direct - en attente de candidats...' })]
@@ -340,7 +362,7 @@ export function renderRoomsList(rooms, activeRoomId, callbacks) {
           el('span', { class: `ledger-score ${c.total === 0 ? 'weak' : ''}`, text: `${c.total}` }),
           el('span', {}, [
             el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}...` }),
-            el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-cles${c.cityStatus === 'match' ? ' · 📍' : ''}${c.countryStatus === 'match' ? ' · 🌍' : ''}${c.experienceStatus === 'match' ? ' · ✓ anciennete' : ((c.experienceStatus === 'below' || c.experienceStatus === 'above') ? ' · ⚠ anciennete' : '')}${c.cvFileName ? '' : ' · CV en cours...'}` }),
+            el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-cles${c.cityStatus === 'match' ? ' · 📍' : ''}${c.countryStatus === 'match' ? ' · 🌍' : ''}${(c.experienceStatus === 'below' || c.experienceStatus === 'above') ? ' · ⚠ anciennete' : c.experienceStatus === 'match' ? ' · ✓ anciennete' : ''}${c.cvFileName ? '' : ' · CV en cours...'}` }),
           ]),
           el('span', { class: 'ledger-chevron', text: '›' }),
         ]),
@@ -355,10 +377,7 @@ export function renderRoomsList(rooms, activeRoomId, callbacks) {
       class: 'room-text-details',
       open: roomTextOpenState.has(active.id) ? 'true' : undefined,
       ontoggle: (e) => { if (e.target.open) roomTextOpenState.add(active.id); else roomTextOpenState.delete(active.id); },
-    }, [
-      el('summary', { text: 'Voir le texte publie' }),
-      el('p', { class: 'room-text-preview', text: active.text }),
-    ]));
+    }, [el('summary', { text: 'Voir le texte publie' }), el('p', { class: 'room-text-preview', text: active.text })]));
   }
   content.appendChild(el('p', { class: 'hint', style: 'margin:0.5rem 0;', text: `${active.candidates.length} candidat(s) decouvert(s)` }));
   content.appendChild(el('ul', { class: 'ledger' }, ledgerItems));
@@ -369,7 +388,6 @@ export function renderCandidateDetail(entry, callbacks) {
   const zone = document.getElementById('detail-zone');
   if (!zone) return;
   zone.innerHTML = '';
-
   const reasons = entry.reasons.map((r) => el('div', { class: `reason ${r.type}` }, [r.label]));
   const meetingNote = field('input', { type: 'text', placeholder: 'Message ou creneau propose (optionnel - laissez vide pour un simple chat)...' });
   const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyee' });
@@ -399,15 +417,17 @@ export function renderCandidateDetail(entry, callbacks) {
 export function renderDatingPanel(props) {
   const root = document.getElementById('mode-dating');
   if (!root) return;
+  const draft = captureFields(root, ['title', 'demand', 'city', 'country', 'age', 'bio']);
   root.innerHTML = '';
 
-  const titleInput = field('input', { type: 'text', placeholder: 'Intitule de votre profil' });
-  const demandInput = field('input', { type: 'text', placeholder: 'Ce que vous recherchez (virgules pour plusieurs mots-cles)' });
-  const cityInput = field('input', { type: 'text', placeholder: 'Votre ville - obligatoire' });
-  const countryInput = field('input', { type: 'text', placeholder: 'Votre pays (optionnel)' });
-  const bioArea = field('textarea', { placeholder: 'Parlez de vous...' });
+  const titleInput = field('input', { type: 'text', name: 'title', placeholder: 'Intitule de votre profil' });
+  const demandInput = field('input', { type: 'text', name: 'demand', placeholder: 'Ce que vous recherchez (virgules pour plusieurs mots-cles)' });
+  const cityInput = field('input', { type: 'text', name: 'city', placeholder: 'Votre ville - obligatoire' });
+  const countryInput = field('input', { type: 'text', name: 'country', placeholder: 'Votre pays - obligatoire' });
+  const ageInput = field('input', { type: 'number', name: 'age', min: '18', max: '120', placeholder: 'Votre age (optionnel, affiche dans les resultats)' });
+  const bioArea = field('textarea', { name: 'bio', placeholder: 'Parlez de vous...' });
   const photoInput = el('input', { type: 'file', accept: 'image/*' });
-  const photoLabel = el('p', { class: 'hint', text: 'Aucune photo selectionnee.' });
+  const photoLabel = el('p', { class: 'hint', text: props.hasPhoto ? 'Photo selectionnee.' : 'Aucune photo selectionnee.' });
   photoInput.addEventListener('change', () => {
     const file = photoInput.files[0];
     if (!file) { photoLabel.textContent = 'Aucune photo selectionnee.'; return; }
@@ -415,24 +435,28 @@ export function renderDatingPanel(props) {
     props.onPhotoSelected(file);
   });
 
+  const launchBtn = el('button', {
+    class: 'btn btn-block', text: props.isLive ? '\u{1F534} En direct' : 'Lancement',
+    disabled: props.isLive ? 'true' : undefined,
+    onclick: () => props.onStartLive({ title: titleInput.value, demand: demandInput.value, city: cityInput.value, country: countryInput.value, age: ageInput.value, bio: bioArea.value }),
+  });
+  const checkValidity = () => {
+    const ok = demandInput.value.trim() && cityInput.value.trim() && countryInput.value.trim() && bioArea.value.trim();
+    launchBtn.disabled = props.isLive || !ok;
+  };
+  [demandInput, cityInput, countryInput, bioArea].forEach((i) => i.addEventListener('input', checkValidity));
+
   root.appendChild(panel('Rencontre', [
-    identityBlock(props.identity, props),
-    detailsReveal('profil', [
-      titleInput, demandInput, cityInput, countryInput, bioArea,
-      el('div', { class: 'dropzone' }, [
-        el('div', { class: 'hint', text: 'Votre photo - jointe uniquement a la diffusion, jamais stockee ailleurs.' }),
-        photoInput,
-      ]),
-      photoLabel,
-      el('div', { id: 'dt-analysis' }),
-    ], { openByDefault: !props.isLive }),
-    el('div', { class: 'btn-row' }, [
-      el('button', {
-        class: 'btn btn-block', text: props.isLive ? '🔴 En direct' : 'Lancement',
-        disabled: props.isLive ? 'true' : undefined,
-        onclick: () => props.onStartLive({ title: titleInput.value, demand: demandInput.value, city: cityInput.value, country: countryInput.value, bio: bioArea.value }),
-      }),
-    ]),
+    topRow(
+      identityBlock(props.identity, props),
+      detailsToggle('Profil', [
+        titleInput, demandInput, cityInput, countryInput, ageInput, bioArea,
+        el('div', { class: 'dropzone' }, [el('div', { class: 'hint', text: 'Votre photo - jointe uniquement a la diffusion, jamais stockee ailleurs.' }), photoInput]),
+        photoLabel,
+        el('div', { id: 'dt-analysis' }),
+      ], { openByDefault: !props.isLive }),
+    ),
+    launchBtn,
     el('div', { class: 'btn-row' }, [el('button', { class: 'btn secondary', text: 'Reinitialiser', onclick: props.onResetSearch })]),
     el('div', { class: 'section-divider' }),
     el('div', { class: 'section-title-sm', text: 'Profils compatibles' }),
@@ -440,6 +464,10 @@ export function renderDatingPanel(props) {
     el('div', { id: 'dt-tabs' }),
     el('div', { id: 'dt-conversation' }),
   ], { marker: 'signal', id: 'dating-panel', meta: props.isLive ? '🔴 en direct' : null }));
+
+  restoreFields(root, draft);
+  checkValidity();
+  if (props.profile) renderCvAnalysisSection('dt-analysis', props.profile, props.analysisOpts);
 }
 
 export function renderDatingMatches(matches, callbacks) {
@@ -455,7 +483,7 @@ export function renderDatingMatches(matches, callbacks) {
       el('button', { class: 'ledger-row', onclick: () => callbacks.onOpen(m) }, [
         el('span', { class: `ledger-score ${m.total === 0 ? 'weak' : ''}`, text: `${m.total}` }),
         el('span', {}, [
-          el('div', { class: 'ledger-title', text: m.displayName || `Pair ${String(m.peerId).slice(0, 10)}...` }),
+          el('div', { class: 'ledger-title', text: `${m.displayName || `Pair ${String(m.peerId).slice(0, 10)}...`}${m.age != null ? ` · ${m.age} ans` : ''}` }),
           el('div', { class: 'ledger-sub', text: `${m.cityStatus === 'match' ? '📍 meme ville' : ''}${m.photoUrl ? ' · photo recue' : ' · photo en cours...'}` }),
         ]),
         el('span', { class: 'ledger-chevron', text: '›' }),
@@ -473,7 +501,7 @@ export function renderDatingMatchDetail(entry, callbacks) {
   const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyee' });
 
   zone.appendChild(el('div', { class: 'panel nested' }, [
-    el('div', { class: 'panel-header' }, [el('span', { class: 'panel-marker' }), el('h3', { text: entry.displayName || 'Profil' })]),
+    el('div', { class: 'panel-header' }, [el('span', { class: 'panel-marker' }), el('h3', { text: `${entry.displayName || 'Profil'}${entry.age != null ? ` · ${entry.age} ans` : ''}` })]),
     el('div', { class: 'panel-body' }, [
       callbacks.photoUrl ? el('img', { src: callbacks.photoUrl, alt: 'Photo de profil', style: 'max-width:100%; border-radius:var(--radius-sm);' }) : el('p', { class: 'hint', text: 'Photo en cours de reception...' }),
       el('div', {}, reasons),

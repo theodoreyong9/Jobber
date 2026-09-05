@@ -117,24 +117,24 @@ test('computeMatchScore : le score est un compte brut de mots-cles en commun (pa
   assert.equal(score.totalRequired, job.keywords.length);
 });
 
-test('computeMatchScore : ville comparee litteralement au texte de l\'annonce, sans aucune liste', () => {
+test('computeMatchScore : ville comparee exactement au champ explicite de l\'annonce (comme le pays), sans aucune liste', () => {
   const candidate = buildCandidateProfile({ documentId: 'c', facts: [{ id: '1', field: 'skill', value: 'python', sourceDocumentId: 'c' }], city: 'Lyon' });
-  const job = buildJobProfile({ documentId: 'j', facts: [{ id: '2', field: 'skill', value: 'python', sourceDocumentId: 'j' }], rawText: 'Poste base a Lyon, region Rhone-Alpes.' });
+  const job = buildJobProfile({ documentId: 'j', facts: [{ id: '2', field: 'skill', value: 'python', sourceDocumentId: 'j' }], rawText: '', city: 'Lyon' });
 
   const score = computeMatchScore(candidate, job);
   assert.equal(score.cityStatus, 'match');
 });
 
-test('computeMatchScore : ville non mentionnee dans l\'annonce -> mismatch (pas un score invente)', () => {
+test('computeMatchScore : ville differente de celle de l\'annonce -> mismatch (pas un score invente)', () => {
   const candidate = buildCandidateProfile({ documentId: 'c', facts: [], city: 'Marseille' });
-  const job = buildJobProfile({ documentId: 'j', facts: [], rawText: 'Poste base a Lyon.' });
+  const job = buildJobProfile({ documentId: 'j', facts: [], rawText: '', city: 'Lyon' });
   const score = computeMatchScore(candidate, job);
   assert.equal(score.cityStatus, 'mismatch');
 });
 
-test('computeMatchScore : sans ville declaree, le statut est unknown (jamais mismatch par defaut)', () => {
+test('computeMatchScore : sans ville declaree d\'un cote ou de l\'autre, le statut est unknown (jamais mismatch par defaut)', () => {
   const candidate = buildCandidateProfile({ documentId: 'c', facts: [] });
-  const job = buildJobProfile({ documentId: 'j', facts: [], rawText: 'Poste a Lyon.' });
+  const job = buildJobProfile({ documentId: 'j', facts: [], rawText: '', city: 'Lyon' });
   const score = computeMatchScore(candidate, job);
   assert.equal(score.cityStatus, 'unknown');
 });

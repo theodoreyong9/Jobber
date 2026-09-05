@@ -196,13 +196,23 @@ textarea.field { min-height: 110px; resize: vertical; }
 }
 .mode-chip.active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
 .mode-chip.dating.active { background: #7a3b56; border-color: #7a3b56; }
+.mode-chip-badge { display: inline-block; min-width: 1.1rem; height: 1.1rem; line-height: 1.1rem; text-align: center; border-radius: 999px; background: var(--copper); color: var(--surface); font-size: 0.66rem; font-weight: 700; margin-left: 0.3rem; opacity: 0; transform: scale(0); transition: opacity 0.15s, transform 0.15s; }
+.mode-chip-badge.visible { opacity: 1; transform: scale(1); }
+
+/* --- Ligne identité + détails, côte à côte --- */
+.row-of-details { display: flex; gap: 0.5rem; align-items: flex-start; }
+.row-of-details > details, .row-of-details > .flex-spacer { flex: 1; min-width: 0; }
+.row-of-details > .identity-block { flex: none; width: 11rem; }
+@media (max-width: 480px) { .row-of-details { flex-direction: column; } .row-of-details > .identity-block { width: 100%; } }
 
 /* --- Bloc identité compact et repliable (par mode) --- */
 .identity-block { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
 .identity-block summary {
-  cursor: pointer; padding: 0.5rem 0.7rem; font-size: 0.84rem; font-weight: 600;
-  display: flex; justify-content: space-between; align-items: center; list-style: none;
+  cursor: pointer; padding: 0.5rem 0.6rem; font-size: 0.8rem; font-weight: 600;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; list-style: none;
+  overflow: hidden; white-space: nowrap;
 }
+.identity-block summary > span:first-child { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .identity-block summary::-webkit-details-marker { display: none; }
 .identity-block-body { padding: 0.6rem 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--line); }
 

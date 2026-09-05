@@ -1,12 +1,11 @@
 // src/app/main.js
 //
-// Point d'entree. Trois modes CUMULABLES, chacun avec sa propre identite :
-//   - jobCandidate : mots-cles + ville(s) obligatoire(s) + pays + CV, boost IA optionnel
-//   - jobRecruiter : salles d'annonce (titre, anciennete min/max, pays, texte), CPU seul
-//   - dating       : profil (intitule, ville, pays, texte, photo) + demande, boost IA optionnel
-//
-// Une seule connexion P2P partagee ; chaque message est tague `domain`
-// ('job' | 'dating') pour que les modes ne se melangent jamais.
+// Point d'entree. Trois modes, un seul VISIBLE a la fois (bascule
+// exclusive), mais chacun continue de tourner en arriere-plan avec sa
+// propre identite quand on n'est pas dessus :
+//   - jobCandidate : mots-cles + ville + pays (tous obligatoires) + CV, boost IA optionnel
+//   - jobRecruiter : salles d'annonce (titre, ville, pays obligatoires, anciennete min/max), CPU seul
+//   - dating       : profil (intitule, ville, pays obligatoires, age optionnel, texte, photo) + demande
 
 import { parseDocument } from '../core/parser/documentParser.js';
 import { extractFacts } from '../core/extraction/heuristicExtractor.js';
@@ -24,23 +23,22 @@ import {
 import * as chatStore from '../storage/chat.js';
 import * as blocklist from '../storage/blocklist.js';
 import * as identityStore from '../storage/identity.js';
-import { wipeAllLocalData } from '../storage/idb.js';
 import { validateCandidateBroadcast } from '../core/validation/schema.js';
 
 import * as llm from '../llm/provider.js';
 import { MODEL_CATALOG } from '../models/catalog.js';
 
 import {
-  renderShell, setModeVisibility, renderGlobalSettings,
-  renderJobCandidatePanel, renderCvAnalysisSection,
-  renderJobRecruiterPanel, renderCandidateDetail,
+  renderShell, setVisibleMode, setModeBadge,
+  renderJobCandidatePanel, renderJobRecruiterPanel, renderCandidateDetail,
   renderDatingPanel, renderDatingMatches, renderDatingMatchDetail,
-  renderConversationTabs, renderConversationView,
-  renderLog,
+  renderConversations, renderConversationView, renderLog,
 } from '../ui/render.js';
 
 const AI_MODEL_ID = MODEL_CATALOG.find((m) => m.tier === 'light')?.id ?? MODEL_CATALOG[0].id;
 const APP_ROOM_ID = 'jobmatch-p2p-v1';
+const NAMESPACE = { jobCandidate: 'job_candidate', jobRecruiter: 'job_recruiter', dating: 'dating' };
+const DOMAIN_OF = { jobCandidate: Domain.JOB, jobRecruiter: Domain.JOB, dating: Domain.DATING };
 
 const NOSTR_RELAY_URLS = [
   'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://nostr.wine', 'wss://offchain.pub',
@@ -64,7 +62,8 @@ const state = {
   webgpuAvailable: false,
   trystero: null,
   blockedPeers: new Set(),
-  enabledModes: { jobCandidate: false, jobRecruiter: false, dating: false },
+  visibleMode: null,
+  initializedModes: { jobCandidate: false, jobRecruiter: false, dating: false },
 
   jobCandidate: {
     identity: null, localProfile: null, cvFile: null, cvRawText: null,
@@ -80,7 +79,7 @@ const state = {
   },
 
   dating: {
-    identity: null, myProfile: null, myTitle: null, photoFile: null, bioRawText: null,
+    identity: null, myProfile: null, myTitle: null, myAge: null, photoFile: null, bioRawText: null,
     ranker: null, demandKeywords: [], cities: [], countries: [],
     boostStatus: 'off', isLive: false, receivedPhotoUrls: new Map(),
     conversations: new Map(), activeConversationId: null,
@@ -96,30 +95,21 @@ function log(message) {
 async function init() {
   state.blockedPeers = new Set((await blocklist.listBlockedPeers()).map((b) => b.peerId));
   state.webgpuAvailable = await llm.detectWebGpuSupport().catch(() => false);
-  renderShell(state.enabledModes, toggleMode);
-  renderGlobalSettings({ onResetLocalData: handleResetLocalData });
+  renderShell(state.visibleMode, toggleMode);
 }
 
-// =====================================================================
-// Bascule de modes (cumulables)
-// =====================================================================
-
 async function toggleMode(mode) {
-  state.enabledModes[mode] = !state.enabledModes[mode];
-  setModeVisibility(mode, state.enabledModes[mode]);
-  if (!state.enabledModes[mode]) return;
+  const showing = state.visibleMode === mode;
+  state.visibleMode = showing ? null : mode;
+  setVisibleMode(state.visibleMode);
+  if (!state.visibleMode) return;
 
-  if (mode === 'jobCandidate') {
-    if (!state.jobCandidate.identity) state.jobCandidate.identity = await identityStore.loadOrCreateIdentity('job_candidate');
-    renderJobCandidateUi();
-  } else if (mode === 'jobRecruiter') {
-    if (!state.jobRecruiter.identity) state.jobRecruiter.identity = await identityStore.loadOrCreateIdentity('job_recruiter');
-    renderRecruiterUi();
-  } else if (mode === 'dating') {
-    if (!state.dating.identity) state.dating.identity = await identityStore.loadOrCreateIdentity('dating');
-    renderDatingUi();
+  if (!state.initializedModes[mode]) {
+    state.initializedModes[mode] = true;
+    state[mode].identity = await identityStore.loadOrCreateIdentity(NAMESPACE[mode]);
   }
-  log(`Mode ${mode} activé.`);
+  rerender(mode);
+  log(`Mode ${mode} affiché.`);
 }
 
 async function ensureNetwork() {
@@ -147,15 +137,13 @@ async function ensureNetwork() {
   }
 }
 
-// =====================================================================
-// Identité — helpers génériques par mode
-// =====================================================================
-
-function identityCallbacks(modeKey, namespace, domain) {
+function identityCallbacks(modeKey) {
+  const namespace = NAMESPACE[modeKey];
+  const domain = DOMAIN_OF[modeKey];
   return {
     onSaveName: async (name) => {
       state[modeKey].identity = await identityStore.setDisplayName(namespace, name);
-      log(`[${modeKey}] Nom mis à jour : ${state[modeKey].identity.displayName || '(vide)'}.`);
+      log(`[${modeKey}] Nom mis à jour.`);
       rerender(modeKey);
       if (modeKey === 'jobCandidate') broadcastJobCandidateIfLive();
       if (modeKey === 'dating') broadcastDatingIfLive();
@@ -181,7 +169,46 @@ function identityCallbacks(modeKey, namespace, domain) {
       if (live && modeKey === 'jobCandidate') broadcastJobCandidateIfLive();
       if (live && modeKey === 'dating') broadcastDatingIfLive();
     },
+    onWipeMode: () => wipeModeData(modeKey),
   };
+}
+
+async function wipeModeData(modeKey) {
+  const s = state[modeKey];
+  const namespace = NAMESPACE[modeKey];
+  const domain = DOMAIN_OF[modeKey];
+  if (s.isLive) state.trystero?.send(createIdentityRetired({ domain, retiredId: s.identity.id }));
+
+  // Purge l'historique de chat local des pairs connus de CE mode (§ demande : par mode, pas global).
+  const peerIds = new Set();
+  if (modeKey === 'jobCandidate' || modeKey === 'dating') {
+    for (const peerId of s.conversations.keys()) peerIds.add(peerId);
+  } else if (modeKey === 'jobRecruiter') {
+    for (const peerId of s.knownChatPeers) peerIds.add(peerId);
+  }
+  await Promise.all(Array.from(peerIds).map((peerId) => chatStore.deleteThread(peerId).catch(() => {})));
+
+  if (modeKey === 'jobCandidate') {
+    Object.assign(s, {
+      localProfile: null, cvFile: null, cvRawText: null, searchKeywords: [], cities: [], countries: [],
+      boostStatus: 'off', isLive: false, conversations: new Map(), activeConversationId: null,
+    });
+  } else if (modeKey === 'jobRecruiter') {
+    Object.assign(s, {
+      rooms: new Map(), activeRoomId: null, openCandidateContext: null,
+      receivedCvUrls: new Map(), knownChatPeers: new Set(), openChatPeerId: null, openChatHistory: [],
+    });
+  } else if (modeKey === 'dating') {
+    Object.assign(s, {
+      myProfile: null, myTitle: null, myAge: null, photoFile: null, bioRawText: null, ranker: null,
+      demandKeywords: [], cities: [], countries: [], boostStatus: 'off', isLive: false,
+      receivedPhotoUrls: new Map(), conversations: new Map(), activeConversationId: null,
+    });
+  }
+  identityStore.clearIdentity(namespace);
+  s.identity = await identityStore.loadOrCreateIdentity(namespace);
+  log(`[${modeKey}] Données locales et identité supprimées (nouvel ID généré).`);
+  rerender(modeKey);
 }
 
 function rerender(modeKey) {
@@ -190,26 +217,26 @@ function rerender(modeKey) {
   else if (modeKey === 'dating') renderDatingUi();
 }
 
-// =====================================================================
-// Mode candidat (emploi)
-// =====================================================================
-
 function renderJobCandidateUi() {
+  if (state.visibleMode !== 'jobCandidate') return;
   const s = state.jobCandidate;
   renderJobCandidatePanel({
     identity: s.identity,
     isLive: s.isLive,
-    ...identityCallbacks('jobCandidate', 'job_candidate', Domain.JOB),
+    hasProfile: Boolean(s.localProfile),
+    profile: s.localProfile,
+    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostJobCandidateKeywords },
+    ...identityCallbacks('jobCandidate'),
     onFileSelected: analyzeCv,
     onStartLive: startJobCandidateLive,
     onResetSearch: resetJobCandidateSearch,
   });
-  if (s.localProfile) {
-    renderCvAnalysisSection('jc-cv-analysis', s.localProfile, {
-      boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostJobCandidateKeywords,
-    });
-  }
-  renderConversations('jobCandidate', 'jc-tabs', 'jc-conversation');
+  renderConversations('jc-tabs', 'jc-conversation', Array.from(s.conversations.values()), s.activeConversationId, {
+    onSelect: (id) => selectConversation('jobCandidate', id),
+    onAccept: (id) => acceptConversation('jobCandidate', id),
+    onDecline: (id) => declineConversation('jobCandidate', id),
+    onSend: (id, text) => sendConversationMessage('jobCandidate', id, text),
+  });
 }
 
 async function analyzeCv(file) {
@@ -230,21 +257,16 @@ async function analyzeCv(file) {
   s.boostStatus = 'off';
 
   log(`Mots-clés extraits : ${s.localProfile.keywords.join(', ') || '(aucun détecté)'}.`);
-  renderCvAnalysisSection('jc-cv-analysis', s.localProfile, {
-    boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostJobCandidateKeywords,
-  });
+  renderJobCandidateUi();
 }
 
 async function boostJobCandidateKeywords() {
   const s = state.jobCandidate;
   if (!s.localProfile || !s.cvRawText) return;
   await runBoost(s, () => broadcastJobCandidateIfLive());
-  renderCvAnalysisSection('jc-cv-analysis', s.localProfile, {
-    boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostJobCandidateKeywords,
-  });
+  renderJobCandidateUi();
 }
 
-/** Boost générique réutilisé par candidat emploi et rencontre. */
 async function runBoost(modeState, onDone) {
   if (!state.webgpuAvailable) { log('WebGPU indisponible : boost impossible.'); return; }
   modeState.boostStatus = 'loading';
@@ -277,17 +299,18 @@ async function startJobCandidateLive(kwRaw, cityRaw, countryRaw) {
   const s = state.jobCandidate;
   if (!s.localProfile || !s.cvFile) { log('Déposez et laissez analyser votre CV avant de lancer la recherche.'); return; }
   const keywords = parseCommaList(kwRaw);
-  if (keywords.length === 0) { log('Au moins un mot-clé de recherche est requis.'); return; }
   const cities = parseCommaList(cityRaw);
-  if (cities.length === 0) { log('Au moins une ville est requise.'); return; }
-  s.searchKeywords = keywords;
-  s.cities = cities;
-  s.countries = parseCommaList(countryRaw);
+  const countries = parseCommaList(countryRaw);
+  if (keywords.length === 0 || cities.length === 0 || countries.length === 0) {
+    log('Mot-clé, ville et pays sont tous obligatoires.');
+    return;
+  }
+  s.searchKeywords = keywords; s.cities = cities; s.countries = countries;
 
   await ensureNetwork();
   s.isLive = true;
   broadcastJobCandidateIfLive();
-  log(`[candidat] En direct : "${s.searchKeywords.join(', ')}" · ${s.cities.join(', ')} — CV diffusé.`);
+  log(`[candidat] En direct : "${s.searchKeywords.join(', ')}" · ${s.cities.join(', ')} · ${s.countries.join(', ')} — CV diffusé.`);
   renderJobCandidateUi();
 }
 
@@ -318,11 +341,8 @@ async function resetJobCandidateSearch() {
   renderJobCandidateUi();
 }
 
-// =====================================================================
-// Mode annonceur (emploi)
-// =====================================================================
-
 function renderRecruiterUi() {
+  if (state.visibleMode !== 'jobRecruiter') return;
   const s = state.jobRecruiter;
   const rooms = Array.from(s.rooms.values()).map((r) => ({
     id: r.id, title: r.title, text: r.text, unread: r.unread || 0,
@@ -331,20 +351,21 @@ function renderRecruiterUi() {
   if (!s.activeRoomId && rooms.length > 0) s.activeRoomId = rooms[0].id;
   renderJobRecruiterPanel({
     identity: s.identity, rooms, activeRoomId: s.activeRoomId,
-    ...identityCallbacks('jobRecruiter', 'job_recruiter', Domain.JOB),
+    ...identityCallbacks('jobRecruiter'),
     onCreateRoom: createRoom, onSelectRoom: selectRoom, onOpenCandidate: onOpenCandidateDetail, onRemoveRoom: removeRoom,
   });
   reopenPendingCandidateDetail();
 }
 
-async function createRoom({ title, text, minYearsRequired, maxYearsRequired, country }) {
+async function createRoom({ title, text, city, country, minYearsRequired, maxYearsRequired }) {
   const s = state.jobRecruiter;
+  if (!city || !country || !text.trim()) { log('Ville, pays et texte de l\'annonce sont obligatoires.'); return; }
   if (s.rooms.size >= MAX_POSTINGS_PER_RECRUITER) { log(`Limite atteinte : ${MAX_POSTINGS_PER_RECRUITER} salles maximum.`); return; }
   const roomLocalId = `room_${Date.now()}_${Math.floor(Math.random() * 1e4)}`;
   log('Analyse locale de l\'annonce (CPU, mots-clés uniquement)...');
   const doc = await parseDocument({ text, kind: 'job', id: roomLocalId });
   const { facts } = extractFacts(doc);
-  const jobProfile = buildJobProfile({ documentId: roomLocalId, facts, rawText: text, minYearsRequired, maxYearsRequired, country });
+  const jobProfile = buildJobProfile({ documentId: roomLocalId, facts, rawText: text, minYearsRequired, maxYearsRequired, country, city });
 
   const finalTitle = title || text.split('\n')[0].slice(0, 60) || 'Annonce sans titre';
   const ranker = new RoomRanker(jobProfile, finalTitle);
@@ -353,7 +374,7 @@ async function createRoom({ title, text, minYearsRequired, maxYearsRequired, cou
   s.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, text, jobProfile, ranker, unread: 0 });
   s.activeRoomId = roomLocalId;
   const rangeNote = (minYearsRequired != null || maxYearsRequired != null) ? `, ancienneté ${minYearsRequired ?? '0'}-${maxYearsRequired ?? '∞'} an(s)` : '';
-  log(`Salle publiée : « ${finalTitle} » (mots-clés : ${jobProfile.keywords.join(', ') || 'aucun'}${rangeNote}${jobProfile.country ? `, pays ${jobProfile.country}` : ''}).`);
+  log(`Salle publiée : « ${finalTitle} » (${jobProfile.city}, ${jobProfile.country}${rangeNote}, mots-clés : ${jobProfile.keywords.join(', ') || 'aucun'}).`);
 
   await ensureNetwork();
   refreshRecruiterUi();
@@ -377,10 +398,7 @@ function selectRoom(roomId) {
   refreshRecruiterUi();
 }
 
-function refreshRecruiterUi() {
-  if (!state.enabledModes.jobRecruiter) return;
-  renderRecruiterUi();
-}
+function refreshRecruiterUi() { renderRecruiterUi(); }
 
 function reopenPendingCandidateDetail() {
   const s = state.jobRecruiter;
@@ -415,7 +433,6 @@ function onOpenCandidateDetail(entry, room, opts = {}) {
   });
 }
 
-// --- Chat recruteur : mounté dans #detail-zone via le composant générique renderConversationView ---
 async function openRecruiterChatThread(peerId) {
   const s = state.jobRecruiter;
   s.openChatPeerId = peerId;
@@ -428,7 +445,7 @@ async function openRecruiterChatThread(peerId) {
 
 function renderRecruiterChatView() {
   const s = state.jobRecruiter;
-  const conv = { status: 'active', history: s.openChatHistory || [] };
+  const conv = { id: s.openChatPeerId, status: 'active', history: s.openChatHistory || [] };
   renderConversationView('detail-zone', conv, {
     onAccept: () => {}, onDecline: () => {},
     onSend: (_id, text) => sendRecruiterChatMessage(text),
@@ -448,52 +465,53 @@ function sendRecruiterChatMessage(text) {
 
 function appendRecruiterChatMessage(peerId, message) {
   const s = state.jobRecruiter;
-  if (s.openChatPeerId !== peerId) return; // conversation pas actuellement ouverte
+  if (s.openChatPeerId !== peerId) return;
   s.openChatHistory.push(message);
   renderRecruiterChatView();
 }
 
-// =====================================================================
-// Mode Rencontre
-// =====================================================================
-
 function renderDatingUi() {
+  if (state.visibleMode !== 'dating') return;
   const s = state.dating;
   renderDatingPanel({
     identity: s.identity, isLive: s.isLive,
-    ...identityCallbacks('dating', 'dating', Domain.DATING),
+    hasPhoto: Boolean(s.photoFile),
+    profile: s.myProfile,
+    analysisOpts: { boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostDatingKeywords },
+    ...identityCallbacks('dating'),
     onPhotoSelected: (file) => { s.photoFile = file; log(`Photo sélectionnée : ${file.name}.`); },
     onStartLive: startDatingLive,
     onResetSearch: resetDatingSearch,
   });
-  if (s.myProfile) {
-    renderCvAnalysisSection('dt-analysis', s.myProfile, {
-      boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostDatingKeywords,
-    });
-  }
   refreshDatingMatches();
-  renderConversations('dating', 'dt-tabs', 'dt-conversation');
+  renderConversations('dt-tabs', 'dt-conversation', Array.from(s.conversations.values()), s.activeConversationId, {
+    onSelect: (id) => selectConversation('dating', id),
+    onAccept: (id) => acceptConversation('dating', id),
+    onDecline: (id) => declineConversation('dating', id),
+    onSend: (id, text) => sendConversationMessage('dating', id, text),
+  });
 }
 
-async function startDatingLive({ title, demand, city, country, bio }) {
+async function startDatingLive({ title, demand, city, country, age, bio }) {
   const s = state.dating;
   const cities = parseCommaList(city);
-  if (cities.length === 0) { log('Une ville est requise pour Rencontre.'); return; }
+  const countries = parseCommaList(country);
   const demandKeywords = parseCommaList(demand);
-  if (demandKeywords.length === 0) { log('Au moins un mot-clé de demande est requis.'); return; }
-  if (!bio || !bio.trim()) { log('Décrivez-vous un minimum avant de lancer.'); return; }
+  if (cities.length === 0 || countries.length === 0 || demandKeywords.length === 0 || !bio || !bio.trim()) {
+    log('Mot-clé de demande, ville, pays et description sont tous obligatoires.');
+    return;
+  }
 
   const documentId = `dating_${Date.now()}`;
   const doc = await parseDocument({ text: bio, kind: 'cv', id: documentId });
   const { facts } = extractFacts(doc);
-  const countryList = parseCommaList(country);
 
-  // "Mon profil" = ma propre salle : les autres me trouvent via mes mots-clés (même mécanique qu'une salle d'annonce).
-  s.myProfile = buildJobProfile({ documentId, facts, rawText: bio, country: countryList[0] || null });
+  s.myProfile = buildJobProfile({ documentId, facts, rawText: bio, country: countries[0], city: cities[0] });
   s.myTitle = title?.trim() || 'Profil sans titre';
+  s.myAge = age ? Number(age) : null;
   s.bioRawText = bio;
   s.cities = cities;
-  s.countries = countryList;
+  s.countries = countries;
   s.demandKeywords = demandKeywords;
   s.boostStatus = 'off';
 
@@ -503,7 +521,7 @@ async function startDatingLive({ title, demand, city, country, bio }) {
   await ensureNetwork();
   s.isLive = true;
   broadcastDatingIfLive();
-  log(`[rencontre] En direct : « ${s.myTitle} » · ${s.cities.join(', ')} — profil + photo diffusés.`);
+  log(`[rencontre] En direct : « ${s.myTitle} » · ${s.cities.join(', ')} · ${s.countries.join(', ')} — profil + photo diffusés.`);
   renderDatingUi();
 }
 
@@ -514,7 +532,7 @@ function broadcastDatingIfLive(targetPeerId) {
     domain: Domain.DATING,
     senderId: s.identity.id, displayName: s.identity.displayName || s.myTitle,
     searchKeywords: s.demandKeywords, skills: s.myProfile.keywords,
-    cities: s.cities, countries: s.countries,
+    cities: s.cities, countries: s.countries, age: s.myAge,
     cvFileName: s.photoFile?.name ?? null,
   });
   state.trystero?.send(msg, targetPeerId);
@@ -525,9 +543,7 @@ async function boostDatingKeywords() {
   const s = state.dating;
   if (!s.myProfile || !s.bioRawText) return;
   await runBoost(s, () => broadcastDatingIfLive());
-  renderCvAnalysisSection('dt-analysis', s.myProfile, {
-    boostStatus: s.boostStatus, webgpuAvailable: state.webgpuAvailable, onBoost: boostDatingKeywords,
-  });
+  renderDatingUi();
 }
 
 async function resetDatingSearch() {
@@ -536,13 +552,13 @@ async function resetDatingSearch() {
     state.trystero?.send(createIdentityRetired({ domain: Domain.DATING, retiredId: s.identity.id }));
     log('[rencontre] Recherche arrêtée.');
   }
-  s.myProfile = null; s.myTitle = null; s.photoFile = null; s.bioRawText = null;
+  s.myProfile = null; s.myTitle = null; s.myAge = null; s.photoFile = null; s.bioRawText = null;
   s.ranker = null; s.demandKeywords = []; s.cities = []; s.countries = []; s.boostStatus = 'off'; s.isLive = false;
   renderDatingUi();
 }
 
 function refreshDatingMatches() {
-  if (!state.enabledModes.dating) return;
+  if (state.visibleMode !== 'dating') return;
   if (!state.dating.ranker) { renderDatingMatches([], { onOpen: () => {} }); return; }
   const matches = Array.from(state.dating.ranker.scores.values()).map((sc) => ({
     ...sc, photoUrl: state.dating.receivedPhotoUrls.get(sc.peerId) || null,
@@ -564,77 +580,60 @@ function onOpenDatingMatch(entry) {
       }
       state.dating.conversations.set(entry.peerId, { id: entry.peerId, peerId: entry.peerId, displayName: entry.displayName, status: 'pending', direction: 'outgoing', history: [], unread: 0 });
       log(`Proposition envoyée à ${who}.`);
-      renderConversations('dating', 'dt-tabs', 'dt-conversation');
+      renderDatingUi();
     },
   });
 }
 
-// =====================================================================
-// Messagerie à onglets — générique candidat emploi + rencontre
-// =====================================================================
-
-function renderConversations(modeKey, tabsContainerId, viewContainerId) {
-  if (!state.enabledModes[modeKey]) return;
-  const s = state[modeKey];
-  const list = Array.from(s.conversations.values());
-  renderConversationTabs(tabsContainerId, list, s.activeConversationId, (id) => selectConversation(modeKey, id, tabsContainerId, viewContainerId));
-  const active = s.conversations.get(s.activeConversationId) || null;
-  renderConversationView(viewContainerId, active, {
-    onAccept: (id) => acceptConversation(modeKey, id, tabsContainerId, viewContainerId),
-    onDecline: (id) => declineConversation(modeKey, id, tabsContainerId, viewContainerId),
-    onSend: (id, text) => sendConversationMessage(modeKey, id, text, viewContainerId),
-  });
-}
-
-function selectConversation(modeKey, id, tabsContainerId, viewContainerId) {
+function selectConversation(modeKey, id) {
   const s = state[modeKey];
   s.activeConversationId = id;
   const conv = s.conversations.get(id);
   if (conv) conv.unread = 0;
-  renderConversations(modeKey, tabsContainerId, viewContainerId);
+  rerender(modeKey);
+  refreshModeBadges();
 }
 
-async function acceptConversation(modeKey, peerId, tabsContainerId, viewContainerId) {
+async function acceptConversation(modeKey, peerId) {
   const s = state[modeKey];
   const conv = s.conversations.get(peerId);
   if (!conv) return;
-  const domain = modeKey === 'dating' ? Domain.DATING : Domain.JOB;
+  const domain = DOMAIN_OF[modeKey];
   state.trystero?.send(createChatResponse({ domain, toPeerId: peerId, requestId: conv.requestId, accepted: true }), peerId);
   conv.status = 'active';
   conv.unread = 0;
   await chatStore.saveThread({ peerId, createdAt: Date.now(), active: true });
   conv.history = (await chatStore.listMessagesForPeer(peerId)).map((m) => ({ senderId: m.senderId, text: m.text, timestamp: m.timestamp }));
   s.activeConversationId = peerId;
-  renderConversations(modeKey, tabsContainerId, viewContainerId);
+  rerender(modeKey);
+  refreshModeBadges();
 }
 
-function declineConversation(modeKey, peerId, tabsContainerId, viewContainerId) {
+function declineConversation(modeKey, peerId) {
   const s = state[modeKey];
   const conv = s.conversations.get(peerId);
   if (!conv) return;
-  const domain = modeKey === 'dating' ? Domain.DATING : Domain.JOB;
+  const domain = DOMAIN_OF[modeKey];
   state.trystero?.send(createChatResponse({ domain, toPeerId: peerId, requestId: conv.requestId, accepted: false }), peerId);
   s.conversations.delete(peerId);
   if (s.activeConversationId === peerId) s.activeConversationId = null;
-  renderConversations(modeKey, tabsContainerId, viewContainerId);
+  rerender(modeKey);
+  refreshModeBadges();
 }
 
-function sendConversationMessage(modeKey, peerId, text, viewContainerId) {
+function sendConversationMessage(modeKey, peerId, text) {
   const s = state[modeKey];
   const conv = s.conversations.get(peerId);
   if (!conv) return;
-  const domain = modeKey === 'dating' ? Domain.DATING : Domain.JOB;
+  const domain = DOMAIN_OF[modeKey];
   const msg = createChatMessage({ domain, toPeerId: peerId, text });
   state.trystero?.send(msg, peerId);
   chatStore.saveMessage({ id: msg.id, peerId, senderId: 'me', timestamp: msg.timestamp, text: msg.text });
   conv.history.push({ senderId: 'me', text: msg.text, timestamp: msg.timestamp });
-  renderConversationView(viewContainerId, conv, {
-    onAccept: () => {}, onDecline: () => {},
-    onSend: (id, t) => sendConversationMessage(modeKey, id, t, viewContainerId),
-  });
+  rerender(modeKey);
 }
 
-function addIncomingProposal(modeKey, message, peerId, kind, tabsContainerId, viewContainerId) {
+function addIncomingProposal(modeKey, message, peerId, kind) {
   const s = state[modeKey];
   const conv = {
     id: peerId, peerId, requestId: message.id,
@@ -644,12 +643,18 @@ function addIncomingProposal(modeKey, message, peerId, kind, tabsContainerId, vi
   };
   s.conversations.set(peerId, conv);
   if (!s.activeConversationId) s.activeConversationId = peerId;
-  renderConversations(modeKey, tabsContainerId, viewContainerId);
+  rerender(modeKey);
+  refreshModeBadges();
 }
 
-// =====================================================================
-// Réception réseau
-// =====================================================================
+function refreshModeBadges() {
+  const jcUnread = Array.from(state.jobCandidate.conversations.values()).reduce((n, c) => n + (c.unread || 0), 0);
+  const dtUnread = Array.from(state.dating.conversations.values()).reduce((n, c) => n + (c.unread || 0), 0);
+  const jrUnread = Array.from(state.jobRecruiter.rooms.values()).reduce((n, r) => n + (r.unread || 0), 0);
+  setModeBadge('jobCandidate', jcUnread);
+  setModeBadge('jobRecruiter', jrUnread);
+  setModeBadge('dating', dtUnread);
+}
 
 function handleIncomingMessage(message, peerId) {
   if (state.blockedPeers.has(peerId)) return;
@@ -662,7 +667,7 @@ function handleIncomingMessage(message, peerId) {
       if (domain === Domain.DATING) {
         if (state.dating.ranker) state.dating.ranker.ingestBroadcast(peerId, validation.value);
         refreshDatingMatches();
-      } else if (state.enabledModes.jobRecruiter) {
+      } else if (state.initializedModes.jobRecruiter) {
         for (const room of state.jobRecruiter.rooms.values()) room.ranker.ingestBroadcast(peerId, validation.value);
         refreshRecruiterUi();
       }
@@ -675,11 +680,8 @@ function handleIncomingMessage(message, peerId) {
     case MessageType.CHAT_REQUEST:
     case MessageType.MEETING_PROPOSAL: {
       const kind = message.type === MessageType.MEETING_PROPOSAL ? 'meeting' : 'chat';
-      if (domain === Domain.DATING && state.enabledModes.dating) {
-        addIncomingProposal('dating', message, peerId, kind, 'dt-tabs', 'dt-conversation');
-      } else if (domain === Domain.JOB && state.enabledModes.jobCandidate) {
-        addIncomingProposal('jobCandidate', message, peerId, kind, 'jc-tabs', 'jc-conversation');
-      }
+      if (domain === Domain.DATING && state.initializedModes.dating) addIncomingProposal('dating', message, peerId, kind);
+      else if (domain === Domain.JOB && state.initializedModes.jobCandidate) addIncomingProposal('jobCandidate', message, peerId, kind);
       break;
     }
     case MessageType.CHAT_RESPONSE: {
@@ -687,7 +689,7 @@ function handleIncomingMessage(message, peerId) {
         const conv = state.dating.conversations.get(peerId);
         if (message.accepted) { conv.status = 'active'; chatStore.saveThread({ peerId, createdAt: Date.now(), active: true }); }
         else state.dating.conversations.delete(peerId);
-        renderConversations('dating', 'dt-tabs', 'dt-conversation');
+        rerender('dating');
       } else if (domain === Domain.JOB && state.jobRecruiter.knownChatPeers.has(peerId)) {
         if (message.accepted) openRecruiterChatThread(peerId);
         else log(`Proposition refusée par ${peerId.slice(0, 8)}…`);
@@ -700,12 +702,12 @@ function handleIncomingMessage(message, peerId) {
         const conv = state.dating.conversations.get(peerId);
         conv.history.push({ senderId: peerId, text: message.text, timestamp: message.timestamp });
         if (state.dating.activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
-        renderConversations('dating', 'dt-tabs', 'dt-conversation');
+        rerender('dating'); refreshModeBadges();
       } else if (domain === Domain.JOB && state.jobCandidate.conversations.has(peerId)) {
         const conv = state.jobCandidate.conversations.get(peerId);
         conv.history.push({ senderId: peerId, text: message.text, timestamp: message.timestamp });
         if (state.jobCandidate.activeConversationId !== peerId) conv.unread = (conv.unread || 0) + 1;
-        renderConversations('jobCandidate', 'jc-tabs', 'jc-conversation');
+        rerender('jobCandidate'); refreshModeBadges();
       } else if (domain === Domain.JOB && state.jobRecruiter.knownChatPeers.has(peerId)) {
         appendRecruiterChatMessage(peerId, { senderId: peerId, text: message.text, timestamp: message.timestamp });
       }
@@ -731,20 +733,6 @@ function handleIncomingFile(blob, meta, peerId) {
     log(`CV reçu de ${peerId.slice(0, 8)}… (${meta?.name || 'fichier'}).`);
     if (state.jobRecruiter.openCandidateContext?.peerId === peerId) refreshRecruiterUi();
   }
-}
-
-// =====================================================================
-// Confidentialité
-// =====================================================================
-
-async function handleResetLocalData() {
-  if (state.jobCandidate.isLive) state.trystero?.send(createIdentityRetired({ domain: Domain.JOB, retiredId: state.jobCandidate.identity?.id }));
-  if (state.dating.isLive) state.trystero?.send(createIdentityRetired({ domain: Domain.DATING, retiredId: state.dating.identity?.id }));
-  state.trystero?.leave();
-  await wipeAllLocalData();
-  identityStore.clearAllIdentities();
-  log('Toutes les données locales et identités ont été supprimées.');
-  window.location.reload();
 }
 
 init();

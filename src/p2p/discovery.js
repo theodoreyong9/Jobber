@@ -137,6 +137,7 @@ export class RoomRanker {
       ...score,
       peerId, // identifiant de transport courant : utilisé pour router les messages (chat, rendez-vous)
       displayName: broadcast.displayName || null,
+      age: typeof broadcast.age === 'number' ? broadcast.age : null,
       cvFileName: broadcast.cvFileName || null,
     });
     this._emit();

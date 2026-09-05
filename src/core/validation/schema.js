@@ -125,6 +125,9 @@ export function validateCandidateBroadcast(broadcast) {
   if (b.yearsOfExperience !== undefined && b.yearsOfExperience !== null) {
     if (typeof b.yearsOfExperience !== 'number' || b.yearsOfExperience < 0 || b.yearsOfExperience > 80) errors.push('yearsOfExperience invalide.');
   }
+  if (b.age !== undefined && b.age !== null) {
+    if (typeof b.age !== 'number' || b.age < 0 || b.age > 130) errors.push('age invalide.');
+  }
 
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: b };

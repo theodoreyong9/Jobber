@@ -30,7 +30,7 @@ function base(type) {
   return { type, version: PROTOCOL_VERSION, id: nextId(), timestamp: Date.now() };
 }
 
-export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displayName, searchKeywords, skills, cities, countries, yearsOfExperience, yearsOfExperienceEstimated, cvFileName }) {
+export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displayName, searchKeywords, skills, cities, countries, yearsOfExperience, yearsOfExperienceEstimated, age, cvFileName }) {
   return {
     ...base(MessageType.CANDIDATE_BROADCAST),
     domain,
@@ -42,6 +42,7 @@ export function createCandidateBroadcast({ domain = Domain.JOB, senderId, displa
     countries: countries || [],
     yearsOfExperience: typeof yearsOfExperience === 'number' ? yearsOfExperience : null,
     yearsOfExperienceEstimated: Boolean(yearsOfExperienceEstimated),
+    age: typeof age === 'number' ? age : null,
     cvFileName: cvFileName || null,
   };
 }

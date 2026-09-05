@@ -68,9 +68,9 @@ export function buildCandidateProfile({ documentId, facts, semantic = null, city
 }
 
 /**
- * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, rawText: string, minYearsRequired?: number|null, maxYearsRequired?: number|null, country?: string|null }} args
+ * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, rawText: string, minYearsRequired?: number|null, maxYearsRequired?: number|null, country?: string|null, city?: string|null }} args
  */
-export function buildJobProfile({ documentId, facts, semantic = null, rawText, minYearsRequired = null, maxYearsRequired = null, country = null }) {
+export function buildJobProfile({ documentId, facts, semantic = null, rawText, minYearsRequired = null, maxYearsRequired = null, country = null, city = null }) {
   const keywords = mergeKeywords(facts, semantic);
 
   return {
@@ -80,6 +80,7 @@ export function buildJobProfile({ documentId, facts, semantic = null, rawText, m
     minYearsRequired: typeof minYearsRequired === 'number' ? minYearsRequired : null,
     maxYearsRequired: typeof maxYearsRequired === 'number' ? maxYearsRequired : null,
     country: country ? cleanToken(country) : null,
+    city: city ? cleanToken(city) : null,
     generatedAt: Date.now(),
   };
 }

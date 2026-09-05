@@ -14,33 +14,35 @@
 Application web statique. Aucun backend applicatif, aucun compte, aucune IA
 cloud, **aucune réécriture de document**.
 
-## Trois modes cumulables
+## Trois modes, un seul affiché à la fois
 
-En haut de l'écran, trois puces activables **indépendamment et
-simultanément** : 🧑‍💼 **Candidat** · 🏢 **Annonceur** · 💞 **Rencontre**.
-Chaque mode a sa **propre identité** (id + nom, namespacée séparément —
-`src/storage/identity.js`), sa propre connexion réseau (partagée en
-coulisses, une seule room P2P pour tout le monde), et son propre panneau
-autonome. Rien n'oblige à choisir un seul mode : on peut être candidat et
-annonceur en même temps, avec deux identités distinctes si on le souhaite.
+En haut de l'écran, trois puces : 🧑‍💼 **Candidat** · 🏢 **Annonceur** ·
+💞 **Rencontre**. **Un seul panneau est affiché à la fois** (bascule
+exclusive, comme des onglets) — mais chaque mode **continue de tourner en
+arrière-plan** avec sa propre identité pendant qu'on regarde un autre :
+la connexion réseau reste active, les messages continuent d'arriver, un
+badge numérique apparaît sur la puce d'un mode non affiché s'il y a de
+l'activité. Rien ne s'empile visuellement, rien n'est perdu en changeant
+de mode.
 
 Chaque panneau suit la même structure :
-1. **Bloc identité** repliable (id visible, renommage, restauration d'un ID
-   noté ailleurs, invalidation d'un ID compromis).
+1. **Bloc identité** (repliable, à côté du bloc "détails") : id visible,
+   renommage, restauration d'un ID noté ailleurs, invalidation d'un ID
+   compromis, et suppression des données **de ce mode uniquement**.
 2. **Détails** repliables (les champs de profil/recherche du mode).
 3. **Boost IA** optionnel (candidat emploi et rencontre uniquement).
-4. **Lancement**.
+4. **Lancement** — désactivé tant que les champs obligatoires ne sont pas
+   remplis.
 5. **Onglets** avec badge de notification — conversations (candidat,
    rencontre) ou salles d'annonce (annonceur) — et à l'intérieur, le chat
    avec défilement automatique.
 
 ## Candidat (emploi)
 
-Mots-clés + ville(s) (**obligatoire**) + pays (optionnel) + CV
+Mots-clés + ville + pays (**tous les trois obligatoires**) + CV
 (`.docx`/`.txt`, analysé localement dès le dépôt). Boost IA optionnel avant
-l'envoi (ajoute des mots-clés au CPU, jamais ne les remplace). Lancement =
-diffusion (nom, mots-clés, ville(s), pays, CV en pièce jointe) à tous les
-annonceurs déjà connectés et à venir.
+l'envoi (ajoute des mots-clés au CPU, jamais ne les remplace). Le bouton
+Lancement reste désactivé tant que ces champs ne sont pas remplis.
 
 Les propositions reçues (chat ou rendez-vous) arrivent en onglets, avec un
 badge 🔔 sur les demandes en attente et un badge numérique sur les messages
@@ -50,10 +52,12 @@ connectés (`identity_retired`) avant de tout effacer localement.
 ## Annonceur (emploi)
 
 Une ou plusieurs **salles d'annonce**, créées via un bouton **"+ Nouvelle
-salle"** juste à côté des onglets (plus un formulaire toujours visible).
-Chaque salle : intitulé, **ancienneté min et max** (fourchette, toutes deux
-optionnelles et indépendantes), pays, texte. Aucune IA de ce côté : un seul
-score, un compte de mots-clés en commun, calculé localement.
+salle"** juste à côté des onglets. Chaque salle : intitulé, **ville et pays
+(obligatoires)**, ancienneté min et max (fourchette, toutes deux
+optionnelles et indépendantes), texte (obligatoire). Aucune IA de ce côté :
+un seul score, un compte de mots-clés en commun, calculé localement. La
+ville et le pays sont comparés **exactement** (comme tout le reste) —
+aucune liste de villes, aucune recherche approximative dans le texte.
 
 L'ancienneté du candidat comparée à la fourchette est calculée à partir de
 la **date la plus ancienne réellement trouvée dans son CV** (pas d'une
@@ -63,8 +67,11 @@ phrase fragile type "5 ans d'expérience", sauf si elle existe explicitement
 ## Rencontre
 
 Un mode symétrique : chaque personne diffuse à la fois **ce qu'elle est**
-(intitulé, ville, pays, texte de profil, photo) et **ce qu'elle demande**
-(mots-clés de recherche) — en une seule diffusion (`domain: "dating"`). En
+(intitulé, ville et pays obligatoires, âge optionnel affiché dans les
+résultats, texte de profil, photo) et **ce qu'elle demande** (mots-clés de
+recherche, obligatoires) — en une seule diffusion (`domain: "dating"`).
+L'âge n'entre dans aucun calcul de score : c'est une information affichée,
+point. En
 interne, "mon profil" fonctionne exactement comme une salle d'annonce (même
 moteur de scoring, même filtre par mots-clés), et "ma demande" fonctionne
 exactement comme une diffusion candidat — le même code est réutilisé tel
