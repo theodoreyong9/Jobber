@@ -62,17 +62,18 @@ export function disambiguate(candidateSkills, jobRequirement) {
 }
 
 /**
- * Scoring continu optionnel (§ couche IA sur les découvertes) : évaluation
- * complète (compétences, séniorité, domaine, localisation, langues), pas
- * une simple comparaison de mots-clés. Ne rejette jamais côté worker (voir
- * llm.worker.js) — mais on garde un try/catch ici aussi, en dernier
- * recours (ex: Worker mort, postMessage qui échoue), pour qu'un problème
- * GPU ne remonte JAMAIS comme une exception non gérée jusqu'au code appelant.
- * @returns {Promise<{ ok: true, score: number, justification: string } | { ok: false }>}
+ * "Boost" optionnel côté candidat (§ demande : IA côté candidat, pas côté
+ * annonceur) : suggère des mots-clés additionnels à partir du CV, avant
+ * l'envoi. Ne rejette jamais côté worker (voir llm.worker.js) — mais on
+ * garde un try/catch ici aussi, en dernier recours (ex: Worker mort,
+ * postMessage qui échoue), pour qu'un problème GPU ne remonte JAMAIS comme
+ * une exception non gérée jusqu'au code appelant : le candidat doit
+ * toujours pouvoir passer en direct avec ses seuls mots-clés CPU.
+ * @returns {Promise<{ ok: true, keywords: string[] } | { ok: false }>}
  */
-export async function scoreRelevance(params) {
+export async function boostKeywords(params) {
   try {
-    return await call('score_relevance', params);
+    return await call('boost_keywords', params);
   } catch (e) {
     return { ok: false };
   }

@@ -1,49 +1,101 @@
 # Jobber — matching emploi P2P, local et sans compte
 
+> Le candidat veut des contacts alors qu'il doit mieux écrire son CV ?
+> L'annonceur filtre les candidats alors qu'il doit mieux écrire son offre
+> d'emploi ?
+>
+> **La solution Jobber.** Vous envoyez votre CV, vous ne voyez pas
+> l'annonce, vous attendez le contact. Vous envoyez votre annonce, vous
+> recevez un CV augmenté, vous rentrez en contact.
+>
+> Jobber est le premier portail emploi live assisté par IA, sans permission
+> (aucun compte nécessaire).
+
 Application web statique de mise en relation candidats/recruteurs. Aucun
 backend applicatif, aucun compte, aucune IA cloud, **aucune réécriture de
 document**.
 
-## Le flux (volontairement simple et asymétrique)
+## Le flux
 
 **Candidat**
 1. Se donne un nom (mis en cache, visible, réutilisé d'une session à l'autre).
-2. Renseigne **un mot-clé de recherche** (ex. "Data Engineer", "Python") —
-   obligatoire : c'est lui qui décide quelles salles d'annonce analyseront
-   son profil.
-3. Dépose son CV (fichier `.docx`/`.txt` — pas de texte collé).
-4. Clique sur **Rechercher en direct**. C'est tout.
+2. Renseigne **un ou plusieurs mots-clés de recherche** et **une ou
+   plusieurs villes** (virgules pour en donner plusieurs — ex.
+   "Data Engineer, Python" / "Paris, Lyon").
+3. Dépose son CV (fichier `.docx`/`.txt`) — **analysé automatiquement dès
+   le dépôt**, localement.
+4. Peut, en option, **booster ses mots-clés avec l'IA** avant l'envoi (voir
+   plus bas) — jamais obligatoire.
+5. Clique sur **Rechercher en direct**.
 
-Derrière ce clic : le CPU extrait des mots-clés du CV, localement, puis le
-navigateur **diffuse** (nom + mot-clé + mots-clés du CV + CV en pièce
-jointe) à tous les annonceurs déjà connectés — et à chaque nouvel annonceur
-qui rejoint le réseau ensuite. Pas de modèle à choisir, pas d'IA à ce stade.
+Derrière ce clic : le navigateur **diffuse** (nom + mots-clés + villes + CV
+en pièce jointe) à tous les annonceurs déjà connectés, et à chaque nouvel
+annonceur qui rejoint ensuite. Un bouton **Réinitialiser ma recherche**
+permet d'arrêter et de repartir de zéro à tout moment — les annonceurs
+connectés sont prévenus immédiatement (message `identity_retired`), pas
+seulement à la prochaine coupure réseau.
 
 **Annonceur**
 1. Se donne un nom.
-2. Crée une ou plusieurs **salles d'annonce** : un titre + le texte de
-   l'annonce collé (jamais de fichier, jamais publié — le texte reste sur
-   son appareil).
+2. Crée une ou plusieurs **salles d'annonce** : un titre, une ancienneté
+   minimale optionnelle (nombre d'années), et le texte de l'annonce collé
+   (jamais de fichier, jamais publié — le texte reste sur son appareil).
 3. Clique sur **Publier et rechercher en direct**.
 
 Pour chaque salle, le CPU extrait des mots-clés de l'annonce, localement.
-Quand une diffusion candidat arrive, **son mot-clé est d'abord comparé aux
-mots-clés de la salle (titre + compétences + domaines)** — s'il ne
-correspond à rien, la diffusion est ignorée avant toute analyse ou scoring.
-C'est ce filtre qui évite de surcharger le recruteur avec des candidats
-hors sujet (`RoomRanker.ingestBroadcast` → `matchesKeywordGate`,
-`src/p2p/discovery.js`). Seules les diffusions qui passent ce premier tri
-sont ensuite comparées mot-clé par mot-clé aux exigences de l'annonce pour
-produire un score.
+Quand une diffusion candidat arrive, **au moins un de ses mots-clés doit
+correspondre à la salle** (titre ou mots-clés extraits) avant toute
+analyse — ça évite de surcharger l'annonceur avec des candidats hors sujet
+(`RoomRanker.ingestBroadcast` → `matchesKeywordGate`,
+`src/p2p/discovery.js`). Les diffusions qui passent ce premier tri sont
+ensuite comparées mot-clé par mot-clé pour produire un score — **un seul
+score, purement CPU, aucune couche IA de ce côté** (voir plus bas).
 
-L'annonceur peut alors, pour un candidat donné : **ouvrir un chat** ou
-**proposer un rendez-vous** (message libre). Le candidat reçoit l'un ou
-l'autre et accepte ou refuse.
+L'annonceur peut alors, pour un candidat donné : **proposer un échange**
+(un message optionnel — vide, c'est un simple chat ; rempli, c'est une
+proposition de rendez-vous). Le candidat reçoit la proposition et
+accepte/refuse.
 
-Aucun modèle IA n'intervient dans ce flux pour l'instant — le matching est
-un scoring déterministe par mots-clés (CPU). Le code WebLLM (`src/llm/`,
-`src/worker/`) reste dans le dépôt pour une intégration future, mais n'est
-plus câblé à l'interface.
+## Le scoring, sans catégories ni listes devinées
+
+**Le score = un compte brut de mots-clés en commun entre le CV du candidat
+et l'annonce.** Pas de pourcentage, pas de dimensions pondérées (domaine,
+séniorité, langues traitées à part). Comme tous les candidats d'une salle
+sont comparés au même jeu de mots-clés requis, ce compte suffit à classer
+honnêtement.
+
+Deux informations **explicites**, jamais devinées par une liste figée,
+s'ajoutent à côté du score :
+- **Ville(s)** : le candidat les tape lui-même ; comparées littéralement au
+  texte intégral de l'annonce (recherche de sous-chaîne, pas de
+  dictionnaire de villes). "Match" si au moins une correspond.
+- **Ancienneté** : l'annonceur indique un minimum (champ numérique, à côté
+  du titre) ; celle du candidat est calculée à partir de dates réellement
+  présentes dans son CV (la plus ancienne trouvée), avec priorité à une
+  phrase explicite ("5 ans d'expérience") si elle existe.
+
+## Le boost IA — côté candidat, avant l'envoi
+
+Après plusieurs itérations ratées (IA continue côté annonceur, doublons de
+classement...), la couche IA a été recentrée là où elle a le plus de sens :
+**côté candidat, avant l'envoi, en option.**
+
+Un bouton **"🚀 Booster avec l'IA"** apparaît une fois le CV analysé. Il
+charge un modèle WebLLM léger et fixe (pas de choix utilisateur), lui donne
+le texte intégral du CV et les mots-clés déjà trouvés par le CPU, et lui
+demande des mots-clés **additionnels** (synonymes, intitulés de poste
+proches, compétences implicites raisonnablement déductibles — jamais une
+réécriture du CV). Les mots-clés suggérés s'ajoutent à ceux du CPU, jamais
+à leur place.
+
+**Ça ne bloque jamais l'envoi.** Si WebGPU est indisponible, le bouton
+l'indique et reste désactivé. Si le modèle échoue à charger ou que l'appel
+échoue (JSON invalide, timeout), le candidat garde ses mots-clés CPU tels
+quels et peut passer en direct normalement (voir `runKeywordBoost` dans
+`src/llm/webllm.js`, testé dans `tests/llm.test.mjs`).
+
+Côté annonceur, il n'y a **plus aucune couche IA** : un seul score, calculé
+par mots-clés, point.
 
 ## Démarrer en local
 
@@ -64,154 +116,60 @@ relatifs, pour fonctionner sous `https://username.github.io/repository/`.
 
 ## Architecture réseau
 
-Une seule "room" Trystero, partagée par tout le monde (candidats et
-annonceurs), avec deux canaux :
+Une seule "room" Trystero (paquet racine `trystero`, Nostr par défaut pour
+la signalisation), partagée par tout le monde, avec deux canaux :
 
 - `jm_msg` : messages JSON typés et validés (`src/p2p/protocol.js`) —
   diffusion candidat, proposition de chat/rendez-vous, réponse, messages de
-  chat ;
+  chat, retrait d'identité ;
 - `jm_cv` : octets bruts du CV, transmis en pièce jointe avec la diffusion
   candidat.
 
-Trystero (paquet racine `trystero`, Nostr par défaut) s'appuie sur des
-relais Nostr publics pour la signalisation WebRTC — pas de couche Nostr
-applicative maison à maintenir : la découverte "en direct" se fait
-simplement en rejoignant la même room. Une liste de relais fiables est
-fixée explicitement (`NOSTR_RELAY_URLS` dans `src/app/main.js`) plutôt que
-de dépendre de la liste par défaut de Trystero.
+Une liste de relais Nostr fiables est fixée explicitement
+(`NOSTR_RELAY_URLS` dans `src/app/main.js`) plutôt que de dépendre de la
+liste par défaut de Trystero.
 
 L'identité (`src/storage/identity.js`) est un identifiant stable généré une
-fois par ONGLET et stocké dans `sessionStorage` (pas une paire de clés
-cryptographiques ici, juste un ID technique) — délibérément pas dans
-IndexedDB/localStorage, qui sont partagés par tout le navigateur et
-donneraient la même identité à deux onglets ouverts en parallèle (ex. un
-onglet candidat + un onglet annonceur pour tester les deux côtés). Il est
-affiché à l'écran, et surtout **transporté dans le contenu des messages**
-(`senderId` d'une diffusion candidat, `fromId` d'une proposition) : c'est ce
-qui permet de reconnaître la même personne d'une reconnexion réseau à
-l'autre, indépendamment de l'identifiant de transport Trystero (lui,
-éphémère — voir `RoomRanker` dans `src/p2p/discovery.js`, indexé par
-identité applicative et non par ID de transport).
-
-Un bouton **"Invalider mon ID"** génère un nouvel identifiant en conservant
-le nom affiché — l'ancien ID devient orphelin. Si vous étiez en direct
-(candidat), un message `identity_retired` est diffusé AVANT la
-rediffusion sous le nouvel ID : les annonceurs déjà connectés retirent la
-ligne immédiatement plutôt que d'attendre une déconnexion (voir
-`RoomRanker.retireIdentity`). **"Supprimer toutes mes données locales"**
-invalide aussi l'ID au passage — un reset qui laisserait l'ancien ID actif
-ne serait pas un vrai reset.
-
-Un bouton **"Restaurer cet ID"** (à côté) permet à l'inverse de coller un ID
-noté ailleurs pour reprendre volontairement la même identité applicative.
-Aucun de ces mécanismes n'est une preuve cryptographique : quiconque
-connaît un ID peut se l'attribuer — "invalider" ne fait qu'abandonner l'ID
-compromis pour votre propre client, ça n'empêche pas un tiers de continuer
-à l'utiliser ailleurs.
-
-## Couche IA continue (optionnelle)
-
-Un bouton **"Activer l'IA continue"** (visible côté annonceur, à côté de
-l'identité) ajoute un second classement, calculé par un modèle WebLLM léger
-et fixe (pas de choix de modèle — le plus petit du catalogue), en plus du
-classement CPU par mots-clés qui tourne déjà. Les deux coexistent :
-
-- **Classement CPU** : toujours actif, déterministe, ne dépend d'aucune IA.
-- **Classement IA** : optionnel. Quand un candidat est retenu par le filtre
-  CPU d'une salle, son profil est comparé au texte complet de l'annonce par
-  le modèle local, produisant un second score (visible en badge `IA nn` sur
-  chaque ligne, et en détail sur la fiche du candidat). Un bouton "Trier :
-  CPU / IA" bascule l'ordre d'affichage entre les deux.
-
-**La perte du GPU ne casse jamais le CPU.** Concrètement :
-- si WebGPU n'est pas disponible, le bouton reste désactivé avec un
-  message explicite — rien d'autre n'est affecté ;
-- si le chargement du modèle échoue, la couche repasse à "désactivée" et le
-  classement CPU continue sans interruption ;
-- si un appel de scoring individuel échoue (JSON invalide, timeout, sortie
-  hors bornes), cette entrée reste simplement sans score IA — jamais
-  d'exception remontée, jamais de blocage du reste de l'application (voir
-  `runRelevanceScoring` dans `src/llm/webllm.js`, testé pour ces cas
-  précisément dans `tests/llm.test.mjs`).
-
-## Le scoring, sans catégories ni listes devinées
-
-Après plusieurs allers-retours ratés (des listes de villes/secteurs
-figées, présentées comme une vraie comparaison), le scoring a été
-simplifié à l'os :
-
-**Le score = un compte brut de mots-clés en commun entre le CV du candidat
-et l'annonce.** Rien d'autre. Pas de pourcentage, pas de dimensions
-pondérées (domaine, séniorité, langues traitées à part) : un candidat
-"3 pts" a 3 mots-clés en commun avec les mots-clés extraits de l'annonce,
-point final. Comme tous les candidats d'une même salle sont comparés au
-même jeu de mots-clés requis, ce compte suffit à classer honnêtement.
-
-Deux informations **explicites**, jamais devinées par une liste,
-s'ajoutent à côté du score (jamais mélangées dedans) :
-- **Ville** : le candidat tape la sienne ; elle est comparée littéralement
-  au texte intégral de l'annonce (recherche de sous-chaîne, pas de
-  dictionnaire de villes).
-- **Ancienneté** : le recruteur indique l'ancienneté minimale recherchée
-  (champ numérique, à côté du titre) ; celle du candidat est calculée à
-  partir de dates réellement présentes dans son CV (la plus ancienne
-  trouvée, `année actuelle − année la plus ancienne`), avec priorité à une
-  phrase explicite ("5 ans d'expérience") si elle existe.
-
-## Couche IA continue (optionnelle)
-
-Un bouton **"Activer l'IA continue"** (visible côté annonceur) ajoute un
-second score, calculé par un modèle WebLLM léger et fixe, en plus du
-classement CPU par mots-clés qui tourne déjà. Ce n'est **pas** un
-classement séparé : c'est un score indicatif affiché à côté de chaque
-candidat, qui arrive de façon asynchrone (badge "IA…" pendant le calcul),
-et qu'on peut éventuellement utiliser pour trier au lieu du score CPU — les
-deux listes restent la même liste, juste réordonnée.
-
-Le prompt reçoit tout ce qui est disponible des deux côtés (texte intégral
-de l'annonce, mots-clés déjà extraits par le CPU, mots-clés/ville/
-ancienneté du candidat) et tente des équivalences non littérales ("vente"
-↔ "commercial") que le CPU, par construction, ne peut pas voir.
-
-**La perte du GPU ne casse jamais le CPU** :
-- si WebGPU n'est pas disponible, le bouton reste désactivé, rien d'autre
-  n'est affecté ;
-- si le modèle échoue à charger, la couche repasse à "désactivée" et le
-  classement CPU continue sans interruption ;
-- si un appel de scoring individuel échoue, cette entrée reste simplement
-  sans score IA — jamais d'exception remontée (voir `runRelevanceScoring`
-  dans `src/llm/webllm.js`, testé dans `tests/llm.test.mjs`).
+fois par ONGLET et stocké dans `sessionStorage` — délibérément pas dans
+IndexedDB/localStorage, qui sont partagés par tout le navigateur (deux
+onglets ouverts en parallèle auraient sinon la même identité). Il est
+affiché à l'écran et transporté dans le contenu des messages (`senderId`,
+`fromId`) : c'est ce qui permet de reconnaître la même personne d'une
+reconnexion réseau à l'autre, indépendamment de l'identifiant de transport
+Trystero (éphémère). Deux boutons compacts (repliés sous
+"⚙ Confidentialité & identité") : **Invalider mon ID** (génère un nouvel
+identifiant, nom conservé — le "kill switch" d'un ID qu'on croit compromis)
+et **Restaurer cet ID** (reprendre volontairement un ID noté ailleurs).
 
 ## Ce qui ne quitte jamais l'appareil
 
 - Le texte intégral d'une annonce (annonceur) : jamais publié, jamais
   envoyé — seuls des mots-clés extraits localement servent à la comparaison.
 - Le CV du candidat : envoyé **volontairement** en pièce jointe P2P
-  uniquement lors d'une diffusion candidat (c'est un choix produit assumé
-  ici — le recruteur doit pouvoir le consulter), jamais stocké sur un
-  serveur, jamais republié par le recruteur.
+  uniquement lors d'une diffusion candidat (choix produit assumé — le
+  recruteur doit pouvoir le consulter), jamais stocké sur un serveur.
 
 ## État d'avancement
 
 | Bloc | Statut |
 |---|---|
-| Cœur métier (parsing CPU, extraction, normalisation, scoring, matching) | ✅ implémenté et testé (`tests/`) |
+| Cœur métier (parsing CPU, mots-clés, ville, ancienneté) | ✅ implémenté et testé (`tests/`) |
 | Diffusion candidat + validation stricte des messages réseau | ✅ implémenté et testé |
-| Salles d'annonce multiples côté recruteur, scoring par salle | ✅ implémenté et testé (`RoomRanker`) |
+| Salles d'annonce multiples côté annonceur, filtre par mot-clé | ✅ implémenté et testé (`RoomRanker`) |
 | Transport CV en pièce jointe (canal binaire Trystero dédié) | ✅ code écrit, à valider en conditions réelles |
-| Chat P2P + proposition de rendez-vous | ✅ implémenté |
-| Identité persistante visible (nom + ID stable) | ✅ implémentée |
-| Stockage local (IndexedDB : chat, identité, cache, pairs bloqués) | ✅ implémenté |
-| Blocage/ignorance d'un pair (§75) | ✅ implémenté |
+| Chat P2P + proposition de rendez-vous (fusionnés en une action) | ✅ implémenté |
+| Boost IA côté candidat (mots-clés additionnels, jamais bloquant) | ✅ implémenté et testé (`tests/llm.test.mjs`) |
+| Identité persistante par onglet, visible, invalidation/restauration | ✅ implémentée |
+| Réinitialisation de recherche (candidat) | ✅ implémentée |
+| Stockage local (IndexedDB : chat, cache, pairs bloqués ; sessionStorage : identité) | ✅ implémenté |
 | PWA (manifest, Service Worker, icônes) | ✅ implémentée |
 | CI GitHub Actions (tests + déploiement Pages) | ✅ implémentée |
-| Couche IA continue optionnelle (scoring WebLLM en plus du CPU, jamais à sa place) | ✅ implémentée côté annonceur, résiliente à la perte de GPU (`tests/llm.test.mjs`) |
 | Support PDF | ⏳ hors périmètre V1 |
 
 Les échanges P2P réels (deux navigateurs, vrais relais de signalisation)
 n'ont pas pu être exécutés bout-en-bout dans cet environnement de
 développement. Le cœur métier déterministe, lui, est entièrement testé
-(`node --test tests/` → 22/22 tests verts).
+(`node --test tests/` → tous les tests verts, `npm test`).
 
 ## Arborescence
 
@@ -221,25 +179,29 @@ src/
 ├── ui/                    rendu DOM vanilla + style.css
 ├── core/
 │   ├── parser/            Document -> texte structuré (DOCX/TXT)
-│   ├── extraction/        extraction heuristique CPU (mots-clés)
+│   ├── extraction/        extraction heuristique CPU (mots-clés, années)
 │   ├── normalization/     alias de compétences, nettoyage
 │   ├── matching/          filtre CPU avant scoring
-│   ├── scoring/           score multidimensionnel explicable
-│   └── validation/        schémas de validation runtime (§55-58)
-├── llm/, worker/          WebLLM — présent, pas encore câblé à l'UI
+│   ├── scoring/           compte de mots-clés + ville/ancienneté à côté
+│   └── validation/        schémas de validation runtime
+├── llm/, worker/          WebLLM — boost côté candidat uniquement
 ├── p2p/
 │   ├── protocol.js        messages typés et versionnés
 │   ├── trystero.js        transport P2P (messages JSON + CV en binaire)
 │   └── discovery.js       RoomRanker : scoring live par salle d'annonce
-├── storage/               identité (sessionStorage), chat/cache/blocklist (IndexedDB)
-└── config/matching.js     pondérations, seuils, limites
+├── storage/               identité (sessionStorage), chat/cache (IndexedDB)
+└── config/matching.js     limites réseau, dictionnaire d'alias
 tests/                     tests unitaires (Node --test, sans dépendance)
 ```
 
 ## Principes non négociables
 
 - Le document original (CV, annonce) **n'est jamais réécrit ni modifié**.
-- Le texte d'une annonce **ne quitte jamais l'appareil du recruteur**.
-- Une information absente est **`UNKNOWN`, jamais `NO`** par défaut.
+- Le texte d'une annonce **ne quitte jamais l'appareil de l'annonceur**.
+- Aucune liste figée (villes, secteurs) ne sert de substitut à une vraie
+  comparaison — tout ce qui est comparé est extrait des deux côtés.
+- Une information absente est **inconnue, jamais interprétée par défaut
+  comme négative**.
 - Le chat nécessite un **accord explicite** (proposition + acceptation).
-- Bloquer un pair est **silencieux** : aucune notification ne lui est envoyée.
+- Le boost IA **n'est jamais bloquant** : sa perte n'empêche jamais un
+  candidat de passer en direct avec ses seuls mots-clés CPU.

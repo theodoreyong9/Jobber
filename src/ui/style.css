@@ -82,6 +82,22 @@ button, input, textarea { font-family: var(--sans); }
 .role-card span { color: var(--muted); font-size: 0.82rem; }
 .role-card:hover { border-color: var(--signal); transform: translateY(-1px); }
 
+/* --- Landing / pitch (§ texte de présentation demandé) --- */
+.landing { display: grid; gap: 0.9rem; margin-top: 0.6rem; }
+.landing-pitch {
+  background: linear-gradient(155deg, var(--ink) 0%, #223229 100%);
+  color: var(--surface);
+  border-radius: var(--radius);
+  padding: 1.3rem 1.4rem;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 0.3rem;
+}
+.landing-question { font-size: 0.86rem; color: #b9c2ba; margin: 0 0 0.3rem; }
+.landing-solution { font-family: var(--serif); font-weight: 700; font-size: 1.5rem; color: var(--surface); margin: 0.6rem 0 0.5rem; letter-spacing: 0.01em; }
+.landing-explain { font-size: 0.9rem; line-height: 1.55; margin: 0 0 0.6rem; color: #dfe4de; }
+.landing-tagline { font-size: 0.82rem; color: var(--signal-tint); margin: 0; font-weight: 500; }
+.landing h2 { font-family: var(--serif); font-weight: 600; font-size: 1.25rem; margin: 0.2rem 0 0.1rem; }
+
 /* --- Structure générale --- */
 .section-title {
   font-family: var(--serif);
@@ -150,7 +166,7 @@ select.model-select {
 .ledger { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .ledger-row {
   display: grid;
-  grid-template-columns: 2.8rem 1fr auto auto;
+  grid-template-columns: 2.8rem 1fr auto;
   align-items: center;
   gap: 0.7rem;
   padding: 0.65rem 0.15rem;
@@ -224,7 +240,7 @@ select.model-select {
 /* --- Texte de l'annonce publiée, repliable --- */
 .room-text-details { margin: 0.3rem 0; }
 .room-text-details summary { cursor: pointer; font-size: 0.78rem; color: var(--signal); }
-.room-text-preview { white-space: pre-wrap; font-size: 0.84rem; color: var(--muted); background: var(--paper); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; margin: 0.35rem 0 0; }
+.room-text-preview { white-space: pre-wrap; font-size: 0.84rem; color: var(--muted); background: var(--paper); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; margin: 0.35rem 0 0; max-height: 340px; overflow-y: auto; border: 1px solid var(--line); }
 
 /* --- Onglets de salles d'annonce --- */
 .room-tab-bar { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0; }
@@ -260,14 +276,6 @@ select.model-select {
 .settings-panel .lede { font-size: 0.78rem; }
 
 /* --- Couche IA continue (optionnelle) --- */
-.ai-control { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 0.6rem 0.8rem; margin: 0.5rem 0; }
-.ai-control-label { font-size: 0.85rem; }
-.ai-status { font-weight: 600; font-size: 0.85rem; }
-.ai-status-off { color: var(--muted); }
-.ai-status-loading { color: var(--copper); }
-.ai-status-ready { color: var(--signal); }
-.ai-status-error { color: var(--copper); }
-.ai-control .lede { font-size: 0.76rem; }
 .ai-badge {
   font-family: var(--serif);
   font-size: 0.72rem;
@@ -279,16 +287,7 @@ select.model-select {
   padding: 0.08rem 0.45rem;
   white-space: nowrap;
 }
-.sort-toggle { display: flex; gap: 0.25rem; }
-.sort-toggle-btn {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 0.7rem;
-  padding: 0.12rem 0.55rem;
-  cursor: pointer;
-  color: var(--muted);
-}
-.sort-toggle-btn.active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
-
 .lede { color: var(--muted); font-size: 0.84rem; }
+
+/* --- Analyse CV + boost IA (candidat) --- */
+.cv-analysis-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 0.7rem 0.85rem; margin: 0.5rem 0; }

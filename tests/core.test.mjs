@@ -85,7 +85,7 @@ test('buildCandidateProfile fusionne competences+langues en un seul sac de mots-
 
   assert.ok(candidate.keywords.includes('python'));
   assert.ok(candidate.keywords.includes('anglais'));
-  assert.equal(candidate.city, 'paris');
+  assert.deepEqual(candidate.cities, ['paris']);
   assert.equal(candidate.yearsOfExperience, CURRENT_YEAR - 2018);
   assert.equal(candidate.yearsOfExperienceEstimated, true);
 });
@@ -188,21 +188,21 @@ test('validateIncomingMessage rejette un message trop volumineux', () => {
   assert.equal(result.ok, false);
 });
 
-test('validateCandidateBroadcast accepte une diffusion minimale valide (avec ville)', () => {
-  const result = validateCandidateBroadcast({ peerId: 'abc', displayName: 'Jean', searchKeyword: 'python', skills: ['python'], city: 'Paris', cvFileName: 'cv.docx' });
+test('validateCandidateBroadcast accepte une diffusion minimale valide (avec villes)', () => {
+  const result = validateCandidateBroadcast({ peerId: 'abc', displayName: 'Jean', searchKeywords: ['python'], skills: ['python'], cities: ['paris'], cvFileName: 'cv.docx' });
   assert.equal(result.ok, true);
 });
 
-test('validateCandidateBroadcast exige un mot-cle de recherche', () => {
+test('validateCandidateBroadcast exige au moins un mot-cle de recherche', () => {
   const result = validateCandidateBroadcast({ peerId: 'abc', skills: ['python'] });
   assert.equal(result.ok, false);
-  assert.ok(result.errors.some((e) => e.includes('searchKeyword')));
+  assert.ok(result.errors.some((e) => e.includes('searchKeywords')));
 });
 
 test('validateCandidateBroadcast refuse une diffusion contenant le texte integral du CV', () => {
   const result = validateCandidateBroadcast({
     peerId: 'abc',
-    searchKeyword: 'python',
+    searchKeywords: ['python'],
     skills: ['python'],
     fullText: 'texte integral du cv...',
   });

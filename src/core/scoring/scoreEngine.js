@@ -21,10 +21,10 @@ function compareKeywords(candidateKeywords, requiredKeywords) {
   return { matched, missing };
 }
 
-function compareCity(candidateCity, jobRawText) {
-  if (!candidateCity) return 'unknown';
+function compareCity(candidateCities, jobRawText) {
+  if (!candidateCities || candidateCities.length === 0) return 'unknown';
   const haystack = (jobRawText || '').toLowerCase();
-  return haystack.includes(candidateCity) ? 'match' : 'mismatch';
+  return candidateCities.some((c) => haystack.includes(c)) ? 'match' : 'mismatch';
 }
 
 function compareExperience(candidateYears, minYearsRequired) {
@@ -35,14 +35,14 @@ function compareExperience(candidateYears, minYearsRequired) {
 
 export function computeMatchScore(candidate, job) {
   const { matched, missing } = compareKeywords(candidate.keywords, job.keywords);
-  const cityStatus = compareCity(candidate.city, job.rawText);
+  const cityStatus = compareCity(candidate.cities, job.rawText);
   const experienceStatus = compareExperience(candidate.yearsOfExperience, job.minYearsRequired);
 
   const reasons = [];
   for (const kw of matched) reasons.push({ type: 'positive', label: kw });
   for (const kw of missing) reasons.push({ type: 'warning', label: kw });
-  if (cityStatus === 'match') reasons.push({ type: 'positive', label: `Ville : ${candidate.city}` });
-  else if (cityStatus === 'mismatch') reasons.push({ type: 'warning', label: `Ville declaree (${candidate.city}) non mentionnee dans l'annonce` });
+  if (cityStatus === 'match') reasons.push({ type: 'positive', label: `Ville : ${candidate.cities.join(', ')}` });
+  else if (cityStatus === 'mismatch') reasons.push({ type: 'warning', label: `Ville(s) declaree(s) (${candidate.cities.join(', ')}) non mentionnee(s) dans l'annonce` });
   if (experienceStatus === 'match') reasons.push({ type: 'positive', label: `Anciennete suffisante (${candidate.yearsOfExperience} an(s)${candidate.yearsOfExperienceEstimated ? ', estimee' : ''} >= ${job.minYearsRequired} requis)` });
   else if (experienceStatus === 'below') reasons.push({ type: 'warning', label: `Anciennete insuffisante (${candidate.yearsOfExperience} an(s)${candidate.yearsOfExperienceEstimated ? ', estimee' : ''} < ${job.minYearsRequired} requis)` });
 

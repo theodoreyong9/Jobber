@@ -42,14 +42,14 @@ function base(type) {
  * de dates réelles du CV), et une référence au fichier CV en pièce jointe.
  * Jamais de texte intégral dans ce message (§11, §51).
  */
-export function createCandidateBroadcast({ senderId, displayName, searchKeyword, skills, city, yearsOfExperience, yearsOfExperienceEstimated, cvFileName }) {
+export function createCandidateBroadcast({ senderId, displayName, searchKeywords, skills, cities, yearsOfExperience, yearsOfExperienceEstimated, cvFileName }) {
   return {
     ...base(MessageType.CANDIDATE_BROADCAST),
     senderId: senderId || null,
     displayName: displayName || null,
-    searchKeyword: searchKeyword || null,
+    searchKeywords: searchKeywords || [],
     skills: skills || [],
-    city: city || null,
+    cities: cities || [],
     yearsOfExperience: typeof yearsOfExperience === 'number' ? yearsOfExperience : null,
     yearsOfExperienceEstimated: Boolean(yearsOfExperienceEstimated),
     cvFileName: cvFileName || null,

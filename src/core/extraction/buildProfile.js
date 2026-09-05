@@ -44,6 +44,11 @@ function resolveYearsOfExperience(facts) {
   return { value: null, estimated: false };
 }
 
+/** Découpe une saisie "Paris, Lyon" en liste de villes normalisées, dédupliquée. */
+export function parseCommaList(raw) {
+  return Array.from(new Set(String(raw || '').split(',').map((s) => cleanToken(s)).filter(Boolean)));
+}
+
 /**
  * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, city?: string|null }} args
  */
@@ -54,7 +59,7 @@ export function buildCandidateProfile({ documentId, facts, semantic = null, city
   return {
     id: documentId,
     keywords,
-    city: city ? cleanToken(city) : null,
+    cities: parseCommaList(city),
     yearsOfExperience: experience.value,
     yearsOfExperienceEstimated: experience.estimated,
     generatedAt: Date.now(),

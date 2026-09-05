@@ -4,7 +4,7 @@
 // (via src/llm/provider.js) et délègue au wrapper WebLLM. Aucune logique
 // produit ici — uniquement de l'orchestration technique du modèle.
 
-import { loadEngine, runSemanticAnalysis, runDisambiguation, runRelevanceScoring } from '../llm/webllm.js';
+import { loadEngine, runSemanticAnalysis, runDisambiguation, runKeywordBoost } from '../llm/webllm.js';
 
 /** @type {import('../llm/webllm.js').WebLLMHandle | null} */
 let handle = null;
@@ -38,13 +38,12 @@ async function dispatch(type, payload) {
       if (!handle) throw new Error('Modèle non chargé : appeler load_model avant disambiguate.');
       return runDisambiguation(handle, payload);
     }
-    case 'score_relevance': {
-      // Pas de "throw" si le modèle n'est pas chargé : on renvoie un échec
-      // propre, cohérent avec runRelevanceScoring — la couche IA continue
-      // ne doit jamais faire planter quoi que ce soit côté appelant
-      // (§ perte de GPU ne doit pas tout tuer).
+    case 'boost_keywords': {
+      // Pas de "throw" si le modèle n'est pas chargé : échec propre,
+      // cohérent avec runKeywordBoost — le candidat doit toujours pouvoir
+      // passer en direct avec ses seuls mots-clés CPU si le boost échoue.
       if (!handle) return { ok: false };
-      return runRelevanceScoring(handle, payload);
+      return runKeywordBoost(handle, payload);
     }
     case 'unload_model': {
       if (handle?.unload) await handle.unload();

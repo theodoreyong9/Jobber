@@ -6,7 +6,7 @@
 // aucune décision produit ici.
 
 import { validateSemanticAnalysis } from '../core/validation/schema.js';
-import { buildSemanticAnalysisPrompt, buildDisambiguationPrompt, buildRelevanceScoringPrompt } from './prompts.js';
+import { buildSemanticAnalysisPrompt, buildDisambiguationPrompt, buildKeywordBoostPrompt } from './prompts.js';
 
 /**
  * @typedef {Object} WebLLMHandle
@@ -114,27 +114,27 @@ export async function runDisambiguation(handle, params) {
 }
 
 /**
- * Scoring continu (§ couche IA optionnelle) : une évaluation COMPLÈTE en un
- * seul appel (compétences, séniorité, domaine, localisation, langues — pas
- * seulement une comparaison de mots-clés). Échoue proprement (renvoie
- * `ok: false`) sur tout problème — JSON invalide, score hors bornes,
- * timeout — sans jamais lever d'exception : c'est à l'appelant de décider
- * quoi faire d'un score manquant (typiquement : ne rien afficher, garder le
- * classement CPU inchangé). "Perte de GPU" ne doit jamais devenir une
- * erreur bloquante.
+ * "Boost" optionnel côté candidat (§ demande : IA côté candidat, avant
+ * l'envoi — pas côté annonceur). Suggère des mots-clés additionnels à
+ * partir du texte intégral du CV, en plus de ceux déjà trouvés par le CPU.
+ * Échoue proprement (renvoie `ok: false`) sur tout problème — JSON
+ * invalide, timeout, sortie vide — sans jamais lever d'exception : le
+ * candidat doit toujours pouvoir passer en direct avec ses seuls mots-clés
+ * CPU si le boost échoue.
  * @param {WebLLMHandle} handle
- * @param {Parameters<typeof buildRelevanceScoringPrompt>[0]} params
- * @returns {Promise<{ ok: true, score: number, justification: string } | { ok: false }>}
+ * @param {{ cvText: string, currentKeywords: string[] }} params
+ * @returns {Promise<{ ok: true, keywords: string[] } | { ok: false }>}
  */
-export async function runRelevanceScoring(handle, params) {
+export async function runKeywordBoost(handle, params) {
   try {
-    const messages = buildRelevanceScoringPrompt(params);
+    const messages = buildKeywordBoostPrompt(params);
     const raw = await handle.chat(messages);
     const parsed = parseJsonLoose(raw);
-    const score = Number(parsed.score);
-    if (!Number.isFinite(score) || score < 0 || score > 100) return { ok: false };
-    const justification = typeof parsed.justification === 'string' ? parsed.justification.slice(0, 400) : '';
-    return { ok: true, score: Math.round(score), justification };
+    if (!Array.isArray(parsed.keywords)) return { ok: false };
+    const keywords = parsed.keywords
+      .filter((k) => typeof k === 'string' && k.trim().length > 0 && k.length <= 60)
+      .slice(0, 10);
+    return { ok: true, keywords };
   } catch (e) {
     return { ok: false };
   }

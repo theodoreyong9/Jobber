@@ -81,7 +81,7 @@ export function validateIncomingMessage(raw, maxBytes) {
  * Valide une diffusion candidat reçue du réseau (§11, §51) — c'est la SEULE
  * donnée publiée en P2P dans ce flux : les annonces du recruteur, elles, ne
  * quittent jamais son appareil.
- * Forme : { peerId, senderId?, displayName?, searchKeyword, skills, domains, seniority?, locations?, languages?, cvFileName? }
+ * Forme : { peerId, senderId?, displayName?, searchKeywords, skills, cities?, yearsOfExperience?, cvFileName? }
  * @param {unknown} broadcast
  */
 export function validateCandidateBroadcast(broadcast) {
@@ -100,13 +100,19 @@ export function validateCandidateBroadcast(broadcast) {
   if (b.displayName !== undefined && b.displayName !== null) {
     if (!isString(b.displayName) || b.displayName.length > 80) errors.push('displayName doit être une chaîne de 80 caractères maximum.');
   }
-  if (!isString(b.searchKeyword) || !b.searchKeyword.trim()) {
-    errors.push('searchKeyword est obligatoire (le candidat doit préciser ce qu\'il recherche).');
-  } else if (b.searchKeyword.length > 60) {
-    errors.push('searchKeyword doit faire 60 caractères maximum.');
+  if (!isStringArray(b.searchKeywords) || b.searchKeywords.length === 0) {
+    errors.push('searchKeywords est obligatoire (au moins un mot-clé, le candidat doit préciser ce qu\'il recherche).');
+  } else if (b.searchKeywords.some((k) => typeof k !== 'string' || k.length > 60)) {
+    errors.push('chaque searchKeywords doit faire 60 caractères maximum.');
+  } else if (b.searchKeywords.length > 10) {
+    errors.push('trop de mots-clés de recherche (10 maximum).');
   }
   if (b.skills !== undefined && !isStringArray(b.skills)) errors.push('skills invalide.');
-  if (b.city !== undefined && b.city !== null && (!isString(b.city) || b.city.length > 80)) errors.push('city invalide.');
+  if (b.cities !== undefined) {
+    if (!isStringArray(b.cities)) errors.push('cities invalide.');
+    else if (b.cities.some((c) => c.length > 80)) errors.push('une ville dépasse 80 caractères.');
+    else if (b.cities.length > 10) errors.push('trop de villes (10 maximum).');
+  }
   if (b.cvFileName !== undefined && b.cvFileName !== null && (!isString(b.cvFileName) || b.cvFileName.length > 200)) errors.push('cvFileName invalide.');
   if (b.yearsOfExperience !== undefined && b.yearsOfExperience !== null) {
     if (typeof b.yearsOfExperience !== 'number' || b.yearsOfExperience < 0 || b.yearsOfExperience > 80) errors.push('yearsOfExperience invalide.');

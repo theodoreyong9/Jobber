@@ -24,13 +24,20 @@ function el(tag, attrs = {}, children = []) {
 export function renderRoleSelect(onSelect) {
   const root = app();
   root.innerHTML = '';
-  root.appendChild(el('div', { class: 'role-select' }, [
+  root.appendChild(el('div', { class: 'landing' }, [
+    el('div', { class: 'landing-pitch' }, [
+      el('p', { class: 'landing-question', text: 'Le candidat veut des contacts alors qu\'il doit mieux écrire son CV ?' }),
+      el('p', { class: 'landing-question', text: 'L\'annonceur filtre les candidats alors qu\'il doit mieux écrire son offre d\'emploi ?' }),
+      el('p', { class: 'landing-solution', text: 'La solution Jobber.' }),
+      el('p', { class: 'landing-explain', text: 'Vous envoyez votre CV, vous ne voyez pas l\'annonce, vous attendez le contact. Vous envoyez votre annonce, vous recevez un CV augmenté, vous rentrez en contact.' }),
+      el('p', { class: 'landing-tagline', text: 'Jobber est le premier portail emploi live assisté par IA, sans permission (aucun compte nécessaire).' }),
+    ]),
     el('h2', { text: 'Que cherchez-vous ?' }),
-    el('p', { class: 'lede', text: 'Vos documents restent sur cet appareil. L\'analyse se fait localement, sans compte ni service cloud.' }),
     el('button', { class: 'role-card', onclick: () => onSelect('candidate') },
       [el('strong', { text: 'Je suis candidat' }), el('span', { text: 'Déposer mon CV et être trouvé par des recruteurs.' })]),
     el('button', { class: 'role-card', onclick: () => onSelect('recruiter') },
       [el('strong', { text: 'Je suis annonceur' }), el('span', { text: 'Publier une ou plusieurs annonces et chercher des candidats en direct.' })]),
+    el('p', { class: 'lede', style: 'margin-top:0.8rem;', text: 'Vos documents restent sur cet appareil. L\'analyse se fait localement, sans compte ni service cloud.' }),
   ]));
 }
 
@@ -78,24 +85,27 @@ function settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }) {
 }
 
 // --- Écran candidat (§14, §66) : dépôt du CV + diffusion en direct ---
-export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChangeRole, onStartLive, onResetLocalData, onRestoreId, onInvalidateId }) {
+export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChangeRole, onFileSelected, onStartLive, onResetSearch, onResetLocalData, onRestoreId, onInvalidateId }) {
   const root = app();
   root.innerHTML = '';
 
   const keywordInput = el('input', {
     type: 'text',
-    placeholder: 'Ex. Data Engineer, Python, Comptabilité…',
+    placeholder: 'Ex. Data Engineer, Python, Comptabilité… (virgules pour plusieurs)',
     style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.5rem;',
   });
   const cityInput = el('input', {
     type: 'text',
-    placeholder: 'Votre ville (optionnel)',
+    placeholder: 'Votre/vos ville(s) (optionnel, virgules pour plusieurs)',
     style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.6rem;',
   });
   const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
   const fileLabel = el('span', { class: 'lede', style: 'display:block; margin-top:0.4rem;', text: 'Aucun fichier sélectionné.' });
   fileInput.addEventListener('change', () => {
-    fileLabel.textContent = fileInput.files[0] ? `Sélectionné : ${fileInput.files[0].name}` : 'Aucun fichier sélectionné.';
+    const file = fileInput.files[0];
+    if (!file) { fileLabel.textContent = 'Aucun fichier sélectionné.'; return; }
+    fileLabel.textContent = `Analyse de « ${file.name} »…`;
+    onFileSelected(file);
   });
 
   root.appendChild(el('div', {}, [
@@ -103,22 +113,26 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
     el('div', { class: 'section-title', text: 'Ce que vous cherchez' }),
     keywordInput,
     cityInput,
-    el('p', { class: 'lede', style: 'margin-top:-0.3rem;', text: 'Le mot-clé décide quelles annonces analyseront votre profil. La ville sert juste à signaler une correspondance, elle n\'est jamais comparée à une liste.' }),
+    el('p', { class: 'lede', style: 'margin-top:-0.3rem;', text: 'Les mots-clés décident quelles annonces analyseront votre profil. La/les ville(s) signalent une correspondance littérale dans le texte de l\'annonce — jamais comparées à une liste.' }),
 
     el('div', { class: 'section-title', text: 'Votre CV' }),
     el('div', { class: 'dropzone' }, [
-      el('div', { text: 'Déposez votre CV (.docx ou .txt) — le fichier reste local, il ne sera transmis qu\'aux recruteurs auxquels vous répondrez.' }),
+      el('div', { text: 'Déposez votre CV (.docx ou .txt) — analysé localement dès le dépôt, transmis en pièce jointe uniquement aux annonceurs auxquels vous répondez.' }),
       fileInput,
     ]),
     fileLabel,
+    el('div', { id: 'cv-analysis' }),
 
-    el('button', {
-      class: 'btn',
-      text: isLive ? '🔴 En direct — recherche en cours' : 'Rechercher en direct',
-      disabled: isLive ? 'true' : undefined,
-      onclick: () => { if (fileInput.files[0] && keywordInput.value.trim()) onStartLive(fileInput.files[0], keywordInput.value.trim(), cityInput.value.trim() || null); },
-    }),
-    !isLive ? el('p', { class: 'lede', style: 'margin-top:0.4rem;', text: 'Mot-clé requis avant de lancer la recherche. Votre CV est analysé localement, puis vos mots-clés sont diffusés aux annonceurs connectés.' }) : null,
+    el('div', { style: 'display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;' }, [
+      el('button', {
+        class: 'btn',
+        text: isLive ? '🔴 En direct — recherche en cours' : 'Rechercher en direct',
+        disabled: isLive ? 'true' : undefined,
+        onclick: () => onStartLive(keywordInput.value, cityInput.value),
+      }),
+      el('button', { class: 'btn secondary', text: 'Réinitialiser ma recherche', onclick: onResetSearch }),
+    ]),
+    !isLive ? el('p', { class: 'lede', style: 'margin-top:0.4rem;', text: 'CV analysé et mot-clé requis avant de lancer la recherche.' }) : null,
 
     el('div', { class: 'section-title', text: 'Propositions reçues' }),
     el('ul', { class: 'ledger', id: 'proposal-ledger' }, [el('li', { class: 'empty-state', text: isLive ? 'En attente de propositions…' : 'Lancez la recherche en direct pour être visible.' })]),
@@ -127,6 +141,35 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
   ]));
 
   root.appendChild(el('div', { id: 'detail-zone' }));
+}
+
+/**
+ * Zone d'analyse du CV + boost IA optionnel, mise à jour SANS reconstruire
+ * le reste du formulaire (les mots-clés/ville tapés par l'utilisateur ne
+ * doivent pas être perdus pendant que le CV s'analyse ou se booste).
+ */
+export function renderCvAnalysisSection(profile, { boostStatus, webgpuAvailable, onBoost }) {
+  const zone = document.getElementById('cv-analysis');
+  if (!zone) return;
+  zone.innerHTML = '';
+
+  const expNote = profile.yearsOfExperience == null
+    ? 'ancienneté inconnue'
+    : `${profile.yearsOfExperience} an(s)${profile.yearsOfExperienceEstimated ? ' (estimée)' : ''}`;
+
+  const boostLabel = boostStatus === 'loading' ? 'Chargement du modèle…'
+    : boostStatus === 'done' ? '✓ Boost appliqué'
+    : boostStatus === 'error' ? 'Réessayer le boost'
+    : '🚀 Booster avec l\'IA (optionnel)';
+
+  zone.appendChild(el('div', { class: 'cv-analysis-box' }, [
+    el('div', { class: 'lede', style: 'margin-bottom:0.3rem;', text: `Mots-clés détectés (${profile.keywords.length}) : ${profile.keywords.join(', ') || 'aucun'}` }),
+    el('div', { class: 'lede', text: `Ancienneté : ${expNote}` }),
+    webgpuAvailable
+      ? el('button', { class: 'btn secondary', style: 'margin-top:0.5rem;', text: boostLabel, disabled: boostStatus === 'loading' ? 'true' : undefined, onclick: onBoost })
+      : el('p', { class: 'lede', style: 'margin-top:0.5rem;', text: 'WebGPU indisponible : le boost IA ne peut pas être utilisé ici, vos mots-clés CPU restent utilisables.' }),
+    boostStatus === 'done' ? el('span', { class: 'ai-badge', style: 'margin-left:0.5rem;', text: 'enrichi par IA' }) : null,
+  ]));
 }
 
 /** Liste des propositions (chat / rendez-vous) reçues côté candidat. */
@@ -152,7 +195,7 @@ export function renderProposalList(proposals, { onAccept, onDecline }) {
 }
 
 // --- Écran recruteur (§15, §67) : salles d'annonce en onglets ---
-export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId, onSelectRoom, onOpenCandidate, onRemoveRoom, webgpuAvailable, aiStatus, sortMode, onToggleAi, onSetSortMode }) {
+export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId, onSelectRoom, onOpenCandidate, onRemoveRoom }) {
   const root = app();
   root.innerHTML = '';
 
@@ -196,7 +239,6 @@ export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSave
 
   root.appendChild(el('div', {}, [
     identityBar({ identity, onSaveName, onChangeRole }),
-    aiControlBlock({ webgpuAvailable, aiStatus, onToggleAi }),
     el('div', { id: 'room-tabs' }),
     addFormContainer,
     el('div', { id: 'room-content' }),
@@ -204,36 +246,7 @@ export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSave
     settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }),
   ]));
 
-  renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom, aiEnabled: aiStatus === 'ready', sortMode, onSetSortMode });
-}
-
-/**
- * Bloc de contrôle de la couche IA continue (§ demande : bouton optionnel).
- * Le classement CPU n'en dépend jamais — ce bloc ne fait qu'ajouter ou
- * retirer un score supplémentaire, jamais remplacer le score CPU.
- */
-function aiControlBlock({ webgpuAvailable, aiStatus, onToggleAi }) {
-  const statusLabel = {
-    off: 'Désactivée',
-    loading: 'Chargement du modèle…',
-    ready: 'Active',
-    error: 'Indisponible — classement CPU inchangé',
-  }[aiStatus] || 'Désactivée';
-
-  const btnLabel = aiStatus === 'ready' ? 'Désactiver l\'IA continue'
-    : aiStatus === 'loading' ? 'Chargement…'
-    : 'Activer l\'IA continue';
-
-  return el('div', { class: 'ai-control' }, [
-    el('div', {}, [
-      el('span', { class: 'ai-control-label', text: '🧠 IA continue (optionnelle) : ' }),
-      el('span', { class: `ai-status ai-status-${aiStatus}`, text: statusLabel }),
-    ]),
-    webgpuAvailable
-      ? el('button', { class: 'btn secondary', text: btnLabel, disabled: aiStatus === 'loading' ? 'true' : undefined, onclick: onToggleAi })
-      : el('p', { class: 'lede', style: 'margin:0.3rem 0 0;', text: 'WebGPU indisponible dans ce navigateur : la couche IA ne peut pas être activée. Le classement par mots-clés (CPU) reste pleinement fonctionnel.' }),
-    el('p', { class: 'lede', style: 'margin:0.3rem 0 0;', text: 'Ajoute un second score, calculé par un modèle léger tournant localement, en plus du score CPU — jamais à sa place. Une panne de cette couche n\'affecte jamais le classement CPU.' }),
-  ]);
+  renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom });
 }
 
 /**
@@ -242,7 +255,13 @@ function aiControlBlock({ webgpuAvailable, aiStatus, onToggleAi }) {
  * intégrée juste en dessous (id="detail-zone") — plus de liste empilée de
  * toutes les salles avec un chat qui apparaît ailleurs sur la page.
  */
-export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom, aiEnabled, sortMode, onSetSortMode } = {}) {
+// Préserve l'état ouvert/fermé du <details> "Voir le texte publié" d'une
+// salle à l'autre re-rendu (chaque nouvelle diffusion candidat reconstruit
+// le DOM de la salle active — sans ça, le panneau se refermait tout seul
+// au premier candidat qui arrivait pendant que l'utilisateur lisait).
+const roomTextOpenState = new Set();
+
+export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom } = {}) {
   const tabs = document.getElementById('room-tabs');
   const content = document.getElementById('room-content');
   if (!tabs || !content) return;
@@ -273,7 +292,6 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
             el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}…` }),
             el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-clés${c.cityStatus === 'match' ? ' · 📍' : ''}${c.experienceStatus === 'match' ? ' · ✓ ancienneté' : c.experienceStatus === 'below' ? ' · ⚠ ancienneté' : ''}${c.cvFileName ? '' : ' · CV en cours…'}` }),
           ]),
-          aiEnabled ? el('span', { class: 'ai-badge', text: c.aiPending ? 'IA…' : (c.aiScore != null ? `IA ${c.aiScore}pts` : '—') }) : null,
           el('span', { class: 'ledger-chevron', text: '›' }),
         ]),
       ]));
@@ -283,16 +301,16 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
       el('strong', { style: 'font-family:var(--serif); font-size:1.1rem;', text: active.title || 'Annonce sans titre' }),
       el('button', { class: 'link-button', style: 'color:var(--copper);', text: 'retirer cette salle', onclick: () => onRemoveRoom?.(active.id) }),
     ]),
-    active.text ? el('details', { class: 'room-text-details' }, [
+    active.text ? el('details', {
+      class: 'room-text-details',
+      open: roomTextOpenState.has(active.id) ? 'true' : undefined,
+      ontoggle: (e) => { if (e.target.open) roomTextOpenState.add(active.id); else roomTextOpenState.delete(active.id); },
+    }, [
       el('summary', { text: 'Voir le texte publié' }),
       el('p', { class: 'room-text-preview', text: active.text }),
     ]) : null,
     el('div', { style: 'display:flex; justify-content:space-between; align-items:center; margin:0.4rem 0 0.6rem;' }, [
       el('span', { class: 'lede', style: 'font-size:0.8rem;', text: `${active.candidates.length} candidat(s) découvert(s)` }),
-      aiEnabled ? el('div', { class: 'sort-toggle' }, [
-        el('button', { class: `sort-toggle-btn ${sortMode === 'cpu' ? 'active' : ''}`, text: 'Trier : CPU', onclick: () => onSetSortMode?.('cpu') }),
-        el('button', { class: `sort-toggle-btn ${sortMode === 'ai' ? 'active' : ''}`, text: 'Trier : IA', onclick: () => onSetSortMode?.('ai') }),
-      ]) : null,
     ]),
     el('ul', { class: 'ledger' }, ledgerItems),
     el('div', { id: 'detail-zone' }),
@@ -300,7 +318,7 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
 }
 
 // --- Détail d'un match côté recruteur : score, CV téléchargeable, actions ---
-export function renderCandidateDetail(entry, { onProposeContact, onBlockPeer, cvUrl }) {
+export function renderCandidateDetail(entry, { onProposeContact, cvUrl }) {
   const zone = document.getElementById('detail-zone');
   if (!zone) return;
   zone.innerHTML = '';
@@ -323,9 +341,7 @@ export function renderCandidateDetail(entry, { onProposeContact, onBlockPeer, cv
     el('div', { style: 'display:flex; align-items:baseline; gap:1rem;' }, [
       el('div', { class: 'score-stamp', text: `${entry.total} pts` }),
       el('span', { class: 'lede', style: 'font-size:0.78rem;', text: `mots-clés en commun, sur ${entry.totalRequired} requis` }),
-      entry.aiScore != null ? el('span', { class: 'ai-badge', style: 'font-size:0.9rem;', text: `IA ${entry.aiScore} pts` }) : (entry.aiPending ? el('span', { class: 'ai-badge', text: 'IA en cours…' }) : null),
     ]),
-    entry.aiJustification ? el('p', { class: 'lede', style: 'font-style:italic; margin:0.3rem 0 0;', text: `IA : « ${entry.aiJustification} »` }) : null,
     cvUrl
       ? el('a', { href: cvUrl, download: entry.cvFileName || 'cv', class: 'btn secondary', style: 'display:inline-block; text-decoration:none; margin-top:0.6rem;', text: `📎 Télécharger le CV (${entry.cvFileName || 'fichier'})` })
       : el('p', { class: 'lede', style: 'margin-top:0.6rem;', text: 'CV en cours de réception…' }),
@@ -336,7 +352,6 @@ export function renderCandidateDetail(entry, { onProposeContact, onBlockPeer, cv
       el('button', { class: 'btn', text: 'Proposer un échange', onclick: sendContact }),
       confirmation,
     ]),
-    el('button', { class: 'btn secondary', text: 'Bloquer ce pair', onclick: onBlockPeer }),
   ]));
 }
 

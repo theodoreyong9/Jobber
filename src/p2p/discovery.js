@@ -59,7 +59,7 @@ export function candidateBroadcastToComparable(broadcast) {
   return {
     id: broadcast.senderId || broadcast.peerId,
     keywords: normalizeSkillList(broadcast.skills || []),
-    city: broadcast.city ? cleanToken(broadcast.city) : null,
+    cities: (broadcast.cities || []).map(cleanToken),
     yearsOfExperience: typeof broadcast.yearsOfExperience === 'number' ? broadcast.yearsOfExperience : null,
     yearsOfExperienceEstimated: Boolean(broadcast.yearsOfExperienceEstimated),
   };
@@ -116,11 +116,12 @@ export class RoomRanker {
     const previous = this.broadcasts.get(identityKey);
     if (previous && previous.timestamp === broadcast.timestamp) return; // déduplication (§61)
 
-    if (!matchesKeywordGate(broadcast.searchKeyword, this.keywordSet)) {
+    const anyKeywordMatches = (broadcast.searchKeywords || []).some((kw) => matchesKeywordGate(kw, this.keywordSet));
+    if (!anyKeywordMatches) {
       const hadEntry = this.scores.delete(identityKey);
       this.broadcasts.delete(identityKey);
-      if (hadEntry) this._emit(); // le candidat était visible et a changé de mot-clé : on retire la ligne
-      return; // mot-clé hors sujet pour cette salle : on ne va pas plus loin
+      if (hadEntry) this._emit(); // le candidat était visible et a changé de mots-clés : on retire la ligne
+      return; // aucun mot-clé pertinent pour cette salle : on ne va pas plus loin
     }
 
     this.broadcasts.set(identityKey, broadcast);
