@@ -100,6 +100,9 @@ export function validateCandidateBroadcast(broadcast) {
   if (b.displayName !== undefined && b.displayName !== null) {
     if (!isString(b.displayName) || b.displayName.length > 80) errors.push('displayName doit être une chaîne de 80 caractères maximum.');
   }
+  if (b.domain !== undefined && b.domain !== 'job' && b.domain !== 'dating') {
+    errors.push('domain doit être "job" ou "dating".');
+  }
   if (!isStringArray(b.searchKeywords) || b.searchKeywords.length === 0) {
     errors.push('searchKeywords est obligatoire (au moins un mot-clé, le candidat doit préciser ce qu\'il recherche).');
   } else if (b.searchKeywords.some((k) => typeof k !== 'string' || k.length > 60)) {
@@ -112,6 +115,11 @@ export function validateCandidateBroadcast(broadcast) {
     if (!isStringArray(b.cities)) errors.push('cities invalide.');
     else if (b.cities.some((c) => c.length > 80)) errors.push('une ville dépasse 80 caractères.');
     else if (b.cities.length > 10) errors.push('trop de villes (10 maximum).');
+  }
+  if (b.countries !== undefined) {
+    if (!isStringArray(b.countries)) errors.push('countries invalide.');
+    else if (b.countries.some((c) => c.length > 80)) errors.push('un pays dépasse 80 caractères.');
+    else if (b.countries.length > 10) errors.push('trop de pays (10 maximum).');
   }
   if (b.cvFileName !== undefined && b.cvFileName !== null && (!isString(b.cvFileName) || b.cvFileName.length > 200)) errors.push('cvFileName invalide.');
   if (b.yearsOfExperience !== undefined && b.yearsOfExperience !== null) {

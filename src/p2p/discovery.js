@@ -60,6 +60,7 @@ export function candidateBroadcastToComparable(broadcast) {
     id: broadcast.senderId || broadcast.peerId,
     keywords: normalizeSkillList(broadcast.skills || []),
     cities: (broadcast.cities || []).map(cleanToken),
+    countries: (broadcast.countries || []).map(cleanToken),
     yearsOfExperience: typeof broadcast.yearsOfExperience === 'number' ? broadcast.yearsOfExperience : null,
     yearsOfExperienceEstimated: Boolean(broadcast.yearsOfExperienceEstimated),
   };

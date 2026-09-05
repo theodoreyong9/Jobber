@@ -1,82 +1,89 @@
 // src/storage/identity.js
 //
-// Identité locale simple : un ID stable généré une fois par ONGLET, et un
-// nom affiché. Stockée dans sessionStorage (pas IndexedDB) précisément
-// parce que sessionStorage est propre à chaque onglet — IndexedDB et
-// localStorage sont partagés par tout le navigateur sur ce domaine, ce qui
-// ferait apparaître la même identité dans deux onglets ouverts en parallèle
-// (ex. un onglet candidat + un onglet annonceur pour tester les deux côtés).
+// Identite locale, PAR MODE (namespace) : "job_candidate", "job_recruiter",
+// "dating". Chaque mode a son propre ID, cumulable independamment des
+// autres (activer plusieurs modes en meme temps ne force pas a partager
+// la meme identite) — voir demande explicite : "cumuler tous les modes
+// dans une interface, ainsi que les ids".
 //
-// Cette identité N'EST PAS l'identifiant réseau Trystero (qui reste
-// éphémère, généré par Trystero à chaque connexion) : c'est un identifiant
-// applicatif, transporté DANS le contenu des messages, qui permet de
-// reconnaître "la même personne" d'une reconnexion à l'autre au niveau de
-// l'application plutôt qu'au niveau du transport (voir p2p/discovery.js).
+// Stockee dans sessionStorage (pas IndexedDB) : propre a chaque ONGLET,
+// pour que deux onglets ouverts en parallele n'aient pas la meme identite.
+//
+// Ce n'est PAS l'identifiant de transport Trystero (ephemere) : c'est un
+// identifiant applicatif, transporte DANS le contenu des messages, qui
+// permet de reconnaitre "la meme personne" d'une reconnexion a l'autre.
 
-const KEY = 'jobmatch-local-identity';
+const KEY_PREFIX = 'jobmatch-identity:';
 
 function randomId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
   return `id_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Charge l'identité de cet onglet, ou en crée une nouvelle si aucune n'existe encore. */
-export function loadOrCreateIdentity() {
+function keyFor(namespace) {
+  return `${KEY_PREFIX}${namespace}`;
+}
+
+/** Charge l'identite de ce namespace pour cet onglet, ou en cree une nouvelle. */
+export function loadOrCreateIdentity(namespace) {
+  const key = keyFor(namespace);
   try {
-    const raw = sessionStorage.getItem(KEY);
+    const raw = sessionStorage.getItem(key);
     if (raw) return JSON.parse(raw);
   } catch {
-    // sessionStorage indisponible (mode privé restrictif, etc.) : identité en mémoire seulement.
+    // sessionStorage indisponible : identite en memoire seulement pour cette session.
   }
   const identity = { id: randomId(), displayName: null, createdAt: Date.now() };
-  persist(identity);
+  persist(namespace, identity);
   return identity;
 }
 
-function persist(identity) {
-  try { sessionStorage.setItem(KEY, JSON.stringify(identity)); } catch { /* ignore */ }
+function persist(namespace, identity) {
+  try { sessionStorage.setItem(keyFor(namespace), JSON.stringify(identity)); } catch { /* ignore */ }
 }
 
-/** Met à jour le nom affiché, en conservant le même ID pour cet onglet. */
-export function setDisplayName(displayName) {
-  const current = loadOrCreateIdentity();
+/** Met a jour le nom affiche pour un namespace, en conservant le meme ID. */
+export function setDisplayName(namespace, displayName) {
+  const current = loadOrCreateIdentity(namespace);
   const updated = { ...current, displayName: displayName || null };
-  persist(updated);
+  persist(namespace, updated);
   return updated;
 }
 
 /**
- * Restaure une identité à partir d'un ID noté précédemment (ex. affiché
- * dans un autre onglet, ou avant un "supprimer mes données locales"). Ne
- * vérifie ni ne garantit rien de cryptographique — c'est un identifiant
- * technique simple, pas une preuve d'identité : quiconque connaît l'ID
- * peut se l'attribuer. Le nom affiché est conservé tel quel s'il existe déjà.
- * @param {string} id
+ * Restaure une identite a partir d'un ID note precedemment, pour un
+ * namespace donne. Ne garantit rien de cryptographique.
  */
-export function restoreIdentity(id) {
+export function restoreIdentity(namespace, id) {
   const trimmed = String(id || '').trim();
   if (!trimmed) throw new Error('ID vide.');
-  const current = loadOrCreateIdentity();
+  const current = loadOrCreateIdentity(namespace);
   const restored = { ...current, id: trimmed };
-  persist(restored);
+  persist(namespace, restored);
   return restored;
 }
 
-/**
- * Génère un nouvel ID, abandonnant l'ancien (§ "tuer" un ID compromis). Le
- * nom affiché est conservé ; seul l'identifiant technique change. L'ancien
- * ID redevient un simple ID orphelin : il ne représente plus personne côté
- * réseau une fois la diffusion "identité retirée" envoyée (voir
- * p2p/protocol.js, createIdentityRetired, et app/main.js, invalidateIdentity).
- */
-export function regenerateId() {
-  const current = loadOrCreateIdentity();
+/** Genere un nouvel ID pour ce namespace (§ "tuer" un ID compromis), nom conserve. */
+export function regenerateId(namespace) {
+  const current = loadOrCreateIdentity(namespace);
   const rotated = { ...current, id: randomId() };
-  persist(rotated);
+  persist(namespace, rotated);
   return rotated;
 }
 
-/** Efface complètement l'identité de cet onglet (utilisé par un reset total des données). */
-export function clearIdentity() {
-  try { sessionStorage.removeItem(KEY); } catch { /* ignore */ }
+/** Efface l'identite d'un namespace precis. */
+export function clearIdentity(namespace) {
+  try { sessionStorage.removeItem(keyFor(namespace)); } catch { /* ignore */ }
+}
+
+/** Efface toutes les identites de tous les namespaces (reset complet). */
+export function clearAllIdentities() {
+  try {
+    const toRemove = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(KEY_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach((k) => sessionStorage.removeItem(k));
+  } catch { /* ignore */ }
 }

@@ -1,9 +1,11 @@
 // src/ui/render.js
 //
-// Rendu DOM vanilla (aucun framework). v3 : un petit vocabulaire de
-// composants (panel/field/badge/segmented) appliqué IDENTIQUEMENT côté
-// candidat et côté annonceur, pour que les deux espaces se ressemblent
-// vraiment au lieu d'avoir chacun leurs styles ad hoc.
+// Rendu DOM vanilla. v4 : trois modes cumulables (candidat emploi,
+// annonceur emploi, rencontre), chacun avec son propre bloc identite
+// (id + recuperation + invalidation), un panneau "details de recherche"
+// repliable, un bouton de lancement, et des onglets (conversations pour
+// candidat/rencontre, salles pour annonceur) avec badge de notification et
+// chat a autoscroll.
 
 const app = () => document.getElementById('app');
 
@@ -21,13 +23,14 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
-// --- Primitives du système de design ---
 function field(tag, attrs = {}) {
   return el(tag, { ...attrs, class: `field ${attrs.class || ''}`.trim() });
 }
 
-/** Panneau de contenu avec en-tête (marqueur + titre + méta optionnelle). */
-function panel(title, body, { marker = 'signal', meta = null, id = null } = {}) {
+function panel(title, body, opts = {}) {
+  const marker = opts.marker || 'signal';
+  const meta = opts.meta || null;
+  const id = opts.id || null;
   return el('div', { class: 'panel', id }, [
     el('div', { class: 'panel-header' }, [
       el('span', { class: `panel-marker ${marker}` }),
@@ -38,245 +41,276 @@ function panel(title, body, { marker = 'signal', meta = null, id = null } = {}) 
   ]);
 }
 
-function badge(text, variant = '') {
-  return el('span', { class: `badge ${variant}`.trim(), text });
+function badge(text, variant) {
+  return el('span', { class: `badge ${variant || ''}`.trim(), text });
 }
 
-// --- Écran 1 : choix du rôle ---
-export function renderRoleSelect(onSelect) {
+export function renderShell(enabledModes, onToggleMode) {
   const root = app();
   root.innerHTML = '';
-  root.appendChild(el('div', { class: 'landing-pitch' }, [
-    el('p', { class: 'landing-question', text: 'Le candidat veut des contacts alors qu\'il doit mieux écrire son CV ?' }),
-    el('p', { class: 'landing-question', text: 'L\'annonceur filtre les candidats alors qu\'il doit mieux écrire son offre d\'emploi ?' }),
-    el('p', { class: 'landing-solution', text: 'La solution Jobber.' }),
-    el('p', { class: 'landing-explain', text: 'Vous envoyez votre CV, vous ne voyez pas l\'annonce, vous attendez le contact. Vous envoyez votre annonce, vous recevez un CV augmenté, vous rentrez en contact.' }),
-    el('p', { class: 'landing-tagline', text: 'Jobber est le premier portail emploi live assisté par IA, sans permission (aucun compte nécessaire).' }),
+
+  root.appendChild(el('div', { class: 'mode-nav' }, [
+    el('button', { class: `mode-chip ${enabledModes.jobCandidate ? 'active' : ''}`, onclick: () => onToggleMode('jobCandidate'), text: '🧑‍💼 Candidat' }),
+    el('button', { class: `mode-chip ${enabledModes.jobRecruiter ? 'active' : ''}`, onclick: () => onToggleMode('jobRecruiter'), text: '🏢 Annonceur' }),
+    el('button', { class: `mode-chip dating ${enabledModes.dating ? 'active' : ''}`, onclick: () => onToggleMode('dating'), text: '💞 Rencontre' }),
   ]));
-  root.appendChild(el('h2', { class: 'role-heading', text: 'Que cherchez-vous ?' }));
-  root.appendChild(el('button', { class: 'role-card', onclick: () => onSelect('candidate') },
-    [el('strong', { text: 'Je suis candidat' }), el('span', { text: 'Déposer mon CV et être trouvé par des annonceurs.' })]));
-  root.appendChild(el('button', { class: 'role-card', onclick: () => onSelect('recruiter') },
-    [el('strong', { text: 'Je suis annonceur' }), el('span', { text: 'Publier une ou plusieurs annonces et chercher des candidats en direct.' })]));
-  root.appendChild(el('p', { class: 'hint', text: 'Vos documents restent sur cet appareil. L\'analyse se fait localement, sans compte ni service cloud.' }));
+  root.appendChild(el('p', { class: 'hint', text: 'Ces modes sont cumulables : activez-en plusieurs en meme temps, chacun avec sa propre identite. Vos documents restent sur cet appareil.' }));
+
+  root.appendChild(el('div', { id: 'mode-job-candidate', hidden: enabledModes.jobCandidate ? undefined : 'true' }));
+  root.appendChild(el('div', { id: 'mode-job-recruiter', hidden: enabledModes.jobRecruiter ? undefined : 'true' }));
+  root.appendChild(el('div', { id: 'mode-dating', hidden: enabledModes.dating ? undefined : 'true' }));
+
+  root.appendChild(el('details', { class: 'panel settings-details', id: 'global-settings' }, [
+    el('summary', { text: '⚙ Supprimer toutes mes donnees locales' }),
+    el('div', { class: 'settings-body', id: 'global-settings-body' }),
+  ]));
 }
 
-/** Bandeau d'identité, identique des deux côtés. */
-function identityBar({ identity, onSaveName, onChangeRole }) {
+export function setModeVisibility(mode, visible) {
+  const idMap = { jobCandidate: 'mode-job-candidate', jobRecruiter: 'mode-job-recruiter', dating: 'mode-dating' };
+  const container = document.getElementById(idMap[mode]);
+  if (container) container.hidden = !visible;
+  const labelMap = { jobCandidate: '🧑\u200d💼 Candidat', jobRecruiter: '🏢 Annonceur', dating: '💞 Rencontre' };
+  document.querySelectorAll('.mode-chip').forEach((btn) => {
+    if (btn.textContent === labelMap[mode]) btn.classList.toggle('active', visible);
+  });
+}
+
+export function renderGlobalSettings(callbacks) {
+  const body = document.getElementById('global-settings-body');
+  if (!body) return;
+  body.innerHTML = '';
+  body.appendChild(el('button', { class: 'btn secondary', text: 'Tout supprimer (toutes identites, tous modes)', onclick: callbacks.onResetLocalData }));
+  body.appendChild(el('p', { class: 'hint', text: 'Supprime les donnees locales et TOUTES les identites (candidat, annonceur, rencontre).' }));
+}
+
+function identityBlock(identity, callbacks) {
   const nameInput = field('input', { type: 'text', value: identity.displayName || '', placeholder: 'Votre nom' });
-  const save = () => onSaveName(nameInput.value.trim());
+  const save = () => callbacks.onSaveName(nameInput.value.trim());
   nameInput.addEventListener('blur', save);
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { save(); nameInput.blur(); } });
+  const idInput = field('input', { type: 'text', placeholder: 'Coller un ID pour le restaurer...' });
 
-  return el('div', { class: 'identity-bar' }, [
-    el('div', { style: 'display:flex; align-items:center; gap:0.5rem;' }, [
-      el('span', { class: 'hint', text: 'Vous :' }),
-      nameInput,
+  return el('details', { class: 'identity-block' }, [
+    el('summary', {}, [
+      el('span', { text: `\u{1FAAA} ${identity.displayName || 'Vous'}` }),
       el('span', { class: 'identity-id', text: `id ${identity.id}` }),
     ]),
-    el('button', { class: 'link-button', onclick: onChangeRole, text: 'Changer de rôle' }),
-  ]);
-}
-
-/** Bloc "Confidentialité & identité", identique des deux côtés. */
-function settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }) {
-  const idInput = field('input', { type: 'text', placeholder: 'Coller un ID pour restaurer cette identité…' });
-  return el('details', { class: 'panel settings-details' }, [
-    el('summary', { text: '⚙ Confidentialité & identité' }),
-    el('div', { class: 'settings-body' }, [
-      el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
-      el('p', { class: 'hint', text: 'Supprime aussi votre ID actuel — il ne représentera plus personne.' }),
-
-      el('p', { class: 'settings-subtitle', text: 'ID compromis ?' }),
-      el('p', { class: 'hint', text: 'Génère un nouvel ID (nom conservé) ; si vous étiez en direct, les annonceurs connectés oublient immédiatement l\'ancien.' }),
-      el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: onInvalidateId }),
-
-      el('p', { class: 'settings-subtitle', text: 'Restaurer un ID noté ailleurs' }),
-      idInput,
-      el('button', { class: 'btn secondary', text: 'Restaurer cet ID', onclick: () => { if (idInput.value.trim()) onRestoreId(idInput.value.trim()); } }),
+    el('div', { class: 'identity-block-body' }, [
+      nameInput,
+      el('div', { class: 'btn-row' }, [
+        idInput,
+        el('button', { class: 'btn secondary', text: 'Restaurer', onclick: () => { if (idInput.value.trim()) callbacks.onRestoreId(idInput.value.trim()); } }),
+      ]),
+      el('p', { class: 'hint', text: 'ID compromis ? Genere un nouvel ID (nom conserve) et previent immediatement vos contacts en direct.' }),
+      el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: callbacks.onInvalidateId }),
     ]),
   ]);
 }
 
-// =====================================================================
-// Espace candidat
-// =====================================================================
+function detailsReveal(title, fields, opts = {}) {
+  const openByDefault = opts.openByDefault !== false;
+  return el('details', { class: 'details-reveal', open: openByDefault ? 'true' : undefined }, [
+    el('summary', { text: `Details : ${title}` }),
+    el('div', { class: 'details-reveal-body' }, fields),
+  ]);
+}
 
-export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChangeRole, onFileSelected, onStartLive, onResetSearch, onResetLocalData, onRestoreId, onInvalidateId }) {
-  const root = app();
+export function renderConversationTabs(containerId, conversations, activeId, onSelect) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  if (conversations.length === 0) {
+    container.appendChild(el('p', { class: 'empty-state', text: 'Aucune conversation pour le moment.' }));
+    return;
+  }
+  container.appendChild(el('div', { class: 'segmented' }, conversations.map((c) => el('button', {
+    class: `segmented-item ${c.id === activeId ? 'active' : ''} ${c.status === 'pending' ? 'pending' : ''}`,
+    onclick: () => onSelect(c.id),
+  }, [
+    (c.status === 'pending' && c.direction === 'incoming') ? '\u{1F514} ' : '',
+    c.displayName || `Pair ${c.id.slice(0, 8)}...`,
+    c.unread > 0 ? badge(String(c.unread), 'signal') : null,
+  ]))));
+}
+
+export function renderConversationView(containerId, conv, callbacks) {
+  const zone = document.getElementById(containerId);
+  if (!zone) return;
+  zone.innerHTML = '';
+  if (!conv) {
+    zone.appendChild(el('p', { class: 'empty-state', text: 'Selectionnez une conversation.' }));
+    return;
+  }
+
+  if (conv.status === 'pending' && conv.direction === 'incoming') {
+    zone.appendChild(el('div', { class: 'panel nested' }, [
+      el('div', { class: 'panel-body' }, [
+        el('p', {}, [
+          el('strong', { text: conv.displayName || 'Un contact' }),
+          ` propose ${conv.kind === 'meeting' ? 'un rendez-vous' : 'un echange'}.`,
+        ]),
+        conv.note ? el('p', { class: 'hint', text: `« ${conv.note} »` }) : null,
+        conv.roomTitle ? el('p', { class: 'hint', text: `A propos de : ${conv.roomTitle}` }) : null,
+        el('div', { class: 'btn-row' }, [
+          el('button', { class: 'btn', text: 'Accepter', onclick: () => callbacks.onAccept(conv.id) }),
+          el('button', { class: 'btn secondary', text: 'Refuser', onclick: () => callbacks.onDecline(conv.id) }),
+        ]),
+      ]),
+    ]));
+    return;
+  }
+
+  if (conv.status === 'pending' && conv.direction === 'outgoing') {
+    zone.appendChild(el('p', { class: 'empty-state', text: `En attente de reponse de ${conv.displayName || 'ce contact'}...` }));
+    return;
+  }
+
+  const messages = el('div', { class: 'chat-messages' });
+  for (const m of conv.history) {
+    messages.appendChild(el('div', { class: `chat-bubble ${m.senderId === 'me' ? 'me' : 'them'}`, text: m.text }));
+  }
+  const input = field('input', { type: 'text', placeholder: 'Ecrire un message...' });
+  const send = () => { if (!input.value.trim()) return; callbacks.onSend(conv.id, input.value.trim()); input.value = ''; };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+  zone.appendChild(el('div', { class: 'panel nested' }, [
+    el('div', { class: 'panel-body' }, [
+      messages,
+      el('div', { class: 'chat-input-row' }, [input, el('button', { class: 'btn', text: 'Envoyer', onclick: send })]),
+    ]),
+  ]));
+  messages.scrollTop = messages.scrollHeight;
+}
+
+export function renderJobCandidatePanel(props) {
+  const root = document.getElementById('mode-job-candidate');
+  if (!root) return;
   root.innerHTML = '';
 
-  const keywordInput = field('input', { type: 'text', placeholder: 'Ex. Data Engineer, Python… (virgules pour plusieurs)' });
-  const cityInput = field('input', { type: 'text', placeholder: 'Vos ville(s) (optionnel, virgules pour plusieurs)' });
-
+  const keywordInput = field('input', { type: 'text', placeholder: 'Ex. Data Engineer, Python... (virgules pour plusieurs)' });
+  const cityInput = field('input', { type: 'text', placeholder: 'Vos ville(s) - obligatoire (virgules pour plusieurs)' });
+  const countryInput = field('input', { type: 'text', placeholder: 'Votre/vos pays (optionnel)' });
   const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
-  const fileLabel = el('p', { class: 'hint', text: 'Aucun fichier sélectionné.' });
+  const fileLabel = el('p', { class: 'hint', text: 'Aucun CV selectionne.' });
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
-    if (!file) { fileLabel.textContent = 'Aucun fichier sélectionné.'; return; }
-    fileLabel.textContent = `Analyse de « ${file.name} »…`;
-    onFileSelected(file);
+    if (!file) { fileLabel.textContent = 'Aucun CV selectionne.'; return; }
+    fileLabel.textContent = `Analyse de « ${file.name} »...`;
+    props.onFileSelected(file);
   });
 
-  root.appendChild(identityBar({ identity, onSaveName, onChangeRole }));
-
-  root.appendChild(panel('Votre recherche', [
-    keywordInput,
-    cityInput,
-    el('p', { class: 'hint', text: 'Les mots-clés décident quelles annonces analyseront votre profil. La/les ville(s) signalent une correspondance littérale dans le texte de l\'annonce — jamais comparées à une liste.' }),
-  ], { marker: 'signal', meta: isLive ? '🔴 en direct' : null }));
-
-  root.appendChild(panel('Votre CV', [
-    el('div', { class: 'dropzone' }, [
-      el('div', { class: 'hint', text: 'Déposez votre CV (.docx ou .txt) — analysé localement dès le dépôt, transmis en pièce jointe uniquement aux annonceurs auxquels vous répondez.' }),
-      fileInput,
-    ]),
-    fileLabel,
-    el('div', { id: 'cv-analysis' }),
+  root.appendChild(panel('Candidat - emploi', [
+    identityBlock(props.identity, props),
+    detailsReveal('recherche', [
+      keywordInput, cityInput, countryInput,
+      el('div', { class: 'dropzone' }, [
+        el('div', { class: 'hint', text: 'Votre CV (.docx/.txt), analyse localement des le depot.' }),
+        fileInput,
+      ]),
+      fileLabel,
+      el('div', { id: 'jc-cv-analysis' }),
+    ], { openByDefault: !props.isLive }),
     el('div', { class: 'btn-row' }, [
       el('button', {
-        class: 'btn btn-block',
-        text: isLive ? '🔴 En direct — recherche en cours' : 'Rechercher en direct',
-        disabled: isLive ? 'true' : undefined,
-        onclick: () => onStartLive(keywordInput.value, cityInput.value),
+        class: 'btn btn-block', text: props.isLive ? '\u{1F534} En direct' : 'Lancement',
+        disabled: props.isLive ? 'true' : undefined,
+        onclick: () => props.onStartLive(keywordInput.value, cityInput.value, countryInput.value),
       }),
     ]),
-    el('div', { class: 'btn-row' }, [
-      el('button', { class: 'btn secondary', text: 'Réinitialiser ma recherche', onclick: onResetSearch }),
-    ]),
-    !isLive ? el('p', { class: 'hint', text: 'CV analysé et au moins un mot-clé requis avant de lancer la recherche.' }) : null,
-  ], { marker: 'signal' }));
-
-  root.appendChild(panel('Propositions reçues', [
-    el('ul', { class: 'ledger', id: 'proposal-ledger' }, [el('li', { class: 'empty-state', text: isLive ? 'En attente de propositions…' : 'Lancez la recherche en direct pour être visible.' })]),
-  ], { marker: 'copper' }));
-
-  root.appendChild(settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }));
-  root.appendChild(el('div', { id: 'detail-zone' }));
+    el('div', { class: 'btn-row' }, [el('button', { class: 'btn secondary', text: 'Reinitialiser ma recherche', onclick: props.onResetSearch })]),
+    el('div', { class: 'section-divider' }),
+    el('div', { id: 'jc-tabs' }),
+    el('div', { id: 'jc-conversation' }),
+  ], { marker: 'signal', meta: props.isLive ? '🔴 en direct' : null }));
 }
 
-/**
- * Zone d'analyse du CV + boost IA, mise à jour SANS reconstruire le reste
- * du formulaire (les mots-clés/ville tapés ne doivent pas être perdus
- * pendant que le CV s'analyse ou se booste).
- */
-export function renderCvAnalysisSection(profile, { boostStatus, webgpuAvailable, onBoost }) {
-  const zone = document.getElementById('cv-analysis');
+export function renderCvAnalysisSection(containerId, profile, opts) {
+  const zone = document.getElementById(containerId);
   if (!zone) return;
   zone.innerHTML = '';
 
-  const expNote = profile.yearsOfExperience == null
-    ? 'ancienneté inconnue'
-    : `${profile.yearsOfExperience} an(s)${profile.yearsOfExperienceEstimated ? ' (estimée)' : ''}`;
-
-  const boostLabel = boostStatus === 'loading' ? 'Chargement du modèle…'
-    : boostStatus === 'done' ? '✓ Boost appliqué'
-    : boostStatus === 'error' ? 'Réessayer le boost'
+  const expNote = profile.yearsOfExperience == null ? 'anciennete inconnue'
+    : `${profile.yearsOfExperience} an(s)${profile.yearsOfExperienceEstimated ? ' (estimee)' : ''}`;
+  const boostLabel = opts.boostStatus === 'loading' ? 'Chargement du modele...'
+    : opts.boostStatus === 'done' ? '✓ Boost applique'
+    : opts.boostStatus === 'error' ? 'Reessayer le boost'
     : '🚀 Booster avec l\'IA (optionnel)';
 
   zone.appendChild(el('div', { class: 'panel nested' }, [
     el('div', { class: 'panel-body' }, [
-      el('p', { class: 'hint', text: `Mots-clés détectés (${profile.keywords.length}) : ${profile.keywords.join(', ') || 'aucun'}` }),
-      el('p', { class: 'hint', text: `Ancienneté : ${expNote}` }),
+      el('p', { class: 'hint', text: `Mots-cles detectes (${profile.keywords.length}) : ${profile.keywords.join(', ') || 'aucun'}` }),
+      el('p', { class: 'hint', text: `Anciennete : ${expNote}` }),
       el('div', { class: 'btn-row' }, [
-        webgpuAvailable
-          ? el('button', { class: 'btn secondary', text: boostLabel, disabled: boostStatus === 'loading' ? 'true' : undefined, onclick: onBoost })
-          : el('p', { class: 'hint', text: 'WebGPU indisponible : boost IA impossible ici, vos mots-clés CPU restent utilisables.' }),
-        boostStatus === 'done' ? badge('enrichi par IA', 'signal serif') : null,
+        opts.webgpuAvailable
+          ? el('button', { class: 'btn secondary', text: boostLabel, disabled: opts.boostStatus === 'loading' ? 'true' : undefined, onclick: opts.onBoost })
+          : el('p', { class: 'hint', text: 'WebGPU indisponible : boost IA impossible ici.' }),
+        opts.boostStatus === 'done' ? badge('enrichi par IA', 'signal serif') : null,
       ]),
     ]),
   ]));
 }
 
-/** Liste des propositions (chat / rendez-vous) reçues côté candidat. */
-export function renderProposalList(proposals, { onAccept, onDecline }) {
-  const list = document.getElementById('proposal-ledger');
-  if (!list) return;
-  list.innerHTML = '';
-  if (proposals.length === 0) {
-    list.appendChild(el('li', { class: 'empty-state', text: 'Aucune proposition pour le moment.' }));
-    return;
-  }
-  for (const p of proposals) {
-    const isMeeting = p.type === 'meeting_proposal';
-    list.appendChild(el('li', { class: 'proposal-item' }, [
-      el('div', { class: 'ledger-title', text: p.fromName ? `${p.fromName}${p.roomTitle ? ' · ' + p.roomTitle : ''}` : `Pair ${p.peerId.slice(0, 10)}…` }),
-      el('div', { class: 'ledger-sub', text: isMeeting ? (p.note ? `Propose un rendez-vous : ${p.note}` : 'Propose un rendez-vous.') : 'Propose d\'ouvrir un chat.' }),
-      el('div', { class: 'btn-row', style: 'margin-top:0.5rem;' }, [
-        el('button', { class: 'btn', text: 'Accepter', onclick: () => onAccept(p) }),
-        el('button', { class: 'btn secondary', text: 'Refuser', onclick: () => onDecline(p) }),
-      ]),
-    ]));
-  }
-}
-
-// =====================================================================
-// Espace annonceur
-// =====================================================================
-
-export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId, onSelectRoom, onOpenCandidate, onRemoveRoom }) {
-  const root = app();
+export function renderJobRecruiterPanel(props) {
+  const root = document.getElementById('mode-job-recruiter');
+  if (!root) return;
   root.innerHTML = '';
 
-  let addFormVisible = rooms.length === 0;
-  const addFormContainer = el('div', {});
+  let addFormVisible = props.rooms.length === 0;
+  const addFormContainer = el('div', { class: 'add-room-popover' });
 
   function renderAddForm() {
     addFormContainer.innerHTML = '';
-    if (!addFormVisible) {
-      addFormContainer.appendChild(el('button', { class: 'btn secondary btn-block', text: '+ Nouvelle salle d\'annonce', onclick: () => { addFormVisible = true; renderAddForm(); } }));
-      return;
-    }
-    const titleInput = field('input', { type: 'text', placeholder: 'Intitulé du poste (ex. Data Engineer senior)' });
-    const minYearsInput = field('input', { type: 'number', min: '0', max: '60', placeholder: 'Ancienneté minimale requise, en années (optionnel)' });
-    const textArea = field('textarea', { placeholder: 'Collez ici le texte de l\'annonce…' });
+    addFormContainer.hidden = !addFormVisible;
+    if (!addFormVisible) return;
+    const titleInput = field('input', { type: 'text', placeholder: 'Intitule du poste' });
+    const minYearsInput = field('input', { type: 'number', min: '0', max: '60', placeholder: 'Anciennete min. (annees, optionnel)' });
+    const maxYearsInput = field('input', { type: 'number', min: '0', max: '60', placeholder: 'Anciennete max. (annees, optionnel)' });
+    const countryInput = field('input', { type: 'text', placeholder: 'Pays (optionnel)' });
+    const textArea = field('textarea', { placeholder: 'Collez ici le texte de l\'annonce...' });
     addFormContainer.appendChild(el('div', { class: 'panel nested' }, [
       el('div', { class: 'panel-body' }, [
-        titleInput,
-        minYearsInput,
-        textArea,
+        titleInput, minYearsInput, maxYearsInput, countryInput, textArea,
         el('div', { class: 'btn-row' }, [
           el('button', {
-            class: 'btn btn-block',
-            text: 'Publier et rechercher en direct',
+            class: 'btn btn-block', text: 'Publier et rechercher en direct',
             onclick: () => {
               if (!textArea.value.trim()) return;
-              const minYears = minYearsInput.value.trim() ? Number(minYearsInput.value) : null;
-              onCreateRoom({ title: titleInput.value.trim() || null, text: textArea.value, minYearsRequired: minYears });
-              addFormVisible = rooms.length === 0;
+              props.onCreateRoom({
+                title: titleInput.value.trim() || null,
+                text: textArea.value,
+                minYearsRequired: minYearsInput.value.trim() ? Number(minYearsInput.value) : null,
+                maxYearsRequired: maxYearsInput.value.trim() ? Number(maxYearsInput.value) : null,
+                country: countryInput.value.trim() || null,
+              });
+              addFormVisible = props.rooms.length === 0;
               renderAddForm();
             },
           }),
         ]),
-        rooms.length > 0 ? el('button', { class: 'link-button', text: 'annuler', onclick: () => { addFormVisible = false; renderAddForm(); } }) : null,
       ]),
     ]));
   }
+
+  const tabsRow = el('div', { class: 'tabs-with-add' }, [
+    el('div', { id: 'room-tabs', style: 'flex:1;' }),
+    el('button', { class: 'segmented-item add-btn', text: '+ Nouvelle salle', onclick: () => { addFormVisible = !addFormVisible; renderAddForm(); } }),
+  ]);
   renderAddForm();
 
-  root.appendChild(identityBar({ identity, onSaveName, onChangeRole }));
-
-  root.appendChild(panel('Vos salles d\'annonce', [
-    el('div', { id: 'room-tabs' }),
+  root.appendChild(panel('Annonceur - emploi', [
+    identityBlock(props.identity, props),
+    tabsRow,
     addFormContainer,
-    el('p', { class: 'hint', text: 'Le texte de vos annonces reste local : seuls des mots-clés de comparaison sont utilisés, jamais publiés.' }),
-  ], { marker: 'signal' }));
-
-  root.appendChild(panel('Candidats', [
     el('div', { id: 'room-content' }),
-  ], { marker: 'copper', id: 'candidates-panel' }));
+  ], { marker: 'copper' }));
 
-  root.appendChild(settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }));
-
-  renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom });
+  renderRoomsList(props.rooms, props.activeRoomId, props);
 }
 
-// Préserve l'état ouvert/fermé du <details> "Voir le texte publié" d'une
-// salle à l'autre re-rendu (chaque nouvelle diffusion candidat reconstruit
-// le DOM de la salle active).
 const roomTextOpenState = new Set();
 
-export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom } = {}) {
+export function renderRoomsList(rooms, activeRoomId, callbacks) {
   const tabs = document.getElementById('room-tabs');
   const content = document.getElementById('room-content');
   if (!tabs || !content) return;
@@ -284,8 +318,7 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
   content.innerHTML = '';
 
   if (rooms.length === 0) {
-    tabs.appendChild(el('p', { class: 'hint', text: 'Aucune salle pour le moment — créez-en une ci-dessous.' }));
-    content.appendChild(el('p', { class: 'empty-state', text: 'Aucune salle d\'annonce publiée pour le moment.' }));
+    content.appendChild(el('p', { class: 'empty-state', text: 'Aucune salle d\'annonce publiee - creez-en une avec le bouton "+ Nouvelle salle".' }));
     return;
   }
 
@@ -293,20 +326,21 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
 
   tabs.appendChild(el('div', { class: 'segmented' }, rooms.map((room) => el('button', {
     class: `segmented-item ${room.id === active.id ? 'active' : ''}`,
-    onclick: () => onSelectRoom?.(room.id),
+    onclick: () => callbacks.onSelectRoom?.(room.id),
   }, [
+    room.unread > 0 ? '\u{1F514} ' : '',
     room.title || 'Sans titre',
     room.candidates.length > 0 ? badge(String(room.candidates.length)) : null,
   ]))));
 
   const ledgerItems = active.candidates.length === 0
-    ? [el('li', { class: 'empty-state', text: '🔴 En direct — en attente de candidats…' })]
+    ? [el('li', { class: 'empty-state', text: '🔴 En direct - en attente de candidats...' })]
     : active.candidates.map((c) => el('li', {}, [
-        el('button', { class: 'ledger-row', onclick: () => onOpenCandidate?.(c, active) }, [
+        el('button', { class: 'ledger-row', onclick: () => callbacks.onOpenCandidate?.(c, active) }, [
           el('span', { class: `ledger-score ${c.total === 0 ? 'weak' : ''}`, text: `${c.total}` }),
           el('span', {}, [
-            el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}…` }),
-            el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-clés${c.cityStatus === 'match' ? ' · 📍' : ''}${c.experienceStatus === 'match' ? ' · ✓ ancienneté' : c.experienceStatus === 'below' ? ' · ⚠ ancienneté' : ''}${c.cvFileName ? '' : ' · CV en cours…'}` }),
+            el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}...` }),
+            el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-cles${c.cityStatus === 'match' ? ' · 📍' : ''}${c.countryStatus === 'match' ? ' · 🌍' : ''}${c.experienceStatus === 'match' ? ' · ✓ anciennete' : ((c.experienceStatus === 'below' || c.experienceStatus === 'above') ? ' · ⚠ anciennete' : '')}${c.cvFileName ? '' : ' · CV en cours...'}` }),
           ]),
           el('span', { class: 'ledger-chevron', text: '›' }),
         ]),
@@ -314,7 +348,7 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
 
   content.appendChild(el('div', { style: 'display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.4rem;' }, [
     el('strong', { style: 'font-family:var(--serif); font-size:1.02rem;', text: active.title || 'Annonce sans titre' }),
-    el('button', { class: 'link-button', text: 'retirer cette salle', onclick: () => onRemoveRoom?.(active.id) }),
+    el('button', { class: 'link-button', text: 'retirer cette salle', onclick: () => callbacks.onRemoveRoom?.(active.id) }),
   ]));
   if (active.text) {
     content.appendChild(el('details', {
@@ -322,96 +356,136 @@ export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandi
       open: roomTextOpenState.has(active.id) ? 'true' : undefined,
       ontoggle: (e) => { if (e.target.open) roomTextOpenState.add(active.id); else roomTextOpenState.delete(active.id); },
     }, [
-      el('summary', { text: 'Voir le texte publié' }),
+      el('summary', { text: 'Voir le texte publie' }),
       el('p', { class: 'room-text-preview', text: active.text }),
     ]));
   }
-  content.appendChild(el('p', { class: 'hint', style: 'margin:0.5rem 0;', text: `${active.candidates.length} candidat(s) découvert(s)` }));
+  content.appendChild(el('p', { class: 'hint', style: 'margin:0.5rem 0;', text: `${active.candidates.length} candidat(s) decouvert(s)` }));
   content.appendChild(el('ul', { class: 'ledger' }, ledgerItems));
   content.appendChild(el('div', { id: 'detail-zone' }));
 }
 
-// --- Détail d'un match côté annonceur : score, CV téléchargeable, actions ---
-export function renderCandidateDetail(entry, { onProposeContact, cvUrl }) {
+export function renderCandidateDetail(entry, callbacks) {
   const zone = document.getElementById('detail-zone');
   if (!zone) return;
   zone.innerHTML = '';
 
   const reasons = entry.reasons.map((r) => el('div', { class: `reason ${r.type}` }, [r.label]));
-  const meetingNote = field('input', { type: 'text', placeholder: 'Message ou créneau proposé (optionnel — laissez vide pour un simple chat)…' });
-  const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyée' });
-
+  const meetingNote = field('input', { type: 'text', placeholder: 'Message ou creneau propose (optionnel - laissez vide pour un simple chat)...' });
+  const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyee' });
   const sendContact = () => {
-    onProposeContact(meetingNote.value.trim());
+    callbacks.onProposeContact(meetingNote.value.trim());
     confirmation.classList.add('visible');
     setTimeout(() => confirmation.classList.remove('visible'), 3000);
   };
 
   zone.appendChild(el('div', { class: 'panel nested' }, [
-    el('div', { class: 'panel-header' }, [
-      el('span', { class: 'panel-marker' }),
-      el('h3', { text: entry.displayName || 'Détail du candidat' }),
-    ]),
+    el('div', { class: 'panel-header' }, [el('span', { class: 'panel-marker' }), el('h3', { text: entry.displayName || 'Detail du candidat' })]),
     el('div', { class: 'panel-body' }, [
       el('div', { style: 'display:flex; align-items:baseline; gap:1rem;' }, [
         el('div', { class: 'score-stamp', text: `${entry.total} pts` }),
-        el('span', { class: 'hint', text: `mots-clés en commun, sur ${entry.totalRequired} requis` }),
+        el('span', { class: 'hint', text: `mots-cles en commun, sur ${entry.totalRequired} requis` }),
       ]),
-      cvUrl
-        ? el('a', { href: cvUrl, download: entry.cvFileName || 'cv', class: 'btn secondary', style: 'display:inline-block; text-decoration:none; width:fit-content;', text: `📎 Télécharger le CV (${entry.cvFileName || 'fichier'})` })
-        : el('p', { class: 'hint', text: 'CV en cours de réception…' }),
+      callbacks.cvUrl
+        ? el('a', { href: callbacks.cvUrl, download: entry.cvFileName || 'cv', class: 'btn secondary', style: 'display:inline-block; text-decoration:none; width:fit-content;', text: `📎 Telecharger le CV (${entry.cvFileName || 'fichier'})` })
+        : el('p', { class: 'hint', text: 'CV en cours de reception...' }),
       el('div', {}, reasons),
       meetingNote,
+      el('div', { class: 'btn-row' }, [el('button', { class: 'btn', text: 'Proposer un echange', onclick: sendContact }), confirmation]),
+    ]),
+  ]));
+}
+
+export function renderDatingPanel(props) {
+  const root = document.getElementById('mode-dating');
+  if (!root) return;
+  root.innerHTML = '';
+
+  const titleInput = field('input', { type: 'text', placeholder: 'Intitule de votre profil' });
+  const demandInput = field('input', { type: 'text', placeholder: 'Ce que vous recherchez (virgules pour plusieurs mots-cles)' });
+  const cityInput = field('input', { type: 'text', placeholder: 'Votre ville - obligatoire' });
+  const countryInput = field('input', { type: 'text', placeholder: 'Votre pays (optionnel)' });
+  const bioArea = field('textarea', { placeholder: 'Parlez de vous...' });
+  const photoInput = el('input', { type: 'file', accept: 'image/*' });
+  const photoLabel = el('p', { class: 'hint', text: 'Aucune photo selectionnee.' });
+  photoInput.addEventListener('change', () => {
+    const file = photoInput.files[0];
+    if (!file) { photoLabel.textContent = 'Aucune photo selectionnee.'; return; }
+    photoLabel.textContent = `Selectionnee : ${file.name}`;
+    props.onPhotoSelected(file);
+  });
+
+  root.appendChild(panel('Rencontre', [
+    identityBlock(props.identity, props),
+    detailsReveal('profil', [
+      titleInput, demandInput, cityInput, countryInput, bioArea,
+      el('div', { class: 'dropzone' }, [
+        el('div', { class: 'hint', text: 'Votre photo - jointe uniquement a la diffusion, jamais stockee ailleurs.' }),
+        photoInput,
+      ]),
+      photoLabel,
+      el('div', { id: 'dt-analysis' }),
+    ], { openByDefault: !props.isLive }),
+    el('div', { class: 'btn-row' }, [
+      el('button', {
+        class: 'btn btn-block', text: props.isLive ? '🔴 En direct' : 'Lancement',
+        disabled: props.isLive ? 'true' : undefined,
+        onclick: () => props.onStartLive({ title: titleInput.value, demand: demandInput.value, city: cityInput.value, country: countryInput.value, bio: bioArea.value }),
+      }),
+    ]),
+    el('div', { class: 'btn-row' }, [el('button', { class: 'btn secondary', text: 'Reinitialiser', onclick: props.onResetSearch })]),
+    el('div', { class: 'section-divider' }),
+    el('div', { class: 'section-title-sm', text: 'Profils compatibles' }),
+    el('ul', { class: 'ledger', id: 'dt-matches' }, [el('li', { class: 'empty-state', text: props.isLive ? 'En attente de profils...' : 'Lancez la recherche pour decouvrir des profils.' })]),
+    el('div', { id: 'dt-tabs' }),
+    el('div', { id: 'dt-conversation' }),
+  ], { marker: 'signal', id: 'dating-panel', meta: props.isLive ? '🔴 en direct' : null }));
+}
+
+export function renderDatingMatches(matches, callbacks) {
+  const list = document.getElementById('dt-matches');
+  if (!list) return;
+  list.innerHTML = '';
+  if (matches.length === 0) {
+    list.appendChild(el('li', { class: 'empty-state', text: 'Aucun profil compatible pour le moment.' }));
+    return;
+  }
+  for (const m of matches) {
+    list.appendChild(el('li', {}, [
+      el('button', { class: 'ledger-row', onclick: () => callbacks.onOpen(m) }, [
+        el('span', { class: `ledger-score ${m.total === 0 ? 'weak' : ''}`, text: `${m.total}` }),
+        el('span', {}, [
+          el('div', { class: 'ledger-title', text: m.displayName || `Pair ${String(m.peerId).slice(0, 10)}...` }),
+          el('div', { class: 'ledger-sub', text: `${m.cityStatus === 'match' ? '📍 meme ville' : ''}${m.photoUrl ? ' · photo recue' : ' · photo en cours...'}` }),
+        ]),
+        el('span', { class: 'ledger-chevron', text: '›' }),
+      ]),
+    ]));
+  }
+}
+
+export function renderDatingMatchDetail(entry, callbacks) {
+  const zone = document.getElementById('dt-conversation');
+  if (!zone) return;
+  zone.innerHTML = '';
+  const reasons = entry.reasons.map((r) => el('div', { class: `reason ${r.type}` }, [r.label]));
+  const note = field('input', { type: 'text', placeholder: 'Message (optionnel)...' });
+  const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyee' });
+
+  zone.appendChild(el('div', { class: 'panel nested' }, [
+    el('div', { class: 'panel-header' }, [el('span', { class: 'panel-marker' }), el('h3', { text: entry.displayName || 'Profil' })]),
+    el('div', { class: 'panel-body' }, [
+      callbacks.photoUrl ? el('img', { src: callbacks.photoUrl, alt: 'Photo de profil', style: 'max-width:100%; border-radius:var(--radius-sm);' }) : el('p', { class: 'hint', text: 'Photo en cours de reception...' }),
+      el('div', {}, reasons),
+      note,
       el('div', { class: 'btn-row' }, [
-        el('button', { class: 'btn', text: 'Proposer un échange', onclick: sendContact }),
+        el('button', { class: 'btn', text: 'Proposer un echange', onclick: () => { callbacks.onProposeContact(note.value.trim()); confirmation.classList.add('visible'); setTimeout(() => confirmation.classList.remove('visible'), 3000); } }),
         confirmation,
       ]),
     ]),
   ]));
 }
 
-// --- Chat P2P ---
-let chatElements = null;
-export const renderChat = {
-  open(peerId, history, onSend, peerName) {
-    const zone = document.getElementById('detail-zone');
-    if (!zone) return;
-    zone.innerHTML = '';
-
-    const messages = el('div', { class: 'chat-messages' });
-    for (const m of history) {
-      messages.appendChild(el('div', { class: `chat-bubble ${m.senderId === 'me' ? 'me' : 'them'}`, text: m.text }));
-    }
-
-    const input = field('input', { type: 'text', placeholder: 'Écrire un message…' });
-    const send = () => {
-      if (!input.value.trim()) return;
-      onSend(input.value.trim());
-      input.value = '';
-    };
-
-    zone.appendChild(el('div', { class: 'panel nested' }, [
-      el('div', { class: 'panel-header' }, [
-        el('span', { class: 'panel-marker' }),
-        el('h3', { text: peerName ? `Conversation avec ${peerName}` : 'Conversation' }),
-      ]),
-      el('div', { class: 'panel-body' }, [
-        messages,
-        el('div', { class: 'chat-input-row' }, [input, el('button', { class: 'btn', text: 'Envoyer', onclick: send })]),
-      ]),
-    ]));
-
-    chatElements = { peerId, messages };
-  },
-
-  appendMessage(peerId, message) {
-    if (!chatElements || chatElements.peerId !== peerId) return;
-    chatElements.messages.appendChild(el('div', { class: `chat-bubble ${message.senderId === 'me' ? 'me' : 'them'}`, text: message.text }));
-    chatElements.messages.scrollTop = chatElements.messages.scrollHeight;
-  },
-};
-
-// --- Journal technique ---
 export function renderLog(line) {
   const panelEl = document.getElementById('log-panel');
   const list = document.getElementById('log-list');

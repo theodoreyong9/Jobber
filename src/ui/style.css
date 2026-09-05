@@ -64,6 +64,8 @@ button, input, textarea, select { font-family: var(--sans); }
 .topbar-mark { color: var(--signal); font-size: 1rem; }
 .topbar-title { font-family: var(--serif); font-weight: 600; font-size: 1.1rem; margin: 0; letter-spacing: 0.01em; }
 .topbar-sub { color: #9aa79e; font-size: 0.76rem; margin-left: 0.2rem; }
+.topbar-github { margin-left: auto; color: var(--surface); font-size: 0.8rem; text-decoration: none; border: 1px solid #3a473f; border-radius: 999px; padding: 0.2rem 0.65rem; opacity: 0.85; }
+.topbar-github:hover { opacity: 1; border-color: var(--signal); }
 
 .app {
   max-width: 600px;
@@ -185,6 +187,44 @@ textarea.field { min-height: 110px; resize: vertical; }
 .identity-bar .field { width: 150px; padding: 0.35rem 0.6rem; font-size: 0.85rem; }
 .identity-id { font-family: var(--serif); font-size: 0.68rem; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.5rem; }
 
+/* --- Navigation de modes cumulables --- */
+.mode-nav { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.mode-chip {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 0.4rem 0.85rem; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  color: var(--muted); transition: background 0.12s, color 0.12s;
+}
+.mode-chip.active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.mode-chip.dating.active { background: #7a3b56; border-color: #7a3b56; }
+
+/* --- Bloc identité compact et repliable (par mode) --- */
+.identity-block { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
+.identity-block summary {
+  cursor: pointer; padding: 0.5rem 0.7rem; font-size: 0.84rem; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center; list-style: none;
+}
+.identity-block summary::-webkit-details-marker { display: none; }
+.identity-block-body { padding: 0.6rem 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--line); }
+
+/* --- Panneau "détails" repliable --- */
+.details-reveal { border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.details-reveal summary {
+  cursor: pointer; padding: 0.55rem 0.7rem; font-size: 0.84rem; font-weight: 600; color: var(--ink);
+  list-style: none; text-transform: capitalize;
+}
+.details-reveal summary::-webkit-details-marker { display: none; }
+.details-reveal-body { padding: 0 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.55rem; border-top: 1px solid var(--line); padding-top: 0.6rem; }
+
+.section-divider { border-top: 1px solid var(--line); margin: 0.2rem 0; }
+.section-title-sm { font-family: var(--serif); font-weight: 600; font-size: 0.86rem; color: var(--ink); }
+
+/* --- Rangée onglets + bouton "+" (annonceur) --- */
+.tabs-with-add { display: flex; gap: 0.4rem; align-items: flex-start; }
+.segmented-item.add-btn { background: var(--signal-tint); border-color: var(--signal-tint); color: var(--signal); font-weight: 700; flex: none; }
+.segmented-item.pending { border-color: var(--copper); }
+.add-room-popover[hidden] { display: none; }
+
+
 .segmented { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .segmented-item {
   background: var(--paper); border: 1px solid var(--line); border-radius: 999px;
@@ -230,7 +270,7 @@ textarea.field { min-height: 110px; resize: vertical; }
 .chat-input-row .field { flex: 1; }
 
 .room-text-details summary { cursor: pointer; font-size: 0.78rem; color: var(--signal); }
-.room-text-preview { white-space: pre-wrap; font-size: 0.84rem; color: var(--muted); background: var(--paper); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; margin: 0.35rem 0 0; max-height: 300px; overflow-y: auto; border: 1px solid var(--line); }
+.room-text-preview { white-space: pre-wrap; font-size: 0.84rem; color: var(--muted); background: var(--paper); border-radius: var(--radius-sm); padding: 0.55rem 0.65rem; margin: 0.35rem 0 0; border: 1px solid var(--line); }
 
 .settings-details summary {
   cursor: pointer; font-size: 0.85rem; color: var(--muted);
