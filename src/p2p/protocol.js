@@ -34,30 +34,24 @@ function base(type) {
 
 /**
  * Diffusé par un candidat à tous les pairs connectés (recruteurs) :
- * son identité applicative stable (`senderId`, distincte de l'ID de
- * transport Trystero — c'est elle qui permet de reconnaître le même
- * candidat d'une reconnexion à l'autre), son nom, un mot-clé de recherche
- * qu'il choisit lui-même (ex. "Data Engineer", "Python"), les mots-clés
- * extraits localement du CV, et une référence au fichier CV (transmis
- * séparément en binaire, voir p2p/trystero.js). Jamais de texte intégral
- * dans ce message — juste des mots-clés (§11, §51).
- *
- * Le `searchKeyword` sert de filtre grossier côté recruteur : une salle
- * d'annonce n'analyse une diffusion QUE si ce mot-clé correspond à l'un des
- * siens (voir p2p/discovery.js, `matchesKeywordGate`) — ça évite de
- * surcharger le recruteur avec des candidats hors sujet.
+ * son identité applicative stable (`senderId`), son nom, un mot-clé de
+ * recherche (filtre côté recruteur, voir p2p/discovery.js), ses mots-clés
+ * de CV (compétences+langues, sans catégorie — § simplification), sa ville
+ * (champ explicite, comparée littéralement au texte de l'annonce, jamais
+ * via une liste de villes), son ancienneté (explicite ou estimée à partir
+ * de dates réelles du CV), et une référence au fichier CV en pièce jointe.
+ * Jamais de texte intégral dans ce message (§11, §51).
  */
-export function createCandidateBroadcast({ senderId, displayName, searchKeyword, skills, domains, seniority, locations, languages, cvFileName }) {
+export function createCandidateBroadcast({ senderId, displayName, searchKeyword, skills, city, yearsOfExperience, yearsOfExperienceEstimated, cvFileName }) {
   return {
     ...base(MessageType.CANDIDATE_BROADCAST),
     senderId: senderId || null,
     displayName: displayName || null,
     searchKeyword: searchKeyword || null,
     skills: skills || [],
-    domains: domains || [],
-    seniority: seniority || null,
-    locations: locations || [],
-    languages: languages || [],
+    city: city || null,
+    yearsOfExperience: typeof yearsOfExperience === 'number' ? yearsOfExperience : null,
+    yearsOfExperienceEstimated: Boolean(yearsOfExperienceEstimated),
     cvFileName: cvFileName || null,
   };
 }

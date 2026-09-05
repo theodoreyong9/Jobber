@@ -1,16 +1,23 @@
 // src/core/extraction/heuristicExtractor.js
 //
-// Extraction déterministe CPU (§17, §22). Repère des sections connues par
-// mots-clés et produit des ExtractedFact avec provenance. Cette étape ne
-// remplace pas WebLLM : elle réduit ce qu'il reste à comprendre
-// sémantiquement (§30, §49).
+// Extraction déterministe CPU (§17, §22). PAS de listes de villes/secteurs
+// pour deviner une localisation ou un domaine : ça n'a jamais été une vraie
+// comparaison, juste un dictionnaire figé qui prétend couvrir un monde
+// ouvert. Ce que le CPU extrait ici, ce sont des MOTS-CLÉS bruts (section
+// "Compétences", langues explicitement nommées) — comparés tels quels des
+// deux côtés (candidat et annonce), sans catégorie intermédiaire.
+//
+// La ville et l'ancienneté minimale ne sont PAS devinées par mots-clés :
+// elles sont des champs explicites saisis par l'utilisateur (voir
+// buildProfile.js et l'UI). Seule l'ancienneté DU CANDIDAT est estimée ici,
+// à partir de dates réellement présentes dans son CV (voir
+// `extractEarliestYear`), pas d'un dictionnaire.
 
 const SECTION_KEYWORDS = {
   skills: [/^compet/i, /^skills?$/i, /^technolog/i, /^stack/i],
   experience: [/^experience/i, /^exp[ée]rience/i, /^parcours/i],
   education: [/^formation/i, /^education/i, /^dipl[oô]me/i],
   languages: [/^langues?$/i, /^languages?$/i],
-  domains: [/^domaine/i, /^secteur/i, /^industry/i],
 };
 
 const LANGUAGE_HINTS = [
@@ -63,6 +70,24 @@ function splitListLine(line) {
 }
 
 /**
+ * Cherche toutes les années à 4 chiffres plausibles (1950-aujourd'hui)
+ * mentionnées dans le texte (typiquement des dates d'expérience : "2018 -
+ * 2021 Data Analyst...") et renvoie la plus ancienne. Sert à ESTIMER
+ * l'ancienneté du candidat à partir de dates réelles de son CV, plutôt que
+ * d'un motif de phrase fragile ("5 ans d'expérience" absent la plupart du
+ * temps). Renvoie null si aucune année plausible n'est trouvée.
+ * @param {string} text
+ */
+function extractEarliestYear(text) {
+  const currentYear = new Date().getFullYear();
+  const matches = text.match(/\b(19[5-9]\d|20[0-4]\d)\b/g);
+  if (!matches) return null;
+  const years = matches.map(Number).filter((y) => y <= currentYear);
+  if (years.length === 0) return null;
+  return Math.min(...years);
+}
+
+/**
  * Extraction heuristique complète d'un document parsé.
  * @param {import('../parser/documentParser.js').ParsedDocument} doc
  * @returns {{ facts: import('../validation/schema.js').ExtractedFact[], sections: Record<string,string[]> }}
@@ -87,12 +112,6 @@ export function extractFacts(doc) {
     }
   }
 
-  for (const line of sections.domains || []) {
-    for (const token of splitListLine(line)) {
-      pushFact('domain', token, `domains:"${line.slice(0, 40)}"`);
-    }
-  }
-
   for (const line of sections.experience || []) {
     if (line.length > 3) {
       pushFact('experience_line', line, `experience:"${line.slice(0, 40)}"`);
@@ -112,26 +131,18 @@ export function extractFacts(doc) {
     }
   }
 
-  // Détection grossière de séniorité par mots-clés — sera confirmée/affinée
-  // par WebLLM en cas d'ambiguïté (§30).
-  const seniorityHints = [
-    ['intern', /stage|intern/i],
-    ['junior', /junior/i],
-    ['senior', /senior|confirm[ée]/i],
-    ['lead', /\blead\b|tech ?lead/i],
-    ['principal', /principal|staff engineer/i],
-    ['executive', /directeur|director|vp|chief|c-level/i],
-  ];
-  for (const [level, re] of seniorityHints) {
-    if (re.test(doc.rawText)) {
-      pushFact('seniority_hint', level, 'fulltext:regex');
-    }
-  }
-
-  // Années d'expérience explicites ("5 ans d'expérience", "5+ years")
+  // Années d'expérience explicites ("5 ans d'expérience", "5+ years") —
+  // signal préféré quand il est présent, plus direct qu'une estimation.
   const yearsMatch = doc.rawText.match(/(\d{1,2})\s*\+?\s*(ans|years?)\b/i);
   if (yearsMatch) {
     pushFact('years_of_experience', yearsMatch[1], `fulltext:"${yearsMatch[0]}"`);
+  }
+
+  // Repli : estimation à partir de la date la plus ancienne réellement
+  // trouvée dans le texte (§ demande : calcul réel, pas une liste devinée).
+  const earliestYear = extractEarliestYear(doc.rawText);
+  if (earliestYear != null) {
+    pushFact('earliest_year_mention', String(earliestYear), `fulltext:year(${earliestYear})`);
   }
 
   return { facts, sections };

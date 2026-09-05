@@ -7,7 +7,7 @@
 // portée du service worker, pour fonctionner sous un sous-chemin GitHub
 // Pages (§6).
 
-const CACHE_NAME = 'jobmatch-static-v2';
+const CACHE_NAME = 'jobmatch-static-v3';
 const SCOPE = self.registration.scope;
 
 const STATIC_ASSETS = [
@@ -34,6 +34,11 @@ const STATIC_ASSETS = [
   'src/storage/cache.js',
   'src/storage/chat.js',
   'src/storage/blocklist.js',
+  'src/llm/provider.js',
+  'src/llm/webllm.js',
+  'src/llm/prompts.js',
+  'src/worker/llm.worker.js',
+  'src/models/catalog.js',
 ].map((p) => new URL(p, SCOPE).toString());
 
 self.addEventListener('install', (event) => {

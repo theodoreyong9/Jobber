@@ -54,24 +54,26 @@ function identityBar({ identity, onSaveName, onChangeRole }) {
   ]);
 }
 
-/** Bloc "Confidentialité" partagé : suppression des données + invalidation/restauration d'ID. */
-function privacySection({ onResetLocalData, onRestoreId, onInvalidateId }) {
+/** Bloc "Confidentialité & identité", compact et repliable (bouton unique). */
+function settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }) {
   const idInput = el('input', {
     type: 'text', placeholder: 'Coller un ID pour restaurer cette identité…',
     style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin:0.4rem 0;',
   });
-  return el('div', {}, [
-    el('div', { class: 'section-title', text: 'Confidentialité' }),
-    el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
-    el('p', { class: 'lede', style: 'margin:0.6rem 0 0;', text: 'Supprime aussi votre ID actuel — il ne représentera plus personne.' }),
+  return el('details', { class: 'settings-details' }, [
+    el('summary', { text: '⚙ Confidentialité & identité' }),
+    el('div', { class: 'settings-panel' }, [
+      el('button', { class: 'btn secondary', text: 'Supprimer toutes mes données locales', onclick: onResetLocalData }),
+      el('p', { class: 'lede', style: 'margin:0.5rem 0 0;', text: 'Supprime aussi votre ID actuel — il ne représentera plus personne.' }),
 
-    el('div', { class: 'section-title', text: 'ID compromis ?', style: 'font-size:0.95rem; margin-top:1.2rem;' }),
-    el('p', { class: 'lede', style: 'margin:0 0 0.4rem;', text: 'Si quelqu\'un d\'autre connaît votre ID, invalidez-le : un nouvel ID est généré, votre nom est conservé, et si vous étiez en direct, les annonceurs connectés oublient immédiatement l\'ancien.' }),
-    el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: onInvalidateId }),
+      el('p', { class: 'lede', style: 'margin:0.9rem 0 0.3rem; font-weight:600; color:var(--ink);', text: 'ID compromis ?' }),
+      el('p', { class: 'lede', style: 'margin:0 0 0.4rem;', text: 'Génère un nouvel ID (nom conservé) ; si vous étiez en direct, les annonceurs connectés oublient immédiatement l\'ancien.' }),
+      el('button', { class: 'btn secondary', text: 'Invalider mon ID', onclick: onInvalidateId }),
 
-    el('p', { class: 'lede', style: 'margin:1rem 0 0;', text: 'Votre ID (affiché ci-dessus) identifie cet onglet. Si vous l\'avez noté ailleurs, vous pouvez le restaurer ici pour retrouver le même profil applicatif.' }),
-    idInput,
-    el('button', { class: 'btn secondary', text: 'Restaurer cet ID', onclick: () => { if (idInput.value.trim()) onRestoreId(idInput.value.trim()); } }),
+      el('p', { class: 'lede', style: 'margin:0.9rem 0 0.3rem;', text: 'Restaurer un ID noté ailleurs :' }),
+      idInput,
+      el('button', { class: 'btn secondary', text: 'Restaurer cet ID', onclick: () => { if (idInput.value.trim()) onRestoreId(idInput.value.trim()); } }),
+    ]),
   ]);
 }
 
@@ -83,7 +85,12 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
   const keywordInput = el('input', {
     type: 'text',
     placeholder: 'Ex. Data Engineer, Python, Comptabilité…',
-    style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin-bottom:0.6rem;',
+    style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.5rem;',
+  });
+  const cityInput = el('input', {
+    type: 'text',
+    placeholder: 'Votre ville (optionnel)',
+    style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.6rem;',
   });
   const fileInput = el('input', { type: 'file', accept: '.docx,.txt' });
   const fileLabel = el('span', { class: 'lede', style: 'display:block; margin-top:0.4rem;', text: 'Aucun fichier sélectionné.' });
@@ -95,7 +102,8 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
     identityBar({ identity, onSaveName, onChangeRole }),
     el('div', { class: 'section-title', text: 'Ce que vous cherchez' }),
     keywordInput,
-    el('p', { class: 'lede', style: 'margin-top:-0.4rem;', text: 'Un seul mot-clé : c\'est lui qui décide quelles annonces analyseront votre profil — ça évite de submerger les recruteurs hors sujet.' }),
+    cityInput,
+    el('p', { class: 'lede', style: 'margin-top:-0.3rem;', text: 'Le mot-clé décide quelles annonces analyseront votre profil. La ville sert juste à signaler une correspondance, elle n\'est jamais comparée à une liste.' }),
 
     el('div', { class: 'section-title', text: 'Votre CV' }),
     el('div', { class: 'dropzone' }, [
@@ -108,14 +116,14 @@ export function renderCandidateWorkspace({ identity, isLive, onSaveName, onChang
       class: 'btn',
       text: isLive ? '🔴 En direct — recherche en cours' : 'Rechercher en direct',
       disabled: isLive ? 'true' : undefined,
-      onclick: () => { if (fileInput.files[0] && keywordInput.value.trim()) onStartLive(fileInput.files[0], keywordInput.value.trim()); },
+      onclick: () => { if (fileInput.files[0] && keywordInput.value.trim()) onStartLive(fileInput.files[0], keywordInput.value.trim(), cityInput.value.trim() || null); },
     }),
     !isLive ? el('p', { class: 'lede', style: 'margin-top:0.4rem;', text: 'Mot-clé requis avant de lancer la recherche. Votre CV est analysé localement, puis vos mots-clés sont diffusés aux annonceurs connectés.' }) : null,
 
     el('div', { class: 'section-title', text: 'Propositions reçues' }),
     el('ul', { class: 'ledger', id: 'proposal-ledger' }, [el('li', { class: 'empty-state', text: isLive ? 'En attente de propositions…' : 'Lancez la recherche en direct pour être visible.' })]),
 
-    privacySection({ onResetLocalData, onRestoreId, onInvalidateId }),
+    settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }),
   ]));
 
   root.appendChild(el('div', { id: 'detail-zone' }));
@@ -143,114 +151,191 @@ export function renderProposalList(proposals, { onAccept, onDecline }) {
   }
 }
 
-// --- Écran recruteur (§15, §67) : salles d'annonce multiples ---
-export function renderRecruiterWorkspace({ identity, rooms, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId }) {
+// --- Écran recruteur (§15, §67) : salles d'annonce en onglets ---
+export function renderRecruiterWorkspace({ identity, rooms, activeRoomId, onSaveName, onChangeRole, onCreateRoom, onResetLocalData, onRestoreId, onInvalidateId, onSelectRoom, onOpenCandidate, onRemoveRoom, webgpuAvailable, aiStatus, sortMode, onToggleAi, onSetSortMode }) {
   const root = app();
   root.innerHTML = '';
 
-  const titleInput = el('input', {
-    type: 'text', placeholder: 'Intitulé du poste (ex. Data Engineer senior)',
-    style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin-bottom:0.5rem;',
-  });
-  const textArea = el('textarea', { class: 'paste-area', placeholder: 'Collez ici le texte de l\'annonce…', style: 'min-height:110px;' });
+  let addFormVisible = rooms.length === 0;
+  const addFormContainer = el('div', { id: 'add-room-form' });
 
-  const formContainer = el('div', { id: 'add-room-form' }, [
-    titleInput,
-    textArea,
-    el('button', {
-      class: 'btn',
-      text: 'Publier et rechercher en direct',
-      onclick: () => {
-        if (!textArea.value.trim()) return;
-        onCreateRoom({ title: titleInput.value.trim() || null, text: textArea.value });
-        titleInput.value = '';
-        textArea.value = '';
-      },
-    }),
-  ]);
+  function renderAddForm() {
+    addFormContainer.innerHTML = '';
+    if (!addFormVisible) {
+      addFormContainer.appendChild(el('button', { class: 'btn secondary', text: '+ Nouvelle salle d\'annonce', onclick: () => { addFormVisible = true; renderAddForm(); } }));
+      return;
+    }
+    const titleInput = el('input', {
+      type: 'text', placeholder: 'Intitulé du poste (ex. Data Engineer senior)',
+      style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.5rem;',
+    });
+    const minYearsInput = el('input', {
+      type: 'number', min: '0', max: '60', placeholder: 'Ancienneté minimale requise, en années (optionnel)',
+      style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin-bottom:0.5rem;',
+    });
+    const textArea = el('textarea', { class: 'paste-area', placeholder: 'Collez ici le texte de l\'annonce…', style: 'min-height:110px;' });
+    addFormContainer.appendChild(el('div', { class: 'posting-card' }, [
+      titleInput,
+      minYearsInput,
+      textArea,
+      el('button', {
+        class: 'btn',
+        text: 'Publier et rechercher en direct',
+        onclick: () => {
+          if (!textArea.value.trim()) return;
+          const minYears = minYearsInput.value.trim() ? Number(minYearsInput.value) : null;
+          onCreateRoom({ title: titleInput.value.trim() || null, text: textArea.value, minYearsRequired: minYears });
+          addFormVisible = rooms.length === 0; // se referme après publication s'il y avait déjà des salles
+          renderAddForm();
+        },
+      }),
+      rooms.length > 0 ? el('button', { class: 'link-button', text: 'annuler', onclick: () => { addFormVisible = false; renderAddForm(); } }) : null,
+    ]));
+  }
+  renderAddForm();
 
   root.appendChild(el('div', {}, [
     identityBar({ identity, onSaveName, onChangeRole }),
-    el('div', { class: 'section-title', text: 'Nouvelle salle d\'annonce' }),
-    formContainer,
-    el('div', { class: 'section-title', text: 'Mes salles d\'annonce' }),
-    el('div', { id: 'rooms-container' }),
-    el('p', { class: 'lede', style: 'margin:0.4rem 0 0;', text: 'Le texte de vos annonces reste local : seuls des mots-clés de comparaison sont utilisés, jamais publiés.' }),
-    privacySection({ onResetLocalData, onRestoreId, onInvalidateId }),
+    aiControlBlock({ webgpuAvailable, aiStatus, onToggleAi }),
+    el('div', { id: 'room-tabs' }),
+    addFormContainer,
+    el('div', { id: 'room-content' }),
+    el('p', { class: 'lede', style: 'margin:1rem 0 0;', text: 'Le texte de vos annonces reste local : seuls des mots-clés de comparaison sont utilisés, jamais publiés.' }),
+    settingsSection({ onResetLocalData, onRestoreId, onInvalidateId }),
   ]));
 
-  root.appendChild(el('div', { id: 'detail-zone' }));
-  renderRoomsList(rooms, {});
+  renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom, aiEnabled: aiStatus === 'ready', sortMode, onSetSortMode });
 }
 
-/** Affiche une carte par salle d'annonce : ledger des candidats triés par score, CV en pièce jointe. */
-export function renderRoomsList(rooms, { onOpenCandidate, onRemoveRoom } = {}) {
-  const container = document.getElementById('rooms-container');
-  if (!container) return;
-  container.innerHTML = '';
+/**
+ * Bloc de contrôle de la couche IA continue (§ demande : bouton optionnel).
+ * Le classement CPU n'en dépend jamais — ce bloc ne fait qu'ajouter ou
+ * retirer un score supplémentaire, jamais remplacer le score CPU.
+ */
+function aiControlBlock({ webgpuAvailable, aiStatus, onToggleAi }) {
+  const statusLabel = {
+    off: 'Désactivée',
+    loading: 'Chargement du modèle…',
+    ready: 'Active',
+    error: 'Indisponible — classement CPU inchangé',
+  }[aiStatus] || 'Désactivée';
+
+  const btnLabel = aiStatus === 'ready' ? 'Désactiver l\'IA continue'
+    : aiStatus === 'loading' ? 'Chargement…'
+    : 'Activer l\'IA continue';
+
+  return el('div', { class: 'ai-control' }, [
+    el('div', {}, [
+      el('span', { class: 'ai-control-label', text: '🧠 IA continue (optionnelle) : ' }),
+      el('span', { class: `ai-status ai-status-${aiStatus}`, text: statusLabel }),
+    ]),
+    webgpuAvailable
+      ? el('button', { class: 'btn secondary', text: btnLabel, disabled: aiStatus === 'loading' ? 'true' : undefined, onclick: onToggleAi })
+      : el('p', { class: 'lede', style: 'margin:0.3rem 0 0;', text: 'WebGPU indisponible dans ce navigateur : la couche IA ne peut pas être activée. Le classement par mots-clés (CPU) reste pleinement fonctionnel.' }),
+    el('p', { class: 'lede', style: 'margin:0.3rem 0 0;', text: 'Ajoute un second score, calculé par un modèle léger tournant localement, en plus du score CPU — jamais à sa place. Une panne de cette couche n\'affecte jamais le classement CPU.' }),
+  ]);
+}
+
+/**
+ * Affiche la barre d'onglets (une salle = un onglet) et le contenu de la
+ * salle active uniquement : son ledger, puis une zone de détail/chat
+ * intégrée juste en dessous (id="detail-zone") — plus de liste empilée de
+ * toutes les salles avec un chat qui apparaît ailleurs sur la page.
+ */
+export function renderRoomsList(rooms, activeRoomId, { onSelectRoom, onOpenCandidate, onRemoveRoom, aiEnabled, sortMode, onSetSortMode } = {}) {
+  const tabs = document.getElementById('room-tabs');
+  const content = document.getElementById('room-content');
+  if (!tabs || !content) return;
+  tabs.innerHTML = '';
+  content.innerHTML = '';
 
   if (rooms.length === 0) {
-    container.appendChild(el('p', { class: 'empty-state', text: 'Aucune salle d\'annonce publiée pour le moment.' }));
+    content.appendChild(el('p', { class: 'empty-state', text: 'Aucune salle d\'annonce publiée pour le moment.' }));
     return;
   }
 
-  for (const room of rooms) {
-    const ledgerItems = room.candidates.length === 0
-      ? [el('li', { class: 'empty-state', text: '🔴 En direct — en attente de candidats…' })]
-      : room.candidates.map((c) => el('li', {}, [
-          el('button', { class: 'ledger-row', onclick: () => onOpenCandidate?.(c, room) }, [
-            el('span', { class: `ledger-score ${c.total < 50 ? 'weak' : ''}`, text: `${c.total}` }),
-            el('span', {}, [
-              el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}…` }),
-              el('div', { class: 'ledger-sub', text: c.cvFileName ? `📎 ${c.cvFileName}` : 'CV en cours de réception…' }),
-            ]),
-            el('span', { class: 'ledger-chevron', text: '›' }),
-          ]),
-        ]));
+  const active = rooms.find((r) => r.id === activeRoomId) || rooms[0];
 
-    container.appendChild(el('div', { class: 'posting-card' }, [
-      el('div', { style: 'display:flex; justify-content:space-between; align-items:baseline;' }, [
-        el('strong', { style: 'font-family:var(--serif); font-size:1.1rem;', text: room.title || 'Annonce sans titre' }),
-        el('button', { class: 'link-button', style: 'color:var(--copper);', text: 'retirer', onclick: () => onRemoveRoom?.(room.id) }),
-      ]),
-      room.text ? el('details', { class: 'room-text-details' }, [
-        el('summary', { text: 'Voir le texte publié' }),
-        el('p', { class: 'room-text-preview', text: room.text }),
+  tabs.appendChild(el('div', { class: 'room-tab-bar' }, rooms.map((room) => el('button', {
+    class: `room-tab ${room.id === active.id ? 'active' : ''}`,
+    onclick: () => onSelectRoom?.(room.id),
+  }, [
+    room.title || 'Sans titre',
+    room.candidates.length > 0 ? el('span', { class: 'room-tab-count', text: String(room.candidates.length) }) : null,
+  ]))));
+
+  const ledgerItems = active.candidates.length === 0
+    ? [el('li', { class: 'empty-state', text: '🔴 En direct — en attente de candidats…' })]
+    : active.candidates.map((c) => el('li', {}, [
+        el('button', { class: 'ledger-row', onclick: () => onOpenCandidate?.(c, active) }, [
+          el('span', { class: `ledger-score ${c.total === 0 ? 'weak' : ''}`, text: `${c.total}` }),
+          el('span', {}, [
+            el('div', { class: 'ledger-title', text: c.displayName || `Pair ${String(c.peerId).slice(0, 10)}…` }),
+            el('div', { class: 'ledger-sub', text: `${c.total}/${c.totalRequired} mots-clés${c.cityStatus === 'match' ? ' · 📍' : ''}${c.experienceStatus === 'match' ? ' · ✓ ancienneté' : c.experienceStatus === 'below' ? ' · ⚠ ancienneté' : ''}${c.cvFileName ? '' : ' · CV en cours…'}` }),
+          ]),
+          aiEnabled ? el('span', { class: 'ai-badge', text: c.aiPending ? 'IA…' : (c.aiScore != null ? `IA ${c.aiScore}pts` : '—') }) : null,
+          el('span', { class: 'ledger-chevron', text: '›' }),
+        ]),
+      ]));
+
+  content.appendChild(el('div', { class: 'posting-card' }, [
+    el('div', { style: 'display:flex; justify-content:space-between; align-items:baseline;' }, [
+      el('strong', { style: 'font-family:var(--serif); font-size:1.1rem;', text: active.title || 'Annonce sans titre' }),
+      el('button', { class: 'link-button', style: 'color:var(--copper);', text: 'retirer cette salle', onclick: () => onRemoveRoom?.(active.id) }),
+    ]),
+    active.text ? el('details', { class: 'room-text-details' }, [
+      el('summary', { text: 'Voir le texte publié' }),
+      el('p', { class: 'room-text-preview', text: active.text }),
+    ]) : null,
+    el('div', { style: 'display:flex; justify-content:space-between; align-items:center; margin:0.4rem 0 0.6rem;' }, [
+      el('span', { class: 'lede', style: 'font-size:0.8rem;', text: `${active.candidates.length} candidat(s) découvert(s)` }),
+      aiEnabled ? el('div', { class: 'sort-toggle' }, [
+        el('button', { class: `sort-toggle-btn ${sortMode === 'cpu' ? 'active' : ''}`, text: 'Trier : CPU', onclick: () => onSetSortMode?.('cpu') }),
+        el('button', { class: `sort-toggle-btn ${sortMode === 'ai' ? 'active' : ''}`, text: 'Trier : IA', onclick: () => onSetSortMode?.('ai') }),
       ]) : null,
-      el('div', { class: 'lede', style: 'font-size:0.8rem; margin:0.4rem 0 0.6rem;', text: `${room.candidates.length} candidat(s) découvert(s), classés par score` }),
-      el('ul', { class: 'ledger' }, ledgerItems),
-    ]));
-  }
+    ]),
+    el('ul', { class: 'ledger' }, ledgerItems),
+    el('div', { id: 'detail-zone' }),
+  ]));
 }
 
 // --- Détail d'un match côté recruteur : score, CV téléchargeable, actions ---
-export function renderCandidateDetail(entry, { onOpenChat, onProposeMeeting, onBlockPeer, onIgnorePeer, cvUrl }) {
+export function renderCandidateDetail(entry, { onProposeContact, onBlockPeer, cvUrl }) {
   const zone = document.getElementById('detail-zone');
   if (!zone) return;
   zone.innerHTML = '';
 
-  const dims = Object.entries(entry.dimensions).map(([k, v]) =>
-    el('div', { class: 'dimension-row' }, [el('span', { text: k }), el('span', { text: `${v}` })])
-  );
   const reasons = entry.reasons.map((r) =>
     el('div', { class: `reason ${r.type}` }, [r.label])
   );
 
-  const meetingNote = el('input', { type: 'text', placeholder: 'Message ou créneau proposé (optionnel)…', style: 'width:100%; border:1px solid var(--line); border-radius:3px; padding:0.5rem 0.7rem; font-family:var(--sans); margin:0.5rem 0;' });
+  const meetingNote = el('input', { type: 'text', placeholder: 'Message ou créneau proposé (optionnel — laissez vide pour un simple chat)…', style: 'width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:0.5rem 0.7rem; margin:0.5rem 0;' });
+  const confirmation = el('span', { class: 'send-confirmation', text: '✓ Proposition envoyée' });
+
+  const sendContact = () => {
+    onProposeContact(meetingNote.value.trim());
+    confirmation.classList.add('visible');
+    setTimeout(() => confirmation.classList.remove('visible'), 3000);
+  };
 
   zone.appendChild(el('div', { class: 'section-title', text: entry.displayName || 'Détail du candidat' }));
   zone.appendChild(el('div', { class: 'match-detail' }, [
-    el('div', { class: 'score-stamp', text: `${entry.total}%` }),
+    el('div', { style: 'display:flex; align-items:baseline; gap:1rem;' }, [
+      el('div', { class: 'score-stamp', text: `${entry.total} pts` }),
+      el('span', { class: 'lede', style: 'font-size:0.78rem;', text: `mots-clés en commun, sur ${entry.totalRequired} requis` }),
+      entry.aiScore != null ? el('span', { class: 'ai-badge', style: 'font-size:0.9rem;', text: `IA ${entry.aiScore} pts` }) : (entry.aiPending ? el('span', { class: 'ai-badge', text: 'IA en cours…' }) : null),
+    ]),
+    entry.aiJustification ? el('p', { class: 'lede', style: 'font-style:italic; margin:0.3rem 0 0;', text: `IA : « ${entry.aiJustification} »` }) : null,
     cvUrl
-      ? el('a', { href: cvUrl, download: entry.cvFileName || 'cv', class: 'btn secondary', style: 'display:inline-block; text-decoration:none;', text: `📎 Télécharger le CV (${entry.cvFileName || 'fichier'})` })
-      : el('p', { class: 'lede', text: 'CV en cours de réception…' }),
-    el('div', { style: 'margin-top:0.8rem;' }, dims),
+      ? el('a', { href: cvUrl, download: entry.cvFileName || 'cv', class: 'btn secondary', style: 'display:inline-block; text-decoration:none; margin-top:0.6rem;', text: `📎 Télécharger le CV (${entry.cvFileName || 'fichier'})` })
+      : el('p', { class: 'lede', style: 'margin-top:0.6rem;', text: 'CV en cours de réception…' }),
     el('div', { class: 'section-title', text: 'Pourquoi ce score ?' }),
     el('div', {}, reasons),
-    el('button', { class: 'btn', text: 'Ouvrir un chat', onclick: onOpenChat }),
     meetingNote,
-    el('button', { class: 'btn secondary', text: 'Proposer un rendez-vous', onclick: () => onProposeMeeting(meetingNote.value.trim()) }),
-    el('button', { class: 'btn secondary', text: 'Ignorer ce profil', onclick: onIgnorePeer }),
+    el('div', {}, [
+      el('button', { class: 'btn', text: 'Proposer un échange', onclick: sendContact }),
+      confirmation,
+    ]),
     el('button', { class: 'btn secondary', text: 'Bloquer ce pair', onclick: onBlockPeer }),
   ]));
 }

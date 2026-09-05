@@ -61,6 +61,23 @@ export function disambiguate(candidateSkills, jobRequirement) {
   return call('disambiguate', { candidateSkills, jobRequirement });
 }
 
+/**
+ * Scoring continu optionnel (§ couche IA sur les découvertes) : évaluation
+ * complète (compétences, séniorité, domaine, localisation, langues), pas
+ * une simple comparaison de mots-clés. Ne rejette jamais côté worker (voir
+ * llm.worker.js) — mais on garde un try/catch ici aussi, en dernier
+ * recours (ex: Worker mort, postMessage qui échoue), pour qu'un problème
+ * GPU ne remonte JAMAIS comme une exception non gérée jusqu'au code appelant.
+ * @returns {Promise<{ ok: true, score: number, justification: string } | { ok: false }>}
+ */
+export async function scoreRelevance(params) {
+  try {
+    return await call('score_relevance', params);
+  } catch (e) {
+    return { ok: false };
+  }
+}
+
 /** Détecte si WebGPU est disponible dans ce navigateur (§80-81). */
 export async function detectWebGpuSupport() {
   if (typeof navigator === 'undefined' || !navigator.gpu) return false;

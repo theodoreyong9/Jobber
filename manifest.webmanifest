@@ -1,6 +1,6 @@
 {
-  "name": "Dossier — matching emploi local & P2P",
-  "short_name": "Dossier",
+  "name": "Jobber — matching emploi local & P2P",
+  "short_name": "Jobber",
   "description": "Mise en relation candidats / recruteurs par analyse locale et réseau P2P, sans compte ni cloud.",
   "start_url": "./index.html",
   "scope": "./",

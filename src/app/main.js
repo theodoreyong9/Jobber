@@ -11,11 +11,16 @@
 //               de fichier, jamais publié). Pour chaque salle, le CPU extrait
 //               des mots-clés localement. Quand une diffusion candidat
 //               arrive, elle est comparée localement aux mots-clés de
-//               CHAQUE salle -> score -> classement (§30, §33-36).
+//               CHAQUE salle -> score CPU -> classement (§30, §33-36).
 //
-// Aucune IA (WebLLM) dans ce flux pour l'instant — le code reste présent
-// dans src/llm/ et src/worker/ pour une intégration future, simplement
-// déconnecté de l'interface.
+// Couche IA continue (optionnelle, désactivée par défaut) : quand activée,
+// chaque diffusion candidat retenue par le filtre CPU déclenche EN PLUS un
+// scoring sémantique WebLLM (modèle léger fixe, pas de choix utilisateur).
+// Les deux classements coexistent — le CPU ne dépend JAMAIS du GPU. Toute
+// panne du GPU (WebGPU absent, modèle qui échoue à charger, appel qui
+// timeout) reste strictement locale à la couche IA : elle désactive/laisse
+// vide le score IA de l'entrée concernée, sans jamais toucher au score CPU
+// ni faire planter le reste de l'application.
 
 import { parseDocument } from '../core/parser/documentParser.js';
 import { extractFacts } from '../core/extraction/heuristicExtractor.js';
@@ -32,11 +37,17 @@ import * as identityStore from '../storage/identity.js';
 import { wipeAllLocalData } from '../storage/idb.js';
 import { validateCandidateBroadcast } from '../core/validation/schema.js';
 
+import * as llm from '../llm/provider.js';
+import { MODEL_CATALOG } from '../models/catalog.js';
+
 import {
   renderRoleSelect, renderCandidateWorkspace, renderProposalList,
   renderRecruiterWorkspace, renderRoomsList, renderCandidateDetail,
   renderChat, renderLog,
 } from '../ui/render.js';
+
+/** Modèle fixe pour la couche IA continue — pas de choix utilisateur (le plus léger du catalogue). */
+const AI_MODEL_ID = MODEL_CATALOG.find((m) => m.tier === 'light')?.id ?? MODEL_CATALOG[0].id;
 
 const APP_ROOM_ID = 'jobmatch-p2p-v1';
 
@@ -88,6 +99,15 @@ const state = {
   // --- mode recruteur ---
   /** @type {Map<string, { id: string, title: string, jobProfile: any, ranker: RoomRanker }>} */
   rooms: new Map(),
+  activeRoomId: null,
+  openCandidateContext: null,
+
+  // --- couche IA continue (optionnelle) ---
+  webgpuAvailable: false,
+  aiEnabled: false,
+  aiStatus: 'off', // 'off' | 'loading' | 'ready' | 'error'
+  aiError: null,
+  sortMode: 'cpu', // 'cpu' | 'ai'
   /** @type {Map<string, string>} peerId -> object URL du CV reçu */
   receivedCvUrls: new Map(),
 };
@@ -101,6 +121,7 @@ function log(message) {
 async function init() {
   state.identity = await identityStore.loadOrCreateIdentity();
   state.blockedPeers = new Set((await blocklist.listBlockedPeers()).map((b) => b.peerId));
+  state.webgpuAvailable = await llm.detectWebGpuSupport().catch(() => false);
 
   const savedRole = await getSavedRole();
   if (savedRole) await startWorkspace(savedRole);
@@ -176,16 +197,111 @@ async function startWorkspace(role) {
     renderRecruiterWorkspace({
       identity: state.identity,
       rooms: [],
+      activeRoomId: state.activeRoomId,
       onSaveName: saveDisplayName,
       onChangeRole: changeRole,
       onCreateRoom: createRoom,
       onResetLocalData: handleResetLocalData,
       onRestoreId: restoreIdentity,
       onInvalidateId: invalidateIdentity,
+      onSelectRoom: selectRoom,
+      onOpenCandidate: onOpenCandidateDetail,
+      onRemoveRoom: removeRoom,
+      webgpuAvailable: state.webgpuAvailable,
+      aiStatus: state.aiStatus,
+      sortMode: state.sortMode,
+      onToggleAi: toggleAiLayer,
+      onSetSortMode: setSortMode,
     });
     refreshRoomsUi();
   }
   log(`Mode ${role === 'candidate' ? 'candidat' : 'annonceur'} activé.`);
+}
+
+function selectRoom(roomId) {
+  state.activeRoomId = roomId;
+  state.openCandidateContext = null;
+  refreshRoomsUi();
+}
+
+function setSortMode(mode) {
+  state.sortMode = mode;
+  refreshRoomsUi();
+}
+
+/**
+ * Active/désactive la couche IA continue (§ demande : bouton optionnel).
+ * Ne touche jamais au classement CPU, qui tourne indépendamment — activer
+ * ou perdre l'IA ne change que la présence ou l'absence d'un score
+ * supplémentaire par candidat.
+ */
+async function toggleAiLayer() {
+  if (state.aiEnabled) {
+    state.aiEnabled = false;
+    state.aiStatus = 'off';
+    state.sortMode = 'cpu';
+    log('Couche IA continue désactivée. Le classement CPU continue normalement.');
+    await startWorkspace(state.role);
+    return;
+  }
+  if (!state.webgpuAvailable) {
+    log('WebGPU indisponible dans ce navigateur : couche IA impossible à activer. Le classement CPU reste actif.');
+    return;
+  }
+  state.aiStatus = 'loading';
+  await startWorkspace(state.role);
+  try {
+    await llm.loadModel(AI_MODEL_ID);
+    state.aiEnabled = true;
+    state.aiStatus = 'ready';
+    log(`Couche IA continue activée (modèle léger : ${AI_MODEL_ID}). Elle s'ajoute au classement CPU sans le remplacer.`);
+  } catch (e) {
+    state.aiEnabled = false;
+    state.aiStatus = 'error';
+    log(`Impossible de charger le modèle IA (${e.message}). Le classement CPU reste inchangé, la couche IA reste désactivée.`);
+  }
+  await startWorkspace(state.role);
+}
+
+/**
+ * Lance (sans bloquer) un scoring IA pour un candidat déjà retenu par le
+ * filtre CPU d'une salle. Toute erreur reste locale à cette fonction —
+ * jamais de rejet non attrapé, jamais d'impact sur le classement CPU.
+ * @param {string} identityKey
+ * @param {import('../core/validation/schema.js').CandidateBroadcast} broadcast
+ */
+async function scheduleAiScoring(identityKey, broadcast) {
+  if (!state.aiEnabled) return;
+  for (const room of state.rooms.values()) {
+    if (!room.ranker.scores.has(identityKey)) continue; // pas retenu côté CPU pour cette salle : on ne sollicite pas le GPU pour rien
+    if (!room.aiScores) room.aiScores = new Map();
+    room.aiScores.set(identityKey, { pending: true, score: null, justification: null });
+    refreshRoomsUi();
+    try {
+      const result = await llm.scoreRelevance({
+        jobText: room.text || '',
+        jobStructured: {
+          keywords: room.jobProfile.keywords || [],
+          minYearsRequired: room.jobProfile.minYearsRequired,
+        },
+        candidate: {
+          searchKeyword: broadcast.searchKeyword || '',
+          skills: broadcast.skills || [],
+          city: broadcast.city || null,
+          yearsOfExperience: typeof broadcast.yearsOfExperience === 'number' ? broadcast.yearsOfExperience : null,
+        },
+      });
+      if (result.ok) {
+        room.aiScores.set(identityKey, { pending: false, score: result.score, justification: result.justification });
+      } else {
+        room.aiScores.delete(identityKey); // échec silencieux : aucun score IA affiché, le score CPU reste seul et inchangé
+      }
+    } catch (e) {
+      room.aiScores.delete(identityKey);
+      log(`Scoring IA ignoré pour un candidat (${e.message}) — classement CPU inchangé.`);
+    }
+    refreshRoomsUi();
+  }
 }
 
 async function changeRole() {
@@ -197,6 +313,8 @@ async function changeRole() {
   state.searchKeyword = null;
   state.proposals = [];
   state.rooms = new Map();
+  state.activeRoomId = null;
+  state.openCandidateContext = null;
   sessionRole = null;
   renderRoleSelect(onRoleSelected);
 }
@@ -239,11 +357,10 @@ function broadcastIfCandidate(targetPeerId) {
     senderId: state.identity.id,
     displayName: state.identity.displayName,
     searchKeyword: state.searchKeyword,
-    skills: state.localProfile.skills.map((s) => s.name),
-    domains: state.localProfile.domains,
-    seniority: state.localProfile.seniority,
-    locations: state.localProfile.preferences?.locations ?? [],
-    languages: state.localProfile.languages,
+    skills: state.localProfile.keywords,
+    city: state.localProfile.city,
+    yearsOfExperience: state.localProfile.yearsOfExperience,
+    yearsOfExperienceEstimated: state.localProfile.yearsOfExperienceEstimated,
     cvFileName: state.cvFile?.name ?? null,
   });
   state.trystero?.send(msg, targetPeerId);
@@ -256,7 +373,7 @@ function broadcastIfCandidate(targetPeerId) {
 // Mode candidat
 // =====================================================================
 
-async function startCandidateLive(file, searchKeyword) {
+async function startCandidateLive(file, searchKeyword, city) {
   const documentId = `cv_${Date.now()}`;
   state.searchKeyword = searchKeyword;
   log('Analyse locale du CV (CPU, mots-clés uniquement)...');
@@ -272,10 +389,13 @@ async function startCandidateLive(file, searchKeyword) {
   }
   const doc = await parseDocument({ file, kind: 'cv', id: documentId, mammothLib });
   const { facts } = extractFacts(doc);
-  state.localProfile = buildCandidateProfile({ documentId, facts });
+  state.localProfile = buildCandidateProfile({ documentId, facts, city });
   state.cvFile = file;
 
-  log(`Mots-clés extraits : ${state.localProfile.skills.map((s) => s.name).join(', ') || '(aucun détecté)'}`);
+  const expNote = state.localProfile.yearsOfExperience == null
+    ? 'ancienneté inconnue'
+    : `${state.localProfile.yearsOfExperience} an(s)${state.localProfile.yearsOfExperienceEstimated ? ' (estimée à partir des dates du CV)' : ' (explicite)'}`;
+  log(`Mots-clés extraits : ${state.localProfile.keywords.join(', ') || '(aucun détecté)'} — ${expNote}.`);
 
   await ensureNetwork();
   state.isLive = true;
@@ -308,7 +428,7 @@ function declineProposal(proposal) {
 // Mode recruteur — salles d'annonce multiples (§1, §15)
 // =====================================================================
 
-async function createRoom({ title, text }) {
+async function createRoom({ title, text, minYearsRequired }) {
   if (state.rooms.size >= MAX_POSTINGS_PER_RECRUITER) {
     log(`Limite atteinte : ${MAX_POSTINGS_PER_RECRUITER} salles actives maximum.`);
     return;
@@ -317,14 +437,15 @@ async function createRoom({ title, text }) {
   log('Analyse locale de l\'annonce (CPU, mots-clés uniquement)...');
   const doc = await parseDocument({ text, kind: 'job', id: roomLocalId });
   const { facts } = extractFacts(doc);
-  const jobProfile = buildJobProfile({ documentId: roomLocalId, facts });
+  const jobProfile = buildJobProfile({ documentId: roomLocalId, facts, rawText: text, minYearsRequired });
 
   const finalTitle = title || text.split('\n')[0].slice(0, 60) || 'Annonce sans titre';
   const ranker = new RoomRanker(jobProfile, finalTitle);
   ranker.onRankingChange(() => refreshRoomsUi());
 
   state.rooms.set(roomLocalId, { id: roomLocalId, title: finalTitle, text, jobProfile, ranker });
-  log(`Salle publiée : « ${finalTitle} » (mots-clés : ${jobProfile.requiredSkills.map((s) => s.name).join(', ') || 'aucun détecté'}).`);
+  state.activeRoomId = roomLocalId; // bascule automatiquement sur le nouvel onglet
+  log(`Salle publiée : « ${finalTitle} » (mots-clés : ${jobProfile.keywords.join(', ') || 'aucun détecté'}${minYearsRequired != null ? `, ancienneté min. ${minYearsRequired} an(s)` : ''}).`);
 
   await ensureNetwork();
   refreshRoomsUi();
@@ -332,35 +453,67 @@ async function createRoom({ title, text }) {
 
 function removeRoom(roomId) {
   state.rooms.delete(roomId);
+  if (state.activeRoomId === roomId) {
+    const remaining = Array.from(state.rooms.keys());
+    state.activeRoomId = remaining[0] || null;
+  }
   log('Salle d\'annonce retirée.');
   refreshRoomsUi();
 }
 
 function refreshRoomsUi() {
-  const rooms = Array.from(state.rooms.values()).map((r) => ({
-    id: r.id,
-    title: r.title,
-    text: r.text,
-    candidates: Array.from(r.ranker.scores.values()).sort((a, b) => b.total - a.total),
-  }));
-  renderRoomsList(rooms, { onOpenCandidate: onOpenCandidateDetail, onRemoveRoom: removeRoom });
+  const rooms = Array.from(state.rooms.values()).map((r) => {
+    const candidates = Array.from(r.ranker.scores.values()).map((c) => {
+      const ai = r.aiScores?.get(c.identityKey);
+      return { ...c, aiScore: ai?.score ?? null, aiPending: ai?.pending ?? false, aiJustification: ai?.justification ?? null };
+    });
+    const sorted = state.sortMode === 'ai' && state.aiEnabled
+      ? candidates.sort((a, b) => (b.aiScore ?? -1) - (a.aiScore ?? -1))
+      : candidates.sort((a, b) => b.total - a.total);
+    return { id: r.id, title: r.title, text: r.text, candidates: sorted };
+  });
+  if (!state.activeRoomId && rooms.length > 0) state.activeRoomId = rooms[0].id;
+  renderRoomsList(rooms, state.activeRoomId, {
+    onSelectRoom: selectRoom,
+    onOpenCandidate: onOpenCandidateDetail,
+    onRemoveRoom: removeRoom,
+    aiEnabled: state.aiEnabled,
+    sortMode: state.sortMode,
+    onSetSortMode: setSortMode,
+  });
+
+  // Si le détail actuellement ouvert appartient à la salle active, le
+  // réaffiche avec les données à jour (score recalculé, CV enfin arrivé...) :
+  // sinon la fiche reste figée sur son état au moment du clic (§ CV introuvable).
+  const ctx = state.openCandidateContext;
+  if (ctx && ctx.roomId === state.activeRoomId) {
+    const room = state.rooms.get(ctx.roomId);
+    const entry = room && Array.from(room.ranker.scores.values()).find((s) => s.peerId === ctx.peerId);
+    if (room && entry) onOpenCandidateDetail(entry, room, { skipContextUpdate: true });
+  }
 }
 
-function onOpenCandidateDetail(entry, room) {
+function onOpenCandidateDetail(entry, room, opts = {}) {
+  if (!opts.skipContextUpdate) state.openCandidateContext = { roomId: room.id, peerId: entry.peerId };
   renderCandidateDetail(entry, {
     cvUrl: state.receivedCvUrls.get(entry.peerId) || null,
-    onOpenChat: () => {
-      const msg = createChatRequest({ toPeerId: entry.peerId, roomTitle: room.title, fromName: state.identity.displayName, fromId: state.identity.id });
-      state.trystero?.send(msg, entry.peerId);
-      log(`Proposition de chat envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
+    // Une seule action : note vide -> simple demande de chat ; note remplie
+    // -> proposition de rendez-vous avec ce message. Avant, deux boutons
+    // séparés menaient au même résultat (le même chat) — fusionné pour
+    // éviter la redondance sans perdre la distinction de message (§ retour utilisateur).
+    onProposeContact: (note) => {
+      const who = entry.displayName || entry.peerId.slice(0, 8) + '…';
+      if (note) {
+        const msg = createMeetingProposal({ toPeerId: entry.peerId, roomTitle: room.title, note, fromName: state.identity.displayName, fromId: state.identity.id });
+        state.trystero?.send(msg, entry.peerId);
+        log(`Proposition de rendez-vous envoyée à ${who}.`);
+      } else {
+        const msg = createChatRequest({ toPeerId: entry.peerId, roomTitle: room.title, fromName: state.identity.displayName, fromId: state.identity.id });
+        state.trystero?.send(msg, entry.peerId);
+        log(`Proposition de chat envoyée à ${who}.`);
+      }
     },
-    onProposeMeeting: (note) => {
-      const msg = createMeetingProposal({ toPeerId: entry.peerId, roomTitle: room.title, note, fromName: state.identity.displayName, fromId: state.identity.id });
-      state.trystero?.send(msg, entry.peerId);
-      log(`Proposition de rendez-vous envoyée à ${entry.displayName || entry.peerId.slice(0, 8) + '…'}.`);
-    },
-    onBlockPeer: () => blockPeerFromUi(entry.peerId),
-    onIgnorePeer: () => { room.ranker.removePeer(entry.peerId); refreshRoomsUi(); },
+    onBlockPeer: () => { state.openCandidateContext = null; blockPeerFromUi(entry.peerId); },
   });
 }
 
@@ -380,6 +533,10 @@ function handleIncomingMessage(message, peerId) {
           room.ranker.ingestBroadcast(peerId, validation.value);
         }
         refreshRoomsUi();
+        if (state.aiEnabled) {
+          const identityKey = validation.value.senderId || peerId;
+          scheduleAiScoring(identityKey, validation.value); // fire-and-forget, ne bloque jamais le flux CPU
+        }
       }
       break;
     }
@@ -422,6 +579,10 @@ function handleIncomingFile(blob, meta, peerId) {
   if (previous) URL.revokeObjectURL(previous);
   state.receivedCvUrls.set(peerId, url);
   log(`CV reçu de ${peerId.slice(0, 8)}… (${meta?.name || 'fichier'}).`);
+  // Si la fiche de ce candidat est actuellement ouverte, on la rafraîchit
+  // tout de suite plutôt que de laisser "CV en cours de réception…" figé
+  // jusqu'au prochain événement de scoring (§ CV introuvable).
+  if (state.openCandidateContext?.peerId === peerId) refreshRoomsUi();
 }
 
 // =====================================================================

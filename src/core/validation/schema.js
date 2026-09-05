@@ -106,10 +106,11 @@ export function validateCandidateBroadcast(broadcast) {
     errors.push('searchKeyword doit faire 60 caractères maximum.');
   }
   if (b.skills !== undefined && !isStringArray(b.skills)) errors.push('skills invalide.');
-  if (b.domains !== undefined && !isStringArray(b.domains)) errors.push('domains invalide.');
-  if (b.languages !== undefined && !isStringArray(b.languages)) errors.push('languages invalide.');
-  if (b.locations !== undefined && !isStringArray(b.locations)) errors.push('locations invalide.');
+  if (b.city !== undefined && b.city !== null && (!isString(b.city) || b.city.length > 80)) errors.push('city invalide.');
   if (b.cvFileName !== undefined && b.cvFileName !== null && (!isString(b.cvFileName) || b.cvFileName.length > 200)) errors.push('cvFileName invalide.');
+  if (b.yearsOfExperience !== undefined && b.yearsOfExperience !== null) {
+    if (typeof b.yearsOfExperience !== 'number' || b.yearsOfExperience < 0 || b.yearsOfExperience > 80) errors.push('yearsOfExperience invalide.');
+  }
 
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: b };

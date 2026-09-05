@@ -1,4 +1,4 @@
-# Dossier — matching emploi P2P, local et sans compte
+# Jobber — matching emploi P2P, local et sans compte
 
 Application web statique de mise en relation candidats/recruteurs. Aucun
 backend applicatif, aucun compte, aucune IA cloud, **aucune réécriture de
@@ -109,6 +109,79 @@ connaît un ID peut se l'attribuer — "invalider" ne fait qu'abandonner l'ID
 compromis pour votre propre client, ça n'empêche pas un tiers de continuer
 à l'utiliser ailleurs.
 
+## Couche IA continue (optionnelle)
+
+Un bouton **"Activer l'IA continue"** (visible côté annonceur, à côté de
+l'identité) ajoute un second classement, calculé par un modèle WebLLM léger
+et fixe (pas de choix de modèle — le plus petit du catalogue), en plus du
+classement CPU par mots-clés qui tourne déjà. Les deux coexistent :
+
+- **Classement CPU** : toujours actif, déterministe, ne dépend d'aucune IA.
+- **Classement IA** : optionnel. Quand un candidat est retenu par le filtre
+  CPU d'une salle, son profil est comparé au texte complet de l'annonce par
+  le modèle local, produisant un second score (visible en badge `IA nn` sur
+  chaque ligne, et en détail sur la fiche du candidat). Un bouton "Trier :
+  CPU / IA" bascule l'ordre d'affichage entre les deux.
+
+**La perte du GPU ne casse jamais le CPU.** Concrètement :
+- si WebGPU n'est pas disponible, le bouton reste désactivé avec un
+  message explicite — rien d'autre n'est affecté ;
+- si le chargement du modèle échoue, la couche repasse à "désactivée" et le
+  classement CPU continue sans interruption ;
+- si un appel de scoring individuel échoue (JSON invalide, timeout, sortie
+  hors bornes), cette entrée reste simplement sans score IA — jamais
+  d'exception remontée, jamais de blocage du reste de l'application (voir
+  `runRelevanceScoring` dans `src/llm/webllm.js`, testé pour ces cas
+  précisément dans `tests/llm.test.mjs`).
+
+## Le scoring, sans catégories ni listes devinées
+
+Après plusieurs allers-retours ratés (des listes de villes/secteurs
+figées, présentées comme une vraie comparaison), le scoring a été
+simplifié à l'os :
+
+**Le score = un compte brut de mots-clés en commun entre le CV du candidat
+et l'annonce.** Rien d'autre. Pas de pourcentage, pas de dimensions
+pondérées (domaine, séniorité, langues traitées à part) : un candidat
+"3 pts" a 3 mots-clés en commun avec les mots-clés extraits de l'annonce,
+point final. Comme tous les candidats d'une même salle sont comparés au
+même jeu de mots-clés requis, ce compte suffit à classer honnêtement.
+
+Deux informations **explicites**, jamais devinées par une liste,
+s'ajoutent à côté du score (jamais mélangées dedans) :
+- **Ville** : le candidat tape la sienne ; elle est comparée littéralement
+  au texte intégral de l'annonce (recherche de sous-chaîne, pas de
+  dictionnaire de villes).
+- **Ancienneté** : le recruteur indique l'ancienneté minimale recherchée
+  (champ numérique, à côté du titre) ; celle du candidat est calculée à
+  partir de dates réellement présentes dans son CV (la plus ancienne
+  trouvée, `année actuelle − année la plus ancienne`), avec priorité à une
+  phrase explicite ("5 ans d'expérience") si elle existe.
+
+## Couche IA continue (optionnelle)
+
+Un bouton **"Activer l'IA continue"** (visible côté annonceur) ajoute un
+second score, calculé par un modèle WebLLM léger et fixe, en plus du
+classement CPU par mots-clés qui tourne déjà. Ce n'est **pas** un
+classement séparé : c'est un score indicatif affiché à côté de chaque
+candidat, qui arrive de façon asynchrone (badge "IA…" pendant le calcul),
+et qu'on peut éventuellement utiliser pour trier au lieu du score CPU — les
+deux listes restent la même liste, juste réordonnée.
+
+Le prompt reçoit tout ce qui est disponible des deux côtés (texte intégral
+de l'annonce, mots-clés déjà extraits par le CPU, mots-clés/ville/
+ancienneté du candidat) et tente des équivalences non littérales ("vente"
+↔ "commercial") que le CPU, par construction, ne peut pas voir.
+
+**La perte du GPU ne casse jamais le CPU** :
+- si WebGPU n'est pas disponible, le bouton reste désactivé, rien d'autre
+  n'est affecté ;
+- si le modèle échoue à charger, la couche repasse à "désactivée" et le
+  classement CPU continue sans interruption ;
+- si un appel de scoring individuel échoue, cette entrée reste simplement
+  sans score IA — jamais d'exception remontée (voir `runRelevanceScoring`
+  dans `src/llm/webllm.js`, testé dans `tests/llm.test.mjs`).
+
 ## Ce qui ne quitte jamais l'appareil
 
 - Le texte intégral d'une annonce (annonceur) : jamais publié, jamais
@@ -132,7 +205,7 @@ compromis pour votre propre client, ça n'empêche pas un tiers de continuer
 | Blocage/ignorance d'un pair (§75) | ✅ implémenté |
 | PWA (manifest, Service Worker, icônes) | ✅ implémentée |
 | CI GitHub Actions (tests + déploiement Pages) | ✅ implémentée |
-| Intégration WebLLM dans le flux utilisateur | ⏳ code présent (`src/llm/`, `src/worker/`) mais désactivé dans l'UI — "l'IA aura lieu autrement" |
+| Couche IA continue optionnelle (scoring WebLLM en plus du CPU, jamais à sa place) | ✅ implémentée côté annonceur, résiliente à la perte de GPU (`tests/llm.test.mjs`) |
 | Support PDF | ⏳ hors périmètre V1 |
 
 Les échanges P2P réels (deux navigateurs, vrais relais de signalisation)

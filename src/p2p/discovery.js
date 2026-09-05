@@ -17,20 +17,18 @@ import { computeMatchScore } from '../core/scoring/scoreEngine.js';
 import { cleanToken, normalizeSkillList } from '../core/normalization/normalize.js';
 
 /**
- * Construit l'ensemble des mots-clés d'une salle d'annonce : compétences et
- * domaines normalisés, plus chaque mot du titre pris individuellement (un
- * titre "Data Engineer" doit pouvoir être trouvé par le mot-clé "data" ou
- * "engineer" aussi bien que par "data engineer" entier).
+ * Construit l'ensemble des mots-clés d'une salle d'annonce : les mots-clés
+ * du profil (compétences+langues confondues, tel qu'extrait), plus chaque
+ * mot du titre pris individuellement (un titre "Data Engineer" doit
+ * pouvoir être trouvé par le mot-clé "data" ou "engineer" aussi bien que
+ * par "data engineer" entier).
  * @param {import('../core/extraction/buildProfile.js').JobProfile} jobProfile
  * @param {string} [title]
  */
 function buildRoomKeywordSet(jobProfile, title) {
-  const skillDomainWords = normalizeSkillList([
-    ...(jobProfile.requiredSkills || []).map((s) => s.name),
-    ...(jobProfile.domains || []),
-  ]);
+  const profileWords = normalizeSkillList(jobProfile.keywords || []);
   const titleWords = (title || '').split(/\s+/).map(cleanToken).filter((w) => w.length > 1);
-  return new Set([...skillDomainWords, ...titleWords]);
+  return new Set([...profileWords, ...titleWords]);
 }
 
 /**
@@ -51,25 +49,19 @@ export function matchesKeywordGate(candidateKeyword, roomKeywordSet) {
 }
 
 /**
- * Convertit une diffusion candidat (mots-clés uniquement) en objet
- * comparable au scoring (forme CandidateProfile). Rien n'est inventé : les
- * champs absents restent explicitement vides/inconnus (§27, §58).
+ * Convertit une diffusion candidat en objet comparable au scoring (forme
+ * CandidateProfile simplifiée : un sac de mots-clés + ville + ancienneté).
+ * Rien n'est inventé : les champs absents restent explicitement
+ * vides/inconnus (§27, §58).
  * @param {import('../core/validation/schema.js').CandidateBroadcast} broadcast
  */
 export function candidateBroadcastToComparable(broadcast) {
-  const skills = (broadcast.skills || []).map((name) => ({ name, provenance: 'explicit', sourceDocumentId: 'broadcast' }));
   return {
     id: broadcast.senderId || broadcast.peerId,
-    skills,
-    domains: broadcast.domains || [],
-    languages: broadcast.languages || [],
-    experiences: [],
-    education: [],
-    yearsOfExperience: null,
-    seniority: broadcast.seniority || null,
-    seniorityConfidence: broadcast.seniority ? 'explicit' : 'unknown',
-    locations: broadcast.locations || [],
-    preferences: null,
+    keywords: normalizeSkillList(broadcast.skills || []),
+    city: broadcast.city ? cleanToken(broadcast.city) : null,
+    yearsOfExperience: typeof broadcast.yearsOfExperience === 'number' ? broadcast.yearsOfExperience : null,
+    yearsOfExperienceEstimated: Boolean(broadcast.yearsOfExperienceEstimated),
   };
 }
 

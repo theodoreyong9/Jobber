@@ -1,37 +1,10 @@
 // src/config/matching.js
 //
-// Configuration centrale du matching. Toutes les pondérations, seuils et
-// limites vivent ici — jamais dispersés dans le code (cf. cahier des
-// charges §25, §60).
-
-export const MATCH_WEIGHTS = Object.freeze({
-  skills: 0.35,
-  experience: 0.25,
-  domain: 0.15,
-  seniority: 0.10,
-  location: 0.05,
-  languages: 0.05,
-  constraints: 0.05,
-});
-
-export const MATCH_CONFIG = Object.freeze({
-  strongMatch: 85,
-  goodMatch: 70,
-  weakMatch: 50,
-  semanticThreshold: 0.7, // similarité sémantique minimale pour considérer un lien CPU->WebLLM
-});
-
-// Séniorité ordonnée, utilisée pour calculer un score de distance plutôt
-// qu'une simple égalité (junior vs senior ne doivent pas valoir 0 si proches).
-export const SENIORITY_LEVELS = Object.freeze([
-  'intern',
-  'junior',
-  'mid',
-  'senior',
-  'lead',
-  'principal',
-  'executive',
-]);
+// Configuration centrale. Le scoring lui-même n'a plus de pondérations par
+// catégorie (§ simplification demandée : le score CPU est un simple compte
+// de mots-clés en commun, extraits des deux côtés — pas de dimensions
+// pondérées comme domaine/séniorité/langues). Ce fichier ne garde donc que
+// les limites réseau/anti-abus et la normalisation des mots-clés.
 
 // Limites réseau/anti-abus (cf. §73).
 export const PAYLOAD_LIMITS = Object.freeze({

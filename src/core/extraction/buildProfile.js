@@ -1,123 +1,77 @@
 // src/core/extraction/buildProfile.js
 //
-// Fusionne extraction heuristique (CPU) + analyse sémantique (WebLLM,
-// optionnelle) en un CandidateProfile / JobProfile structuré (§20, §21).
-// Chaque compétence garde sa provenance et son statut Explicit/Inferred
-// (§69) plutôt que d'être aplatie en simple liste.
+// Construit un CandidateProfile / JobProfile à partir des faits extraits.
+// Volontairement plat (§ simplification demandée) : un seul sac de
+// mots-clés normalisés par profil (compétences + langues confondues, sans
+// catégorie), pas de domaine/séniorité/localisation devinés par liste.
+//
+// La ville et l'ancienneté minimale requise sont des champs EXPLICITES
+// fournis par l'utilisateur (candidat : sa ville ; annonceur : l'ancienneté
+// minimale recherchée) — jamais déduits d'une liste de mots-clés.
 
-import { normalizeSkill, normalizeSkillList, cleanToken } from '../normalization/normalize.js';
+import { normalizeSkill, cleanToken } from '../normalization/normalize.js';
 
 /**
- * @typedef {{ name: string, provenance: 'explicit'|'inferred', sourceDocumentId: string, sourceLocation?: string }} SkillFact
- */
-
-/**
+ * Fusionne skill + language en un seul sac de mots-clés normalisés, dédupliqué.
  * @param {import('../validation/schema.js').ExtractedFact[]} facts
  * @param {import('../validation/schema.js').SemanticAnalysis|null} semantic
- * @param {string} documentId
- * @returns {SkillFact[]}
  */
-function mergeSkills(facts, semantic, documentId) {
-  const bySkill = new Map();
-
-  for (const f of facts.filter((f) => f.field === 'skill')) {
-    const { normalized } = normalizeSkill(f.value);
-    if (!normalized) continue;
-    bySkill.set(normalized, {
-      name: normalized,
-      provenance: 'explicit',
-      sourceDocumentId: documentId,
-      sourceLocation: f.sourceLocation,
-    });
-  }
-
-  if (semantic?.skills?.length) {
-    for (const raw of semantic.skills) {
-      const { normalized } = normalizeSkill(raw);
-      if (!normalized || bySkill.has(normalized)) continue;
-      bySkill.set(normalized, {
-        name: normalized,
-        provenance: 'inferred',
-        sourceDocumentId: documentId,
-        sourceLocation: 'webllm:semantic_analysis',
-      });
+function mergeKeywords(facts, semantic) {
+  const seen = new Set();
+  const out = [];
+  const add = (raw) => {
+    const { normalized } = normalizeSkill(raw);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      out.push(normalized);
     }
+  };
+  for (const f of facts.filter((f) => f.field === 'skill' || f.field === 'language')) add(f.value);
+  if (semantic?.skills?.length) semantic.skills.forEach(add);
+  if (semantic?.languages?.length) semantic.languages.forEach(add);
+  return out;
+}
+
+/** Ancienneté du candidat : phrase explicite ("5 ans d'expérience") en priorité, sinon estimation via la date la plus ancienne trouvée dans le CV. */
+function resolveYearsOfExperience(facts) {
+  const explicit = facts.find((f) => f.field === 'years_of_experience');
+  if (explicit) return { value: Number(explicit.value), estimated: false };
+  const earliest = facts.find((f) => f.field === 'earliest_year_mention');
+  if (earliest) {
+    const years = new Date().getFullYear() - Number(earliest.value);
+    if (years >= 0 && years <= 60) return { value: years, estimated: true };
   }
-
-  return Array.from(bySkill.values());
-}
-
-function guessSeniority(facts, semantic) {
-  if (semantic?.seniority) return { value: cleanToken(semantic.seniority), confidence: 'inferred' };
-  const hint = facts.find((f) => f.field === 'seniority_hint');
-  if (hint) return { value: hint.value, confidence: 'explicit' };
-  return { value: null, confidence: 'unknown' };
+  return { value: null, estimated: false };
 }
 
 /**
- * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, preferences?: any }} args
+ * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, city?: string|null }} args
  */
-export function buildCandidateProfile({ documentId, facts, semantic = null, preferences = null }) {
-  const skills = mergeSkills(facts, semantic, documentId);
-  const domainsExplicit = facts.filter((f) => f.field === 'domain').map((f) => cleanToken(f.value));
-  const domains = Array.from(new Set([...domainsExplicit, ...(semantic?.domains ?? []).map(cleanToken)]));
-  const languages = Array.from(new Set([
-    ...facts.filter((f) => f.field === 'language').map((f) => cleanToken(f.value)),
-    ...(semantic?.languages ?? []).map(cleanToken),
-  ]));
-  const experiences = facts
-    .filter((f) => f.field === 'experience_line')
-    .map((f, i) => ({ id: `${documentId}_exp_${i}`, text: f.value, sourceLocation: f.sourceLocation }));
-  const education = facts
-    .filter((f) => f.field === 'education_line')
-    .map((f, i) => ({ id: `${documentId}_edu_${i}`, text: f.value, sourceLocation: f.sourceLocation }));
-  const yearsFact = facts.find((f) => f.field === 'years_of_experience');
-  const seniority = guessSeniority(facts, semantic);
+export function buildCandidateProfile({ documentId, facts, semantic = null, city = null }) {
+  const keywords = mergeKeywords(facts, semantic);
+  const experience = resolveYearsOfExperience(facts);
 
   return {
     id: documentId,
-    skills,
-    domains,
-    languages,
-    experiences,
-    education,
-    yearsOfExperience: yearsFact ? Number(yearsFact.value) : null,
-    seniority: seniority.value,
-    seniorityConfidence: seniority.confidence,
-    preferences: preferences ?? null,
+    keywords,
+    city: city ? cleanToken(city) : null,
+    yearsOfExperience: experience.value,
+    yearsOfExperienceEstimated: experience.estimated,
     generatedAt: Date.now(),
   };
 }
 
 /**
- * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, constraints?: any[] }} args
+ * @param {{ documentId: string, facts: import('../validation/schema.js').ExtractedFact[], semantic?: any, rawText: string, minYearsRequired?: number|null }} args
  */
-export function buildJobProfile({ documentId, facts, semantic = null, constraints = [] }) {
-  const requiredSkills = mergeSkills(facts, semantic, documentId);
-  const domainsExplicit = facts.filter((f) => f.field === 'domain').map((f) => cleanToken(f.value));
-  const domains = Array.from(new Set([...domainsExplicit, ...(semantic?.domains ?? []).map(cleanToken)]));
-  const languages = Array.from(new Set([
-    ...facts.filter((f) => f.field === 'language').map((f) => cleanToken(f.value)),
-    ...(semantic?.languages ?? []).map(cleanToken),
-  ]));
-  const responsibilities = semantic?.responsibilities?.length
-    ? semantic.responsibilities
-    : facts.filter((f) => f.field === 'experience_line').map((f) => f.value);
-  const seniority = guessSeniority(facts, semantic);
+export function buildJobProfile({ documentId, facts, semantic = null, rawText, minYearsRequired = null }) {
+  const keywords = mergeKeywords(facts, semantic);
 
   return {
     id: documentId,
-    requiredSkills,
-    preferredSkills: [],
-    responsibilities,
-    domains,
-    languages,
-    seniority: seniority.value,
-    seniorityConfidence: seniority.confidence,
-    locations: [],
-    constraints,
+    keywords,
+    rawText: rawText || '',
+    minYearsRequired: typeof minYearsRequired === 'number' ? minYearsRequired : null,
     generatedAt: Date.now(),
   };
 }
-
-export { normalizeSkillList };
