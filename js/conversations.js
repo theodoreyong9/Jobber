@@ -96,12 +96,16 @@ export function conversationRoom(ns, theirIdentityId) {
   return `${ns}:${theirIdentityId}`;
 }
 
+// If `record` already carries a `messageId` (e.g. a message arriving via
+// conversation resync, see below), that id is reused instead of generating
+// a new one — `put` then upserts the same record rather than duplicating
+// it, which is what makes resyncing idempotent across repeated attempts.
 export async function persistMessage(ns, theirIdentityId, record) {
   const stored = {
-    messageId: crypto.randomUUID(),
+    ...record,
+    messageId: record.messageId || crypto.randomUUID(),
     room: conversationRoom(ns, theirIdentityId),
     ns, counterpart: theirIdentityId,
-    ...record,
   };
   await db.put('messages', stored);
   return stored;
@@ -148,9 +152,9 @@ export async function flushOutbox(ns, theirIdentityId) {
 
   for (const r of pending) {
     if (r.kind === 'attachment' && r.blob) {
-      room.sendBlob(r.blob, peerId, { name: r.name, size: r.size, type: r.blob.type });
+      room.sendBlob(r.blob, peerId, { name: r.name, size: r.size, type: r.blob.type, offerId: r.messageId });
     } else {
-      room.send('chat_message', myIdentityId, { text: r.text }, peerId);
+      room.send('chat_message', myIdentityId, { text: r.text, messageId: r.messageId }, peerId);
     }
     r.delivered = true;
     await db.put('messages', r);
@@ -158,6 +162,59 @@ export async function flushOutbox(ns, theirIdentityId) {
   state.loadedConversations[ns].delete(theirIdentityId); // force a re-hydrate so delivered state is fresh next open
   toast(`Delivered ${pending.length} queued message${pending.length > 1 ? 's' : ''} to ${theirIdentityId.slice(0, 8)}…`);
   state.render.workspace();
+}
+
+/* ---- Conversation resync: recover history from whoever's still got it - */
+/* ---- e.g. after restoring identities from a backup with an empty local -*/
+/* ---- message store, or just a cache that got cleared.                 -*/
+
+// Sends the list of message ids I already have for this conversation so
+// the other side can figure out what I'm missing — same "diff known ids"
+// pattern research.js's project sync already uses for artifacts.
+export async function requestConversationSync(ns, theirIdentityId) {
+  const peerId = state.identityToPeer[ns].get(theirIdentityId);
+  const myIdentityId = state.activeIdentityId[ns];
+  const room = p2p.getRoom(ns);
+  if (!peerId || !myIdentityId || !room) return;
+  const known = await db.getAll('messages', 'room', conversationRoom(ns, theirIdentityId));
+  room.send('conversation_sync_request', myIdentityId, {
+    knownMessageIds: known.map((m) => m.messageId),
+  }, peerId);
+}
+
+// I'm the one who still has the history — send back whatever the
+// requester (msg.sender) doesn't have yet. Text/metadata goes over the
+// normal JSON channel; attachment bytes can't be JSON-serialized, so they
+// follow separately over the binary channel, tagged with the same
+// messageId so the requester can attach the bytes to the right record
+// instead of creating a duplicate entry.
+export async function handleConversationSyncRequest(ns, msg, peerId) {
+  const mine = await db.getAll('messages', 'room', conversationRoom(ns, msg.sender));
+  const missing = mine.filter((m) => !msg.payload.knownMessageIds.includes(m.messageId));
+  if (!missing.length) return;
+  const room = p2p.getRoom(ns);
+  const textPayload = missing.map(({ blob, url, ...rest }) => rest); // Blob/object-URL can't cross JSON
+  room.send('conversation_sync_response', state.activeIdentityId[ns], { messages: textPayload }, peerId);
+  for (const m of missing) {
+    if (m.kind === 'attachment' && m.blob) {
+      room.sendBlob(m.blob, peerId, { name: m.name, size: m.size, type: m.blob.type, forMessageId: m.messageId });
+    }
+  }
+}
+
+// Receiving the synced messages back. `from` in the payload is relative to
+// whoever sent it (the responder), so it has to be flipped to be relative
+// to me before storing — what was their "me" is my "them".
+export async function handleConversationSyncResponse(ns, msg) {
+  let restored = 0;
+  for (const m of msg.payload.messages) {
+    await persistMessage(ns, msg.sender, { ...m, from: m.from === 'me' ? 'them' : 'me' });
+    restored++;
+  }
+  if (restored) {
+    state.loadedConversations[ns].delete(msg.sender); // force a re-hydrate to pick up the restored history
+    if (state.openChatWith[ns] === msg.sender) state.render.workspace();
+  }
 }
 
 export function requestChat(ns, id, theirIdentityId) {
@@ -180,16 +237,23 @@ export function respondChat(ns, id, theirIdentityId, accept) {
   state.render.workspace();
 }
 
+// The canonical id for this logical message is generated here and put in
+// both the local record and the wire payload, so both sides end up storing
+// the same messageId for the same message — required for resync's "diff
+// known ids" to actually converge instead of treating every message as
+// unknown to the other side forever (each side previously minted its own
+// random id independently, so the sets could never meaningfully overlap).
 export async function sendChatMessage(ns, id, theirIdentityId, text) {
   if (!text.trim()) return;
+  const messageId = crypto.randomUUID();
   const peerId = state.identityToPeer[ns].get(theirIdentityId);
-  const entry = { from: 'me', text, ts: Date.now(), delivered: !!peerId };
+  const entry = { messageId, from: 'me', text, ts: Date.now(), delivered: !!peerId };
   if (!state.chatLog[ns].has(theirIdentityId)) state.chatLog[ns].set(theirIdentityId, []);
   state.chatLog[ns].get(theirIdentityId).push(entry);
   state.loadedConversations[ns].add(theirIdentityId);
   await persistMessage(ns, theirIdentityId, entry);
   if (peerId) {
-    p2p.getRoom(ns).send('chat_message', id.identityId, { text }, peerId);
+    p2p.getRoom(ns).send('chat_message', id.identityId, { text, messageId }, peerId);
   } else {
     toast('Saved locally — this peer is offline right now. It\'ll be sent automatically as soon as they\'re seen back online.');
   }

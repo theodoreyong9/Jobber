@@ -36,7 +36,7 @@ export async function setSearchLive(ns, desired) {
           const cfg = NS_CONFIG[ns];
           const payload = {
             category: profile.category,
-            tokens: [...profile.tokens, ...(profile.aiEnabled ? profile.aiTokens : [])].slice(0, 30),
+            tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
             languages: profile.languages,
             availableNow: profile.availableNow,
           };
@@ -76,7 +76,22 @@ export async function setSearchLive(ns, desired) {
         onMessage: (msg, peerId) => state.handlers.incomingMessage(ns, msg, peerId),
         onBlob: (blob, peerId, metadata) => {
           const theirIdentityId = state.peerToIdentity[ns].get(peerId) || peerId;
+          if (metadata.forMessageId) {
+            // Bytes catching up to a metadata record that arrived earlier
+            // via conversation resync — attach to that exact record
+            // (same messageId) rather than creating a duplicate entry.
+            db.get('messages', metadata.forMessageId).then((existing) => {
+              if (!existing) return;
+              existing.blob = blob;
+              db.put('messages', existing).then(() => {
+                state.loadedConversations[ns].delete(theirIdentityId);
+                if (state.openChatWith[ns] === theirIdentityId) state.render.workspace();
+              });
+            });
+            return;
+          }
           const entry = {
+            messageId: metadata.offerId, // shared with the sender's own copy — see message-router.js's attachment_accept
             from: 'them', kind: 'attachment', ts: Date.now(),
             name: metadata.name || 'file', size: blob.size, url: URL.createObjectURL(blob),
           };
@@ -159,7 +174,7 @@ export async function renderClassicWorkspace(ns) {
   if (!id) return `<div class="empty-state"><p>Create an identity in ${cfg.label} to get started.</p><button class="btn primary" id="createHere">Create identity</button></div>`;
 
   const profile = await getProfile(id.identityId);
-  const myTokens = [...profile.tokens, ...(profile.aiEnabled ? profile.aiTokens : [])];
+  const myTokens = [...profile.tokens, ...profile.aiTokens];
   const myLookingForTokens = profile.searchTokens || [];
 
   const now = Date.now();
@@ -328,8 +343,9 @@ export async function renderClassicWorkspace(ns) {
       }).join('')}
     </div>` : '';
 
+  const isLive = !!state.searchLive[ns];
   return `
-    <h2 class="section-title">${cfg.label}${myRoleLabel ? ` — ${myRoleLabel}` : ''} — ${state.searchLive[ns] ? 'searching live' : 'search paused'}</h2>
+    <h2 class="section-title">${cfg.label}${myRoleLabel ? ` — ${myRoleLabel}` : ''}</h2>
     <p class="section-sub">${cfg.hint}</p>
 
     <div class="panel">
@@ -338,7 +354,7 @@ export async function renderClassicWorkspace(ns) {
       ${ns === 'employment' || ns === 'business' || ns === 'independant' ? `<div style="font-size:11.5px;color:var(--low);margin-top:2px">${[profile.city, profile.country].filter(Boolean).join(', ') || 'No location set'}${(ns === 'business' || ns === 'independant') ? (isSupplySide ? (profile.rate != null ? ` · rate ${profile.rate}` : '') : ((profile.budgetMin != null || profile.budgetMax != null) ? ` · budget ${profile.budgetMin ?? '…'}–${profile.budgetMax ?? '…'}` : '')) : ''}</div>` : ''}
       <div class="chiprow">
         ${profile.tokens.slice(0, 10).map((t) => `<span class="chip">${t}</span>`).join('')}
-        ${(profile.aiEnabled ? profile.aiTokens : []).slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
+        ${profile.aiTokens.slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
         ${!profile.tokens.length && !profile.aiTokens.length ? '<span style="color:var(--low);font-size:11px">No keywords extracted yet</span>' : ''}
       </div>
       ${cfg.kind === 'reciprocal' ? `
@@ -350,6 +366,8 @@ export async function renderClassicWorkspace(ns) {
       <div class="actions" style="margin-top:12px">
         <button class="btn" id="editProfile">Edit profile</button>
         <button class="btn" id="enrichAI">Enrich with local AI</button>
+        <button class="btn ${isLive ? '' : 'primary'}" id="toggleSearch">${isLive ? 'Stop searching' : 'Start searching'}</button>
+        ${isLive ? '<span style="font-size:11px;color:var(--ok);align-self:center">● searching</span>' : ''}
       </div>
     </div>
 
@@ -372,6 +390,7 @@ export function bindClassicEvents(ns) {
     else editProfileFlow(ns, id);
   });
   ws.querySelector('#enrichAI')?.addEventListener('click', () => enrichProfileWithAI(ns, id));
+  ws.querySelector('#toggleSearch')?.addEventListener('click', () => state.handlers.toggleSearchLive(ns));
 
   ws.querySelectorAll('.toggle-expl').forEach((btn) => {
     btn.addEventListener('click', () => {

@@ -38,6 +38,8 @@ export const MESSAGE_TYPES = [
   'research_join_decline',
   'research_project_update',
   'research_project_announce',
+  'conversation_sync_request',
+  'conversation_sync_response',
 ];
 
 const MAX_MESSAGE_BYTES = 200_000;

@@ -8,7 +8,7 @@ import * as p2p from './p2p.js';
 import * as research from './research.js';
 import { state } from './state.js';
 import { toast } from './ui-kit.js';
-import { flushOutbox, loadConversation, persistMessage } from './conversations.js';
+import { flushOutbox, loadConversation, persistMessage, requestConversationSync, handleConversationSyncRequest, handleConversationSyncResponse } from './conversations.js';
 import {
   handleResearchSyncRequest, handleResearchSyncResponse, handleResearchJoinRequest,
   handleResearchJoinAccept, handleResearchJoinDecline, handleResearchProjectUpdate,
@@ -25,7 +25,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
     const wasOffline = !state.identityToPeer[ns].has(msg.sender);
     state.peerToIdentity[ns].set(peerId, msg.sender);
     state.identityToPeer[ns].set(msg.sender, peerId);
-    if (wasOffline) flushOutbox(ns, msg.sender);
+    if (wasOffline) {
+      flushOutbox(ns, msg.sender);
+      requestConversationSync(ns, msg.sender); // recover any history they still have that I don't
+    }
   }
 
   if (msg.type === 'discovery') {
@@ -73,8 +76,11 @@ export function handleIncomingMessage(ns, msg, peerId) {
     if (offer && offer.status === 'outgoing' && offer.file) {
       const targetPeerId = state.identityToPeer[ns].get(offer.theirIdentityId);
       if (targetPeerId) {
-        p2p.getRoom(ns).sendBlob(offer.file, targetPeerId, { name: offer.name, size: offer.size, type: offer.type });
-        const entry = { from: 'me', kind: 'attachment', ts: Date.now(), name: offer.name, size: offer.size, url: URL.createObjectURL(offer.file), delivered: true };
+        // offerId is already known to both sides from the handshake, so it
+        // doubles as the canonical messageId for the resulting chat entry
+        // on both ends — same reasoning as chat_message's messageId.
+        p2p.getRoom(ns).sendBlob(offer.file, targetPeerId, { name: offer.name, size: offer.size, type: offer.type, offerId: msg.payload.offerId });
+        const entry = { messageId: msg.payload.offerId, from: 'me', kind: 'attachment', ts: Date.now(), name: offer.name, size: offer.size, url: URL.createObjectURL(offer.file), delivered: true };
         if (!state.chatLog[ns].has(offer.theirIdentityId)) state.chatLog[ns].set(offer.theirIdentityId, []);
         state.chatLog[ns].get(offer.theirIdentityId).push(entry);
         state.loadedConversations[ns].add(offer.theirIdentityId);
@@ -111,7 +117,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
     }
   } else if (msg.type === 'chat_message') {
     if (!state.chatLog[ns].has(msg.sender)) state.chatLog[ns].set(msg.sender, []);
-    const entry = { from: 'them', text: msg.payload.text, ts: msg.timestamp };
+    // Reuse the sender's canonical messageId (from the payload, not our own
+    // random one) so both sides store the same id for the same logical
+    // message — see conversations.js's sendChatMessage for why this matters.
+    const entry = { messageId: msg.payload.messageId, from: 'them', text: msg.payload.text, ts: msg.timestamp };
     state.chatLog[ns].get(msg.sender).push(entry);
     state.loadedConversations[ns].add(msg.sender); // avoid re-fetching and duplicating on next open
     persistMessage(ns, msg.sender, entry);
@@ -136,6 +145,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
     research.mergeArtifact(msg.payload.artifact).then(() => {
       if (msg.payload.artifact.projectId === state.activeProjectId) state.render.workspace();
     });
+  } else if (msg.type === 'conversation_sync_request') {
+    handleConversationSyncRequest(ns, msg, peerId);
+  } else if (msg.type === 'conversation_sync_response') {
+    handleConversationSyncResponse(ns, msg);
   }
 }
 

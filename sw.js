@@ -19,6 +19,7 @@ const SHELL_FILES = [
   './js/message-router.js',
   './js/render.js',
   './js/db.js',
+  './js/backup.js',
   './js/identity.js',
   './js/protocol.js',
   './js/p2p.js',

@@ -26,6 +26,11 @@
       <div class="row"><span>Backend</span><b>none</b></div>
       <div class="row"><span>Protocol</span><b>v0.4</b></div>
       <div class="row"><span>Local footprint</span><b id="usageStat">…</b></div>
+      <div class="backup-actions">
+        <button class="btn small ghost" id="exportBackup" title="Download everything (identities, profiles, blocklist, Research) as one JSON file">Export backup</button>
+        <button class="btn small ghost" id="importBackup" title="Restore from a previously exported backup file">Import backup</button>
+        <input type="file" id="importBackupFile" accept=".json,application/json" style="display:none">
+      </div>
     </div>
   </aside>
 

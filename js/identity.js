@@ -125,3 +125,50 @@ export async function verifyPayload(publicKeyRawArray, signatureArray, payloadOb
 export function shortId(identityId) {
   return '#' + identityId;
 }
+
+// --- Backup / restore ---------------------------------------------------
+// CryptoKey objects can live directly in IndexedDB, but they can't be
+// serialized to JSON for a downloadable backup file — exportKey('jwk', ...)
+// converts a key to a plain, JSON-safe object; importKey reverses it. Since
+// identityId is deterministically derived from the public key, re-importing
+// the same keypair always reconstructs the same identityId — imports are
+// naturally idempotent, no separate "merge" logic needed.
+
+export async function exportIdentityRecord(identityId) {
+  const id = await get('identities', identityId);
+  if (!id) throw new Error('Identity not found');
+  const [privateKeyJwk, publicKeyJwk] = await Promise.all([
+    crypto.subtle.exportKey('jwk', id.keyPair.privateKey),
+    crypto.subtle.exportKey('jwk', id.keyPair.publicKey),
+  ]);
+  return {
+    identityId: id.identityId, namespace: id.namespace, role: id.role,
+    displayName: id.displayName, createdAt: id.createdAt, active: id.active,
+    retiredAt: id.retiredAt, rotatedTo: id.rotatedTo,
+    publicKeyRaw: id.publicKeyRaw, privateKeyJwk, publicKeyJwk,
+  };
+}
+
+// Re-derives identityId from the imported public key and refuses to import
+// if it doesn't match the claimed one — a corrupted or hand-edited backup
+// file should fail loudly here, not silently create a mismatched identity.
+export async function importIdentityRecord(record) {
+  const [privateKey, publicKey] = await Promise.all([
+    crypto.subtle.importKey('jwk', record.privateKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']),
+    crypto.subtle.importKey('jwk', record.publicKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']),
+  ]);
+  const rawPublic = await crypto.subtle.exportKey('raw', publicKey);
+  const hash = await digestHex(rawPublic);
+  const derivedId = hash.slice(0, 12).toUpperCase();
+  if (derivedId !== record.identityId) {
+    throw new Error(`Key/identityId mismatch for ${record.identityId} — backup file may be corrupted`);
+  }
+  const fullRecord = {
+    identityId: record.identityId, namespace: record.namespace, role: record.role,
+    displayName: record.displayName, createdAt: record.createdAt, active: record.active,
+    retiredAt: record.retiredAt, rotatedTo: record.rotatedTo,
+    publicKeyRaw: record.publicKeyRaw, keyPair: { privateKey, publicKey },
+  };
+  await put('identities', fullRecord);
+  return fullRecord;
+}

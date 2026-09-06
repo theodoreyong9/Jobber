@@ -15,7 +15,9 @@ import * as db from './db.js';
 import * as identity from './identity.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
+import * as backup from './backup.js';
 import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId } from './state.js';
+import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
 import { setSearchLive } from './discovery-ui.js';
 import { setResearchConnected } from './research-ui.js';
@@ -53,6 +55,60 @@ function reportWebGPU() {
   document.getElementById('webgpuFlag').textContent = llm.isWebGPUAvailable()
     ? '· Local AI available (WebGPU)'
     : '· Local AI unavailable on this device';
+}
+
+// Full local-data backup/restore — see backup.js for exactly what's
+// included (identities with private keys, profiles, blocklist, Research)
+// and what's deliberately left out (conversations/attachments).
+function registerBackupButtons() {
+  document.getElementById('exportBackup')?.addEventListener('click', () => {
+    openModal('Export backup', `<p style="font-size:12.5px;color:var(--mid)">
+        This file contains <b>private key material</b> for every identity in
+        this browser — anyone who gets it can act as you on the network.
+        Treat it like a password manager export: store it somewhere safe,
+        never share it, and delete it once you no longer need it.
+      </p>`, {
+      submitLabel: 'Download backup',
+      onSubmit: async () => {
+        const bundle = await backup.exportAllData();
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `jobber-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        toast(`Exported ${bundle.identities.length} identities and ${bundle.profiles.length} profiles.`);
+      },
+    });
+  });
+
+  document.getElementById('importBackup')?.addEventListener('click', () => {
+    document.getElementById('importBackupFile').click();
+  });
+  document.getElementById('importBackupFile')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const bundle = JSON.parse(await file.text());
+      const results = await backup.importAllData(bundle);
+      // Reload everything the import could have touched, then re-render.
+      for (const ns of NAMESPACES) {
+        state.identitiesByNs[ns] = await identity.listIdentities(ns);
+        if (!state.activeIdentityId[ns]) {
+          const activeId = pickActiveIdentityId(state.identitiesByNs[ns]);
+          if (activeId) state.activeIdentityId[ns] = activeId;
+        }
+      }
+      state.researchProjects = await research.listProjects();
+      const errorNote = results.errors.length ? ` (${results.errors.length} failed — see console)` : '';
+      if (results.errors.length) console.warn('[jobber] backup import errors:', results.errors);
+      toast(`Restored ${results.identities} identities, ${results.profiles} profiles${errorNote}.`);
+      renderAll();
+    } catch (err) {
+      toast('Could not import that file: ' + err.message);
+    }
+    e.target.value = ''; // allow re-selecting the same file later
+  });
 }
 
 async function boot() {
@@ -107,6 +163,7 @@ async function boot() {
   refreshUsageStat();
   registerServiceWorker();
   reportWebGPU();
+  registerBackupButtons();
 
   // Resume Search Live / research connection automatically if they were on
   // last time — "search live" isn't meant to reset itself just because the

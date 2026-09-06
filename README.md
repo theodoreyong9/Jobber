@@ -184,15 +184,81 @@ wasn't the intended behavior:
 
 - **Search live** now persists (`cache` store, key `searchLive:<namespace>`
   / `researchConnect`) and **resumes automatically at boot** if it was on
-  last time and you still have an active identity there. The manual switch
-  still works the same way — this only removes the need to re-enable it
-  after every reload.
-- **Local AI enrichment** moved from a per-namespace session flag to a real
-  field on the profile (`profile.aiEnabled`), so it's a property of *that
-  identity*, persists across reloads, and travels with the identity the
-  same way its role or category does — not a browser-tab setting. The
-  discovery broadcast now also respects it: previously it always included
-  AI-derived tokens regardless of the switch, which was inconsistent.
+  last time and you still have an active identity there. It's no longer a
+  topbar switch either — it's a "Start searching" / "Stop searching"
+  button right next to Edit profile / Enrich with local AI, since that's
+  where it actually belongs.
+- **Local AI enrichment** isn't a separate switch at all anymore. Clicking
+  "Enrich with local AI" *is* the control — whatever keywords it produces
+  are used in matching from then on, automatically, the same way your
+  regular profile keywords are. Having a switch next to a button that did
+  the same job from two disconnected places (topbar vs. profile panel) was
+  the actual complaint, and it was a fair one. The discovery broadcast is
+  consistent with this too now: it sends whatever AI-derived keywords
+  exist, the same as local matching uses.
+- **Trystero's CDN path was broken** (`dist/trystero-torrent.min.js`
+  404s — the package dropped its bundled `dist/` output entirely and now
+  ships plain ESM `src/*.js` files with per-strategy subpath exports).
+  Fixed by resolving `trystero/torrent` through `esm.run` instead, the
+  same jsdelivr ESM endpoint already used for WebLLM, which correctly
+  resolves package.json subpath exports where esm.sh's interop doesn't.
+
+### Full backup / restore, not just Research's per-project export
+
+"Export backup" / "Import backup" (bottom of the rail) download or restore
+**everything**: every identity's private key material, every profile,
+the blocklist, and all Research projects/artifacts — one JSON file. This
+is what lets you survive a cleared cache, a new browser, or a new device
+without losing continuity of who you are to peers who already know your
+identityId (identityId is re-derived from the imported key on the way
+back in, so restoring is naturally idempotent — no separate merge logic).
+
+This is a real credential export: the file contains private keys. The
+export button shows that warning before downloading; there's no attempt
+to soften it, the same way a password manager doesn't soften a master
+export. Deliberately **not** included: chat messages and attachments
+(would need Blob-to-base64 conversion for every file ever sent, and
+losing conversation history on a fresh device is much lower-stakes than
+losing your identity) and the `cache` store (session preferences like
+last-active namespace, not worth restoring on a different device).
+
+This is separate from Research's own `project.jobber` export
+(`research.js`) — that one is for sharing a single project with a
+collaborator; this one is for backing up everything you are in this
+browser.
+
+### Recovering chat history from whoever's still online
+
+If your local message store is empty for a conversation (cache cleared,
+backup restored on a new device) but the other side is still reachable,
+you don't need the full backup for that — reconnecting is enough. The
+moment a peer identity you've talked to before comes back online (any
+message from them proves it — usually their `discovery` broadcast), a
+`conversation_sync_request` goes out with the message ids you already
+have; they send back whatever you're missing. Text and metadata travel
+over the normal JSON channel; attachment bytes can't be JSON-serialized,
+so they follow separately over the binary channel tagged with the
+original message id, so the recovered record ends up as one entry, not a
+duplicate. Same "diff known ids" idea Research already uses for
+artifacts, applied to conversations.
+
+Attachments specifically: if a peer already accepted/received a file from
+you (or sent one to you), they have the **full file stored locally**, not
+just a note that it exists — `onBlob` persists the actual `Blob` into
+IndexedDB at accept time. So a resync gets the real bytes back
+immediately; there's no separate "request download" step.
+
+Building this exposed a real bug worth being upfront about: each side was
+independently minting its own random id for what's logically the same
+message (you send one, and the receiver generated a *different* random id
+for their copy of it). That meant "diff known ids" could never actually
+converge — every reconnect, not just data-loss recovery, would have looked
+like the other side was missing everything, and duplicated the whole
+conversation. Fixed by generating one canonical id per logical message
+(`crypto.randomUUID()` for chat text, the already-shared `offerId` for
+attachments) and having both sides store *that* id instead of minting
+their own — see `sendChatMessage` and the `attachment_accept` handling in
+`message-router.js`.
 
 ## What's been hardened since the last pass
 

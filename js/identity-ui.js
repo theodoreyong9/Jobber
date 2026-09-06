@@ -9,7 +9,6 @@ import * as identity from './identity.js';
 import * as p2p from './p2p.js';
 import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
-import { getProfile, toggleAiEnrichment } from './profiles.js';
 
 export function renderRail() {
   const root = document.getElementById('railGroups');
@@ -123,22 +122,12 @@ export async function renderTopbar() {
     return;
   }
 
-  // Both switches reflect real, persisted state — not session memory that
-  // forgets itself on reload. Search live is restored automatically at
-  // boot if it was on last time (see app.js); AI enrichment is a property
-  // of this identity's profile, so it travels with the identity, not the
-  // browser tab.
-  const profile = await getProfile(id.identityId);
-  controls.innerHTML = `
-    <div class="switchctl">Search live <button class="switch live ${state.searchLive[ns] ? 'on' : ''}" id="liveSw"></button></div>
-    <div class="switchctl">Local AI enrichment <button class="switch ${profile.aiEnabled ? 'on' : ''}" id="aiSw"></button></div>
-  `;
-  document.getElementById('liveSw').addEventListener('click', () => state.handlers.toggleSearchLive(ns));
-  document.getElementById('aiSw').addEventListener('click', async () => {
-    await toggleAiEnrichment(id.identityId);
-    state.render.topbar();
-    state.render.workspace(); // matching depends on this, so results need to refresh too
-  });
+  // Search live and AI enrichment used to be topbar switches. Moved into
+  // the profile panel instead (next to Edit profile / Enrich with local
+  // AI) since that's where the controls they affect actually live —
+  // having the same feature controllable from two disconnected places was
+  // confusing, not useful.
+  controls.innerHTML = '';
 }
 
 function renameFlow(id) {
