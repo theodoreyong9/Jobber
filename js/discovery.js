@@ -19,6 +19,7 @@ export function levelZero(peerMetas, myNamespace, protocolVersion) {
 
 export function hardFilter(peers, constraints = {}) {
   return peers.filter((p) => {
+    if (constraints.requiredRole && p.role !== constraints.requiredRole) return false;
     if (constraints.requiredLanguages && constraints.requiredLanguages.length) {
       const langs = p.languages || [];
       if (!constraints.requiredLanguages.some((l) => langs.includes(l))) return false;

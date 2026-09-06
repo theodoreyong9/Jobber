@@ -21,7 +21,7 @@ async function generateKeyPair() {
   );
 }
 
-export async function createIdentity(namespace, displayName) {
+export async function createIdentity(namespace, displayName, role = null) {
   const keyPair = await generateKeyPair();
   const rawPublic = await crypto.subtle.exportKey('raw', keyPair.publicKey);
   const hash = await digestHex(rawPublic);
@@ -30,6 +30,7 @@ export async function createIdentity(namespace, displayName) {
   const record = {
     identityId,
     namespace,
+    role, // e.g. "candidate" / "recruiter" — null for single-sided namespaces
     displayName: displayName || 'Unnamed',
     createdAt: Date.now(),
     active: true,
@@ -67,12 +68,20 @@ export async function renameIdentity(identityId, newName) {
 export async function rotateIdentity(identityId) {
   const old = await get('identities', identityId);
   if (!old) throw new Error('Identity not found');
-  const fresh = await createIdentity(old.namespace, old.displayName);
+  const fresh = await createIdentity(old.namespace, old.displayName, old.role);
   old.active = false;
   old.retiredAt = Date.now();
   old.rotatedTo = fresh.identityId;
   await put('identities', old);
   return fresh;
+}
+
+export async function setRole(identityId, role) {
+  const id = await get('identities', identityId);
+  if (!id) throw new Error('Identity not found');
+  id.role = role;
+  await put('identities', id);
+  return id;
 }
 
 export async function retireIdentity(identityId) {

@@ -56,6 +56,7 @@ a{color:var(--agent);}
 .identity .mono{ width:24px; height:24px; border-radius:6px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-family:var(--font-head); font-weight:700; font-size:11px; color:#0D1114; }
 .identity .meta{ min-width:0; flex:1; }
 .identity .meta .nm{ font-size:12.5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
 .identity .meta .id{ font-family:var(--font-mono); font-size:10px; color:var(--low); }
 .identity .live{ width:6px; height:6px; border-radius:50%; background:var(--border); flex:0 0 auto; }
 .identity .live.on{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
@@ -73,6 +74,7 @@ a{color:var(--agent);}
 .topbar .who .name{ font-family:var(--font-head); font-weight:600; font-size:15px; }
 .topbar .who .sub{ font-size:11.5px; color:var(--low); display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 .topbar .who .sub .pill{ font-family:var(--font-mono); font-size:10px; color:var(--mid); border:1px solid var(--border); border-radius:20px; padding:1px 7px; }
+.topbar .who .sub .pill.role{ font-family:var(--font-body); color:var(--agent); border-color:rgba(89,201,184,.4); }
 .topbar .who .idbtns{ display:flex; gap:4px; margin-left:4px; }
 .topbar .who .idbtns button{ width:22px; height:22px; border-radius:5px; border:1px solid var(--border); background:var(--panel-raised); color:var(--mid); font-size:11px; display:flex; align-items:center; justify-content:center; }
 .topbar .who .idbtns button:hover{ color:var(--hi); border-color:var(--mid); }

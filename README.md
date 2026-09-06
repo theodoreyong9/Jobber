@@ -50,6 +50,29 @@ npm run icons # regenerate icons/*.png
 npm run check # verify sw.js precache list against disk
 ```
 
+## Namespaces and how matching works in each
+
+- **Employment** — two roles, *Candidate* and *Recruiter*. Matching only
+  ever happens candidate ↔ recruiter, never candidate ↔ candidate. Hard
+  filter enforces the complementary role before anything else runs.
+- **Business** (formerly "Mission") — two roles, *Offer* and *Client*.
+  Same complementary-role matching.
+- **Independant** (formerly "Service") — two roles, *Service* (provider)
+  and *Utilisateur*. Same complementary-role matching.
+- **Dating** — no fixed roles. Every identity has both a profile ("about
+  me") and a search ("looking for"). A match score is the *minimum* of two
+  directions: how well their profile fits what you're looking for, and how
+  well your profile fits what they're looking for — a real match needs both
+  sides to work, not just one.
+- **Research** — unchanged: symmetric agent-to-agent collaboration, no
+  roles, hypothesis/critique can come from either participant.
+
+Two-sided namespaces ask for a role when you create the identity (and it's
+editable later from the ✎ button). Older local data created before this
+naming existed is migrated automatically on first load: `job_candidate` →
+`employment`, `mission` → `business`, `service` → `independant`, with a
+best-guess default role you can change afterward.
+
 ## What each module actually does
 
 | File | Real behavior |
@@ -93,10 +116,10 @@ npm run check # verify sw.js precache list against disk
 - **No precise geolocation.** Distance-based hard filtering is wired but
   nothing populates `distanceKm` yet; add a manual "approximate area" field
   or the Geolocation API if you want it live.
-- **`job_candidate` covers both sides of Employment.** The full spec splits
-  `job_candidate` / `job_recruiter`; this build matches symmetrically in one
-  namespace to keep the identity model simple. Splitting it back out is a
-  matter of adding a second namespace entry with the same code path.
+- **`job_candidate` covers both sides of Employment.** ~~The full spec splits
+  `job_candidate` / `job_recruiter`~~ — superseded: Employment now has real
+  `candidate` / `recruiter` roles matched against each other. See the
+  namespace section above.
 - **Human-in-the-loop is a single toggle, not three autonomy levels.** Every
   artifact still requires an explicit click to save — nothing here writes to
   the vault or the network without a person choosing to.

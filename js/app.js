@@ -13,20 +13,38 @@ import { PROTOCOL_VERSION } from './protocol.js';
 /* Namespace configuration                                             */
 /* ------------------------------------------------------------------ */
 
-const NAMESPACES = ['job_candidate', 'mission', 'service', 'dating', 'research'];
+const NAMESPACES = ['employment', 'business', 'independant', 'dating', 'research'];
 
+// "twoSided" namespaces match role A against role B (never A-A or B-B).
+// "reciprocal" (dating) matches each identity's *search* against the
+// other's *profile*, in both directions — a real match needs both sides
+// to be interested, not just one.
 const NS_CONFIG = {
-  job_candidate: { label: 'Employment', color: '#F1552C', kind: 'classic',
-    hint: 'Candidate and recruiter profiles match symmetrically in this build — paste a résumé or a posting, either works.' },
-  mission:       { label: 'Mission', color: '#59C9B8', kind: 'classic',
-    hint: 'Short-term engagements. Describe what you need or what you can deliver.' },
-  service:       { label: 'Service', color: '#E8B84B', kind: 'classic',
-    hint: 'Local services. Category and availability matter more than distance here.' },
-  dating:        { label: 'Dating', color: '#D46FB3', kind: 'classic',
-    hint: 'Discovery data is minimized — only shared keywords go out, never your source text.' },
-  research:      { label: 'Research', color: '#7C9EF5', kind: 'research',
+  employment: { label: 'Employment', color: '#F1552C', kind: 'twoSided',
+    roles: [{ key: 'candidate', label: 'Candidate' }, { key: 'recruiter', label: 'Recruiter' }],
+    hint: 'Candidates are matched against recruiters, and recruiters against candidates — never against their own kind.' },
+  business: { label: 'Business', color: '#59C9B8', kind: 'twoSided',
+    roles: [{ key: 'offer', label: 'Offer' }, { key: 'client', label: 'Client' }],
+    hint: 'Offers are matched with the clients looking for exactly that, and vice versa.' },
+  independant: { label: 'Independant', color: '#E8B84B', kind: 'twoSided',
+    roles: [{ key: 'provider', label: 'Service' }, { key: 'user', label: 'Utilisateur' }],
+    hint: 'Independent service providers are matched with the users who need them.' },
+  dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal',
+    hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
+  research: { label: 'Research', color: '#7C9EF5', kind: 'research',
     hint: 'Agent-to-agent collaboration. Hypothesis and critique are symmetric roles.' },
 };
+
+function roleLabel(ns, roleKey) {
+  const role = NS_CONFIG[ns].roles?.find((r) => r.key === roleKey);
+  return role ? role.label : null;
+}
+
+function complementaryRole(ns, roleKey) {
+  const roles = NS_CONFIG[ns].roles;
+  if (!roles) return null;
+  return roles.find((r) => r.key !== roleKey)?.key || null;
+}
 
 function initials(name) {
   return (name || '?').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -37,7 +55,7 @@ function initials(name) {
 /* ------------------------------------------------------------------ */
 
 const state = {
-  activeNamespace: 'job_candidate',
+  activeNamespace: 'employment',
   activeIdentityId: {},   // namespace -> identityId
   identitiesByNs: {},     // namespace -> [identity]
   searchLive: {},         // namespace -> bool
@@ -92,7 +110,21 @@ function toast(msg) {
 /* Boot                                                                 */
 /* ------------------------------------------------------------------ */
 
+async function migrateLegacyNamespaces() {
+  const legacyMap = { job_candidate: 'employment', mission: 'business', service: 'independant' };
+  const all = await db.getAll('identities');
+  for (const rec of all) {
+    if (legacyMap[rec.namespace]) {
+      rec.namespace = legacyMap[rec.namespace];
+      if (!rec.role && NS_CONFIG[rec.namespace].roles) rec.role = NS_CONFIG[rec.namespace].roles[0].key;
+      await db.put('identities', rec);
+    }
+  }
+}
+
 async function boot() {
+  await migrateLegacyNamespaces();
+
   for (const ns of NAMESPACES) {
     state.identitiesByNs[ns] = await identity.listIdentities(ns);
     state.discovered[ns] = new Map();
@@ -111,7 +143,7 @@ async function boot() {
 
   // pick a sensible default active namespace/identity
   const firstNonEmpty = NAMESPACES.find((ns) => state.identitiesByNs[ns].length > 0);
-  state.activeNamespace = firstNonEmpty || 'job_candidate';
+  state.activeNamespace = firstNonEmpty || 'employment';
   for (const ns of NAMESPACES) {
     const list = state.identitiesByNs[ns];
     if (list.length) state.activeIdentityId[ns] = list.find((i) => i.active)?.identityId || list[0].identityId;
@@ -167,7 +199,7 @@ function renderRail() {
                   data-ns="${ns}" data-id="${id.identityId}">
             <span class="mono" style="background:${cfg.color}">${initials(id.displayName)}</span>
             <span class="meta">
-              <span class="nm">${id.displayName}</span>
+              <span class="nm">${id.displayName}${id.role ? ` <span class="role-badge">${roleLabel(ns, id.role)}</span>` : ''}</span>
               <span class="id">#${id.identityId}</span>
             </span>
             <span class="live ${ns === 'research' ? '' : (isLive ? 'on' : '')}"></span>
@@ -189,18 +221,26 @@ function renderRail() {
 }
 
 function createIdentityFlow(ns) {
-  openModal(`New identity — ${NS_CONFIG[ns].label}`, `
+  const cfg = NS_CONFIG[ns];
+  const roleField = cfg.roles ? `
+      <label for="role">Role</label>
+      <select id="role">
+        ${cfg.roles.map((r) => `<option value="${r.key}">${r.label}</option>`).join('')}
+      </select>` : '';
+  openModal(`New identity — ${cfg.label}`, `
       <label for="dn">Display name</label>
       <input type="text" id="dn" placeholder="e.g. Alex Kade" autofocus>
+      ${roleField}
     `, {
     submitLabel: 'Create identity',
     onSubmit: async (dlg) => {
       const name = dlg.querySelector('#dn').value.trim() || 'Unnamed';
-      const rec = await identity.createIdentity(ns, name);
+      const role = cfg.roles ? dlg.querySelector('#role').value : null;
+      const rec = await identity.createIdentity(ns, name, role);
       state.identitiesByNs[ns] = await identity.listIdentities(ns);
       state.activeNamespace = ns;
       state.activeIdentityId[ns] = rec.identityId;
-      toast(`Identity #${rec.identityId} created for ${NS_CONFIG[ns].label}`);
+      toast(`Identity #${rec.identityId} created for ${cfg.label}${role ? ' (' + roleLabel(ns, role) + ')' : ''}`);
       renderAll();
     },
   });
@@ -230,9 +270,10 @@ function renderTopbar() {
       <div class="name">${id.displayName}</div>
       <div class="sub">
         <span class="pill">${ns}</span>
+        ${id.role ? `<span class="pill role">${roleLabel(ns, id.role)}</span>` : ''}
         <span class="pill">#${id.identityId}</span>
         <span class="idbtns">
-          <button data-act="rename" title="Rename">✎</button>
+          <button data-act="rename" title="Rename${cfg.roles ? ' / change role' : ''}">✎</button>
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
         </span>
@@ -258,10 +299,17 @@ function renderTopbar() {
 }
 
 function renameFlow(id) {
-  openModal('Rename identity', `<label>Display name</label><input type="text" id="rn" value="${id.displayName}">`, {
+  const cfg = NS_CONFIG[id.namespace];
+  const roleField = cfg.roles ? `
+      <label for="rr">Role</label>
+      <select id="rr">
+        ${cfg.roles.map((r) => `<option value="${r.key}" ${r.key === id.role ? 'selected' : ''}>${r.label}</option>`).join('')}
+      </select>` : '';
+  openModal('Edit identity', `<label>Display name</label><input type="text" id="rn" value="${id.displayName}">${roleField}`, {
     submitLabel: 'Save',
     onSubmit: async (dlg) => {
       await identity.renameIdentity(id.identityId, dlg.querySelector('#rn').value.trim() || id.displayName);
+      if (cfg.roles) await identity.setRole(id.identityId, dlg.querySelector('#rr').value);
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
       renderAll();
     },
@@ -301,21 +349,41 @@ function retireFlow(id) {
 /* ------------------------------------------------------------------ */
 
 async function getProfile(identityId) {
-  return (await db.get('profiles', identityId)) || { identityId, sourceText: '', tokens: [], aiTokens: [], category: '', languages: [], availableNow: false };
+  return (await db.get('profiles', identityId)) || {
+    identityId, sourceText: '', tokens: [], aiTokens: [],
+    lookingForText: '', searchTokens: [],
+    category: '', languages: [], availableNow: false,
+  };
 }
 
-function editProfileFlow(id) {
+function editProfileFlow(ns, id) {
+  const cfg = NS_CONFIG[ns];
+  const roleTag = id.role ? roleLabel(ns, id.role) : null;
   getProfile(id.identityId).then((profile) => {
+    const isDating = cfg.kind === 'reciprocal';
+    const sourceLabel = roleTag === 'Recruiter' ? 'Job posting (what you\'re hiring for)'
+      : roleTag === 'Client' ? 'What you need (brief / request)'
+      : roleTag === 'Utilisateur' ? 'What you need help with'
+      : roleTag === 'Service' ? 'Describe the service you offer'
+      : roleTag === 'Offer' ? 'Describe your offer'
+      : roleTag === 'Candidate' ? 'Résumé / skills'
+      : isDating ? 'About me'
+      : 'Source text (résumé / offer / listing — stays local, never sent as-is)';
+
     openModal('Edit profile', `
       <label>Category / title</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Languages (comma separated)</label>
       <input type="text" id="langs" value="${(profile.languages || []).join(', ')}" placeholder="EN, PT">
       <label><input type="checkbox" id="avail" ${profile.availableNow ? 'checked' : ''}> Available now</label>
-      <label>Source text (your résumé / posting / description — stays local, never sent as-is)</label>
+      <label>${sourceLabel}</label>
       <textarea id="src" placeholder="Paste text, or load a .txt file below">${profile.sourceText || ''}</textarea>
       <label>Or load from a .txt file</label>
       <input type="file" id="file" accept=".txt,text/plain">
+      ${isDating ? `
+        <label>What I'm looking for</label>
+        <textarea id="looking" placeholder="Describe who/what you're looking for">${profile.lookingForText || ''}</textarea>
+      ` : ''}
     `, {
       submitLabel: 'Save profile',
       onOpen: (dlg) => {
@@ -330,7 +398,13 @@ function editProfileFlow(id) {
         const languages = dlg.querySelector('#langs').value.split(',').map((s) => s.trim()).filter(Boolean);
         const availableNow = dlg.querySelector('#avail').checked;
         const tokens = matching.tokenize(sourceText + ' ' + category);
-        await db.put('profiles', { identityId: id.identityId, sourceText, category, languages, availableNow, tokens, aiTokens: profile.aiTokens || [], updatedAt: Date.now() });
+        const lookingForText = isDating ? dlg.querySelector('#looking').value : '';
+        const searchTokens = isDating ? matching.tokenize(lookingForText) : [];
+        await db.put('profiles', {
+          identityId: id.identityId, sourceText, category, languages, availableNow,
+          tokens, aiTokens: profile.aiTokens || [], lookingForText, searchTokens,
+          updatedAt: Date.now(),
+        });
         toast('Profile saved locally');
         renderWorkspace();
       },
@@ -362,12 +436,16 @@ async function toggleSearchLive(ns) {
       await p2p.joinNamespaceRoom(ns, {
         onPeerJoin: async (peerId) => {
           const profile = await getProfile(id.identityId);
-          p2p.getRoom(ns).send('discovery', id.identityId, {
+          const cfg = NS_CONFIG[ns];
+          const payload = {
             category: profile.category,
             tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
             languages: profile.languages,
             availableNow: profile.availableNow,
-          }, peerId);
+          };
+          if (cfg.kind === 'twoSided') payload.role = id.role;
+          if (cfg.kind === 'reciprocal') payload.searchTokens = profile.searchTokens.slice(0, 30);
+          p2p.getRoom(ns).send('discovery', id.identityId, payload, peerId);
         },
         onPeerLeave: () => { renderWorkspace(); renderTopbar(); },
         onMessage: (msg, peerId) => handleIncomingMessage(ns, msg, peerId),
@@ -520,19 +598,30 @@ async function renderClassicWorkspace(ns) {
 
   const profile = await getProfile(id.identityId);
   const myTokens = [...profile.tokens, ...(state.aiOn[ns] ? profile.aiTokens : [])];
+  const myLookingForTokens = profile.searchTokens || [];
 
   const now = Date.now();
   const peers = [...state.discovered[ns].values()]
     .filter((p) => now - (p.lastSeen || 0) < PEER_TTL_MS)
     .filter((p) => !state.blocked[ns].has(p.sender));
+
+  const hardConstraints = { requiredLanguages: profile.languages };
+  if (cfg.kind === 'twoSided') hardConstraints.requiredRole = complementaryRole(ns, id.role);
+
   const cascade = discovery.runCascade(peers, {
     myNamespace: ns,
     protocolVersion: PROTOCOL_VERSION,
-    hardConstraints: { requiredLanguages: profile.languages },
+    hardConstraints,
     softConstraints: { preferredCategory: profile.category },
   });
 
   const scored = cascade.pool.map((p) => {
+    if (cfg.kind === 'reciprocal') {
+      const forward = matching.matchTokens(myLookingForTokens, p.tokens || []);   // does their profile fit what I want
+      const backward = matching.matchTokens(p.searchTokens || [], myTokens);       // does my profile fit what they want
+      const combinedScore = Math.min(forward.score, backward.score);
+      return { ...p, match: { score: combinedScore, forward, backward } };
+    }
     const m = matching.matchTokens(myTokens, p.tokens || []);
     return { ...p, match: m };
   }).sort((a, b) => b.match.score - a.match.score);
@@ -542,10 +631,22 @@ async function renderClassicWorkspace(ns) {
       ${i < cascade.stages.length - 1 ? '<div class="arrow">→</div>' : ''}
     `).join('');
 
+  const myRoleLabel = id.role ? roleLabel(ns, id.role) : null;
+  const theirRoleLabel = cfg.kind === 'twoSided' ? roleLabel(ns, complementaryRole(ns, id.role)) : null;
+
   const resultsHtml = scored.length === 0
-    ? `<div class="empty-state">No peers discovered yet on this namespace.<br>Open Jobber in another browser tab, device, or share this build with someone else — discovery is real WebRTC, it just needs a second peer.</div>`
+    ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Open Jobber in another browser tab, device, or share this build with someone else — discovery is real WebRTC, it just needs a second peer.</div>`
     : scored.map((p) => {
-        const ex = matching.explain(p.match);
+        const ex = cfg.kind === 'reciprocal'
+          ? {
+              pos: [
+                `They fit what you're looking for: ${p.match.forward.score}%`,
+                `You fit what they're looking for: ${p.match.backward.score}%`,
+                ...matching.explain(p.match.forward).pos.slice(0, 3),
+              ],
+              neg: matching.explain(p.match.backward).neg,
+            }
+          : matching.explain(p.match);
         const chat = state.pendingChats[ns].get(p.peerId);
         const meeting = state.pendingMeetings[ns].get(p.peerId);
         const meetingHtml = meeting ? `
@@ -563,7 +664,7 @@ async function renderClassicWorkspace(ns) {
           <div class="top">
             <span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>
             <div class="info">
-              <div class="name">${p.sender.slice(0, 10)}…</div>
+              <div class="name">${p.sender.slice(0, 10)}…${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}</div>
               <div class="role">${p.category || 'No category declared'}</div>
               <div class="meta">
                 <span class="chip">${(p.languages || []).join(' / ') || 'no language declared'}</span>
@@ -595,17 +696,23 @@ async function renderClassicWorkspace(ns) {
   const chatHtml = chatPeer ? renderChatPanel(ns, id, chatPeer) : '';
 
   return `
-    <h2 class="section-title">${cfg.label} — ${state.searchLive[ns] ? 'searching live' : 'search paused'}</h2>
+    <h2 class="section-title">${cfg.label}${myRoleLabel ? ` — ${myRoleLabel}` : ''} — ${state.searchLive[ns] ? 'searching live' : 'search paused'}</h2>
     <p class="section-sub">${cfg.hint}</p>
 
     <div class="panel">
-      <div class="k">Your profile</div>
+      <div class="k">Your profile${myRoleLabel ? ` (${myRoleLabel})` : ''}</div>
       <div>${profile.category ? `<b>${profile.category}</b>` : '<span style="color:var(--low)">No category set</span>'}</div>
       <div class="chiprow">
         ${profile.tokens.slice(0, 10).map((t) => `<span class="chip">${t}</span>`).join('')}
         ${(state.aiOn[ns] ? profile.aiTokens : []).slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
         ${!profile.tokens.length && !profile.aiTokens.length ? '<span style="color:var(--low);font-size:11px">No keywords extracted yet</span>' : ''}
       </div>
+      ${cfg.kind === 'reciprocal' ? `
+        <div class="k" style="margin-top:10px">Looking for</div>
+        <div class="chiprow">
+          ${myLookingForTokens.slice(0, 10).map((t) => `<span class="chip" style="border-color:var(--agent);color:var(--agent)">${t}</span>`).join('')}
+          ${!myLookingForTokens.length ? '<span style="color:var(--low);font-size:11px">Not set yet</span>' : ''}
+        </div>` : ''}
       <div class="actions" style="margin-top:12px">
         <button class="btn" id="editProfile">Edit profile</button>
         <button class="btn" id="enrichAI">Enrich with local AI</button>
@@ -654,7 +761,7 @@ function bindClassicEvents(ns) {
   const ws = document.getElementById('workspace');
 
   ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
-  ws.querySelector('#editProfile')?.addEventListener('click', () => editProfileFlow(id));
+  ws.querySelector('#editProfile')?.addEventListener('click', () => editProfileFlow(ns, id));
   ws.querySelector('#enrichAI')?.addEventListener('click', () => enrichProfileWithAI(id));
 
   ws.querySelectorAll('.toggle-expl').forEach((btn) => {

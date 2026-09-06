@@ -30,6 +30,13 @@ test('hardFilter eliminates on distance and availability', () => {
   assert.equal(out.length, 1);
 });
 
+test('hardFilter eliminates on required role (two-sided namespaces)', () => {
+  const peers = [peer({ role: 'recruiter' }), peer({ role: 'candidate' })];
+  const out = hardFilter(peers, { requiredRole: 'recruiter' });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].role, 'recruiter');
+});
+
 test('hardFilter with no constraints passes everyone through', () => {
   const peers = [peer(), peer(), peer()];
   assert.equal(hardFilter(peers, {}).length, 3);
