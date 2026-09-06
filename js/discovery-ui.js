@@ -5,6 +5,7 @@
 // `state.render` to avoid a circular import — see state.js's header.
 
 import * as p2p from './p2p.js';
+import * as db from './db.js';
 import * as discovery from './discovery.js';
 import * as matching from './matching.js';
 import { PROTOCOL_VERSION } from './protocol.js';
@@ -18,10 +19,16 @@ import {
   renderChatPanel, proposeAttachment, respondAttachmentOffer,
 } from './conversations.js';
 
-export async function toggleSearchLive(ns) {
-  state.searchLive[ns] = !state.searchLive[ns];
+// Connects or disconnects Search Live for a namespace outright (as opposed
+// to toggling from whatever the current state happens to be) — this is
+// what both the manual toggle and the auto-resume-on-boot path call, so
+// there's exactly one place that actually joins/leaves the P2P room.
+export async function setSearchLive(ns, desired) {
+  state.searchLive[ns] = desired;
+  db.put('cache', { key: `searchLive:${ns}`, value: desired }); // survives reload — see app.js's boot()
   const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
-  if (state.searchLive[ns]) {
+  if (desired) {
+    if (!id) { state.searchLive[ns] = false; return; }
     try {
       await p2p.joinNamespaceRoom(ns, {
         onPeerJoin: async (peerId) => {
@@ -29,7 +36,7 @@ export async function toggleSearchLive(ns) {
           const cfg = NS_CONFIG[ns];
           const payload = {
             category: profile.category,
-            tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
+            tokens: [...profile.tokens, ...(profile.aiEnabled ? profile.aiTokens : [])].slice(0, 30),
             languages: profile.languages,
             availableNow: profile.availableNow,
           };
@@ -91,6 +98,10 @@ export async function toggleSearchLive(ns) {
   }
   state.render.all();
 }
+
+export async function toggleSearchLive(ns) {
+  await setSearchLive(ns, !state.searchLive[ns]);
+}
 state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar calls this indirectly
 
 export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) {
@@ -148,7 +159,7 @@ export async function renderClassicWorkspace(ns) {
   if (!id) return `<div class="empty-state"><p>Create an identity in ${cfg.label} to get started.</p><button class="btn primary" id="createHere">Create identity</button></div>`;
 
   const profile = await getProfile(id.identityId);
-  const myTokens = [...profile.tokens, ...(state.aiOn[ns] ? profile.aiTokens : [])];
+  const myTokens = [...profile.tokens, ...(profile.aiEnabled ? profile.aiTokens : [])];
   const myLookingForTokens = profile.searchTokens || [];
 
   const now = Date.now();
@@ -327,7 +338,7 @@ export async function renderClassicWorkspace(ns) {
       ${ns === 'employment' || ns === 'business' || ns === 'independant' ? `<div style="font-size:11.5px;color:var(--low);margin-top:2px">${[profile.city, profile.country].filter(Boolean).join(', ') || 'No location set'}${(ns === 'business' || ns === 'independant') ? (isSupplySide ? (profile.rate != null ? ` · rate ${profile.rate}` : '') : ((profile.budgetMin != null || profile.budgetMax != null) ? ` · budget ${profile.budgetMin ?? '…'}–${profile.budgetMax ?? '…'}` : '')) : ''}</div>` : ''}
       <div class="chiprow">
         ${profile.tokens.slice(0, 10).map((t) => `<span class="chip">${t}</span>`).join('')}
-        ${(state.aiOn[ns] ? profile.aiTokens : []).slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
+        ${(profile.aiEnabled ? profile.aiTokens : []).slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
         ${!profile.tokens.length && !profile.aiTokens.length ? '<span style="color:var(--low);font-size:11px">No keywords extracted yet</span>' : ''}
       </div>
       ${cfg.kind === 'reciprocal' ? `

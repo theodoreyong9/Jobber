@@ -7,8 +7,9 @@
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
-import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
+import { getProfile, toggleAiEnrichment } from './profiles.js';
 
 export function renderRail() {
   const root = document.getElementById('railGroups');
@@ -75,7 +76,7 @@ export function createIdentityFlow(ns) {
   });
 }
 
-export function renderTopbar() {
+export async function renderTopbar() {
   const ns = state.activeNamespace;
   const who = document.getElementById('topbarWho');
   const controls = document.getElementById('topbarControls');
@@ -122,12 +123,22 @@ export function renderTopbar() {
     return;
   }
 
+  // Both switches reflect real, persisted state — not session memory that
+  // forgets itself on reload. Search live is restored automatically at
+  // boot if it was on last time (see app.js); AI enrichment is a property
+  // of this identity's profile, so it travels with the identity, not the
+  // browser tab.
+  const profile = await getProfile(id.identityId);
   controls.innerHTML = `
     <div class="switchctl">Search live <button class="switch live ${state.searchLive[ns] ? 'on' : ''}" id="liveSw"></button></div>
-    <div class="switchctl">Local AI enrichment <button class="switch ${state.aiOn[ns] ? 'on' : ''}" id="aiSw"></button></div>
+    <div class="switchctl">Local AI enrichment <button class="switch ${profile.aiEnabled ? 'on' : ''}" id="aiSw"></button></div>
   `;
   document.getElementById('liveSw').addEventListener('click', () => state.handlers.toggleSearchLive(ns));
-  document.getElementById('aiSw').addEventListener('click', () => { state.aiOn[ns] = !state.aiOn[ns]; renderTopbar(); });
+  document.getElementById('aiSw').addEventListener('click', async () => {
+    await toggleAiEnrichment(id.identityId);
+    state.render.topbar();
+    state.render.workspace(); // matching depends on this, so results need to refresh too
+  });
 }
 
 function renameFlow(id) {
@@ -162,8 +173,7 @@ function retireFlow(id) {
     onSubmit: async () => {
       await identity.retireIdentity(id.identityId);
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
-      const remaining = state.identitiesByNs[id.namespace].find((i) => i.active);
-      state.activeIdentityId[id.namespace] = remaining ? remaining.identityId : null;
+      state.activeIdentityId[id.namespace] = pickActiveIdentityId(state.identitiesByNs[id.namespace]);
       state.render.all();
     },
   });

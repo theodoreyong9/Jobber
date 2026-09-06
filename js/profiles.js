@@ -13,7 +13,7 @@ import { openModal, toast } from './ui-kit.js';
 
 export async function getProfile(identityId) {
   return (await db.get('profiles', identityId)) || {
-    identityId, sourceText: '', tokens: [], aiTokens: [],
+    identityId, sourceText: '', tokens: [], aiTokens: [], aiEnabled: false,
     lookingForText: '', searchTokens: [],
     category: '', languages: [], availableNow: false,
     // Employment-specific (see editEmploymentProfileFlow):
@@ -23,6 +23,17 @@ export async function getProfile(identityId) {
     // Business / Independant specific:
     rate: null, budgetMin: null, budgetMax: null,
   };
+}
+
+// Whether to fold aiTokens into matching/display is a property of *this
+// identity's profile* — it persists across reloads and travels with the
+// identity, the same way its role or category does. It used to be a
+// session-only, per-namespace toggle that forgot itself on every reload.
+export async function toggleAiEnrichment(identityId) {
+  const profile = await getProfile(identityId);
+  profile.aiEnabled = !profile.aiEnabled;
+  await db.put('profiles', profile);
+  return profile;
 }
 
 export function editProfileFlow(ns, id) {

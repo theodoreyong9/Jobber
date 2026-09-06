@@ -177,6 +177,23 @@ channel. Declining sends `attachment_decline` and nothing is ever
 transferred. This replaces the earlier simplification where a file sent
 immediately with no consent step.
 
+### The two topbar switches are real, persisted state now
+
+Both used to be session-only and silently reset on every reload, which
+wasn't the intended behavior:
+
+- **Search live** now persists (`cache` store, key `searchLive:<namespace>`
+  / `researchConnect`) and **resumes automatically at boot** if it was on
+  last time and you still have an active identity there. The manual switch
+  still works the same way — this only removes the need to re-enable it
+  after every reload.
+- **Local AI enrichment** moved from a per-namespace session flag to a real
+  field on the profile (`profile.aiEnabled`), so it's a property of *that
+  identity*, persists across reloads, and travels with the identity the
+  same way its role or category does — not a browser-tab setting. The
+  discovery broadcast now also respects it: previously it always included
+  AI-derived tokens regardless of the switch, which was inconsistent.
+
 ## What's been hardened since the last pass
 
 - **Offline messages auto-resend.** A message written while the recipient
@@ -206,6 +223,19 @@ immediately with no consent step.
   browser from this environment — DOCX extraction is genuinely verified
   (a real ZIP is built and read back in a unit test); PDF extraction is
   written defensively but unverified.
+
+### Retiring an identity is permanent history, not deletion
+
+Clicking "×" (Retire) sets `active: false` on that identity — it stays in
+IndexedDB forever as local history, it's never actually deleted. The rail
+and topbar only ever show active identities, so a retired one correctly
+disappears from the UI immediately. There *was* a real bug here: on reload,
+if a namespace had no active identity left, the boot sequence fell back to
+"the first identity record" regardless of its active flag, silently
+resurrecting a retired identity as if it were current. Fixed — see
+`pickActiveIdentityId` in `state.js`, which is now the single place this
+decision is made, and is unit-tested specifically against "everything in
+this namespace is retired" returning nothing rather than the wrong record.
 
 ## Module architecture: why `state.render` / `state.handlers` exist
 

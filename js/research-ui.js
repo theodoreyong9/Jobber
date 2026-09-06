@@ -504,9 +504,13 @@ async function announceMyOpenProjects(id, targetPeerId) {
   }
 }
 
-export async function toggleResearchConnect(id) {
-  state.searchLive.research = !state.searchLive.research;
-  if (state.searchLive.research) {
+// Same "connect outright" pattern as discovery-ui.js's setSearchLive — one
+// place that actually joins/leaves, called by both the manual button and
+// the auto-resume-on-boot path in app.js.
+export async function setResearchConnected(id, desired) {
+  state.searchLive.research = desired;
+  db.put('cache', { key: 'researchConnect', value: desired }); // survives reload
+  if (desired) {
     try {
       await p2p.joinNamespaceRoom('research', {
         onPeerJoin: async (peerId) => {
@@ -531,6 +535,10 @@ export async function toggleResearchConnect(id) {
     p2p.leaveNamespaceRoom('research');
   }
   state.render.all();
+}
+
+export async function toggleResearchConnect(id) {
+  await setResearchConnected(id, !state.searchLive.research);
 }
 
 export async function handleResearchSyncRequest(ns, msg, peerId) {

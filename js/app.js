@@ -15,8 +15,10 @@ import * as db from './db.js';
 import * as identity from './identity.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
-import { state, NAMESPACES, NS_CONFIG } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId } from './state.js';
 import { renderTopbar } from './identity-ui.js';
+import { setSearchLive } from './discovery-ui.js';
+import { setResearchConnected } from './research-ui.js';
 import { renderAll, renderWorkspace, refreshUsageStat } from './render.js';
 import './message-router.js'; // side effect: registers state.handlers.incomingMessage
 
@@ -83,24 +85,43 @@ async function boot() {
   // recorded a choice, and to a neutral welcome screen (no namespace
   // preselected) on a genuinely first-ever open with nothing anywhere.
   const lastActive = await db.get('cache', 'lastActiveNamespace');
-  const totalIdentities = NAMESPACES.reduce((n, ns) => n + state.identitiesByNs[ns].length, 0);
+  const totalIdentities = NAMESPACES.reduce((n, ns) => n + state.identitiesByNs[ns].filter((i) => i.active).length, 0);
 
   if (lastActive?.value && NAMESPACES.includes(lastActive.value)) {
     state.activeNamespace = lastActive.value;
   } else if (totalIdentities === 0) {
     state.activeNamespace = null; // first open, nothing created yet — show the welcome screen
   } else {
-    state.activeNamespace = NAMESPACES.find((ns) => state.identitiesByNs[ns].length > 0) || NAMESPACES[0];
+    state.activeNamespace = NAMESPACES.find((ns) => state.identitiesByNs[ns].some((i) => i.active)) || NAMESPACES[0];
   }
   for (const ns of NAMESPACES) {
-    const list = state.identitiesByNs[ns];
-    if (list.length) state.activeIdentityId[ns] = list.find((i) => i.active)?.identityId || list[0].identityId;
+    const activeId = pickActiveIdentityId(state.identitiesByNs[ns]);
+    if (activeId) state.activeIdentityId[ns] = activeId;
+    // else: leave unset — a retired identity must never be silently
+    // re-selected as if it were still active (this was the actual bug:
+    // retiring your last identity in a namespace, then reloading, used to
+    // fall back to the first *record* regardless of its active flag).
   }
 
   renderAll();
   refreshUsageStat();
   registerServiceWorker();
   reportWebGPU();
+
+  // Resume Search Live / research connection automatically if they were on
+  // last time — "search live" isn't meant to reset itself just because the
+  // page reloaded. Only resumes where there's still an active identity to
+  // resume it with.
+  for (const ns of NAMESPACES) {
+    if (ns === 'research') continue;
+    const pref = await db.get('cache', `searchLive:${ns}`);
+    if (pref?.value && state.activeIdentityId[ns]) setSearchLive(ns, true);
+  }
+  const researchPref = await db.get('cache', 'researchConnect');
+  if (researchPref?.value && state.activeIdentityId.research) {
+    const researchId = state.identitiesByNs.research.find((i) => i.identityId === state.activeIdentityId.research);
+    if (researchId) setResearchConnected(researchId, true);
+  }
 }
 
 boot();

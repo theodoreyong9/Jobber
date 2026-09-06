@@ -58,6 +58,16 @@ export function relativeTime(ts, now = Date.now()) {
   return new Date(ts).toLocaleDateString();
 }
 
+// A retired identity (active:false) stays in the list forever — it's kept
+// as local history, never deleted. Picking "the" active one for a
+// namespace must therefore never fall back to just "the first record":
+// that silently resurrects a retired identity as if it were still current
+// (this was a real, shipped bug — retiring your last identity in a
+// namespace, then reloading, brought it right back).
+export function pickActiveIdentityId(list) {
+  return list.find((i) => i.active)?.identityId ?? null;
+}
+
 export const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery entries expire
 
 export const state = {
@@ -65,7 +75,6 @@ export const state = {
   activeIdentityId: {},   // namespace -> identityId
   identitiesByNs: {},     // namespace -> [identity]
   searchLive: {},         // namespace -> bool
-  aiOn: {},                // namespace -> bool
   discovered: {},          // namespace -> Map(peerId -> meta)
   pendingChats: {},         // namespace -> Map(theirIdentityId -> {status})
   openChatWith: {},         // namespace -> theirIdentityId | null
