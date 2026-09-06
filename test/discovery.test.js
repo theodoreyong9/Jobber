@@ -42,6 +42,43 @@ test('hardFilter with no constraints passes everyone through', () => {
   assert.equal(hardFilter(peers, {}).length, 3);
 });
 
+test('hardFilter enforces a recruiter-declared seniority range against the candidate earliest year', () => {
+  const peers = [peer({ earliestYear: 2015 }), peer({ earliestYear: 2022 }), peer({ earliestYear: null })];
+  const out = hardFilter(peers, { seniorityRange: { min: 2010, max: 2018 } });
+  // 2015 passes, 2022 fails, unknown (null) is never used to eliminate
+  assert.equal(out.length, 2);
+  assert.ok(out.some((p) => p.earliestYear === 2015));
+  assert.ok(out.some((p) => p.earliestYear === null));
+});
+
+test('hardFilter enforces a candidate earliest year against a recruiter-declared range', () => {
+  const peers = [peer({ seniorityMin: 2010, seniorityMax: 2018 }), peer({ seniorityMin: 2020, seniorityMax: 2023 })];
+  const out = hardFilter(peers, { myEarliestYear: 2015 });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].seniorityMin, 2010);
+});
+
+test('softScore rewards matching country and city', () => {
+  const same = softScore(peer({ country: 'Switzerland', city: 'Lausanne' }), { country: 'Switzerland', city: 'Lausanne' });
+  const different = softScore(peer({ country: 'France', city: 'Paris' }), { country: 'Switzerland', city: 'Lausanne' });
+  assert.ok(same > different);
+});
+
+test('hardFilter enforces a client-declared budget range against a provider\'s declared rate', () => {
+  const peers = [peer({ rate: 500 }), peer({ rate: 2000 }), peer({ rate: null })];
+  const out = hardFilter(peers, { rateRange: { min: 300, max: 800 } });
+  assert.equal(out.length, 2);
+  assert.ok(out.some((p) => p.rate === 500));
+  assert.ok(out.some((p) => p.rate === null)); // unknown never eliminates
+});
+
+test('hardFilter enforces a provider\'s declared rate against a client-declared budget range', () => {
+  const peers = [peer({ budgetMin: 300, budgetMax: 800 }), peer({ budgetMin: 1000, budgetMax: 1500 })];
+  const out = hardFilter(peers, { myRate: 500 });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].budgetMin, 300);
+});
+
 test('softScore rewards category match and closeness, never eliminates', () => {
   const close = softScore(peer({ category: 'Backend', distanceKm: 1 }), { preferredCategory: 'Backend', maxDistanceKm: 10 });
   const far = softScore(peer({ category: 'Frontend', distanceKm: 9 }), { preferredCategory: 'Backend', maxDistanceKm: 10 });

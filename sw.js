@@ -16,6 +16,7 @@ const SHELL_FILES = [
   './js/discovery.js',
   './js/matching.js',
   './js/llm.js',
+  './js/extract.js',
   './js/research.js',
   './icons/icon-192.png',
   './icons/icon-512.png',

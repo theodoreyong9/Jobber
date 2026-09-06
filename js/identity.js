@@ -76,14 +76,6 @@ export async function rotateIdentity(identityId) {
   return fresh;
 }
 
-export async function setRole(identityId, role) {
-  const id = await get('identities', identityId);
-  if (!id) throw new Error('Identity not found');
-  id.role = role;
-  await put('identities', id);
-  return id;
-}
-
 export async function retireIdentity(identityId) {
   const id = await get('identities', identityId);
   if (!id) throw new Error('Identity not found');

@@ -28,6 +28,33 @@ export function hardFilter(peers, constraints = {}) {
       if (p.distanceKm > constraints.maxDistanceKm) return false;
     }
     if (constraints.requireAvailableNow && !p.availableNow) return false;
+
+    // Employment-style seniority range, checked in whichever direction
+    // applies: a recruiter's declared range is checked against the peer's
+    // earliest-CV-year; a candidate's own earliest year is checked against
+    // the peer's declared range. Unknown dates are never used to eliminate.
+    if (constraints.seniorityRange && p.earliestYear != null) {
+      const { min, max } = constraints.seniorityRange;
+      if (min != null && p.earliestYear < min) return false;
+      if (max != null && p.earliestYear > max) return false;
+    }
+    if (constraints.myEarliestYear != null && (p.seniorityMin != null || p.seniorityMax != null)) {
+      if (p.seniorityMin != null && constraints.myEarliestYear < p.seniorityMin) return false;
+      if (p.seniorityMax != null && constraints.myEarliestYear > p.seniorityMax) return false;
+    }
+
+    // Same asymmetric pattern for Business/Independant: a declared rate
+    // (supply side) checked against a declared budget range (demand side),
+    // in whichever direction applies. Unknown values never eliminate.
+    if (constraints.rateRange && p.rate != null) {
+      const { min, max } = constraints.rateRange;
+      if (min != null && p.rate < min) return false;
+      if (max != null && p.rate > max) return false;
+    }
+    if (constraints.myRate != null && (p.budgetMin != null || p.budgetMax != null)) {
+      if (p.budgetMin != null && constraints.myRate < p.budgetMin) return false;
+      if (p.budgetMax != null && constraints.myRate > p.budgetMax) return false;
+    }
     return true;
   });
 }
@@ -38,6 +65,8 @@ export function softScore(peer, constraints = {}) {
   if (constraints.maxDistanceKm && peer.distanceKm != null) {
     s += Math.max(0, 10 - (peer.distanceKm / constraints.maxDistanceKm) * 10);
   }
+  if (constraints.country && peer.country && constraints.country.toLowerCase() === peer.country.toLowerCase()) s += 6;
+  if (constraints.city && peer.city && constraints.city.toLowerCase() === peer.city.toLowerCase()) s += 4;
   return s;
 }
 

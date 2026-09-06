@@ -2,6 +2,15 @@
 // Every artifact lives in IndexedDB. Nothing is sent to a server; sync
 // between participants happens directly over the P2P room (see p2p.js and
 // the sync functions in app.js).
+//
+// Collaboration model: the initiator defines an ordered *chain* of modes
+// (e.g. build → critic → build). Each accepted participant automatically
+// takes the next open slot in that chain — nobody picks their own mode.
+// A participant's mode determines which artifact types they may add: build
+// participants construct (hypotheses, experiments, results...), critic
+// participants evaluate (critiques, analyses, decisions). There is no
+// ownership split — contribution is simply the recorded provenance
+// (author/agent/parents) on each artifact, not a negotiated percentage.
 
 import { put, get, getAll } from './db.js';
 
@@ -11,20 +20,112 @@ export const ARTIFACT_TYPES = [
   'reference', 'dataset', 'code', 'document',
 ];
 
-export async function createProject({ problem, participants, agreement }) {
+export const CHAIN_MODES = ['build', 'critic'];
+
+// Which artifact types each chain mode may add. Enforced at the UI layer
+// (only the relevant buttons are shown) rather than hard-blocked here, in
+// keeping with human-in-the-loop over rigid enforcement elsewhere in the app.
+export const MODE_ARTIFACT_TYPES = {
+  build: ['hypothesis', 'counter_hypothesis', 'experiment', 'evidence', 'result', 'synthesis', 'dataset', 'code', 'document', 'reference'],
+  critic: ['critique', 'analysis', 'decision'],
+};
+
+export async function createProject({ problem, chain, initiator, agreement }) {
+  if (!Array.isArray(chain) || chain.length === 0) throw new Error('A project needs at least one chain slot');
+  if (chain.some((m) => !CHAIN_MODES.includes(m))) throw new Error(`Chain modes must be one of: ${CHAIN_MODES.join(', ')}`);
+
   const projectId = crypto.randomUUID();
+  const now = Date.now();
   const project = {
     projectId,
     problem,
-    participants, // [{ identityId, displayName }]
-    agreement, // { contribution, ownership, publication, commercialization }
-    state: 'active',
-    createdAt: Date.now(),
+    chain, // e.g. ['build', 'critic', 'build']
+    initiatorId: initiator.identityId,
+    participants: [{ // slot 0 is always the initiator
+      identityId: initiator.identityId,
+      displayName: initiator.displayName,
+      chainIndex: 0,
+      mode: chain[0],
+      skillMd: initiator.skillMd || '',
+      joinedAt: now,
+      lastActiveAt: now,
+    }],
+    agreement, // { publication, commercialization } — no ownership split
+    state: 'active', // 'active' | 'closed'
+    closedAt: null,
+    closedBy: null,
+    createdAt: now,
   };
   await put('research_projects', project);
-  await createArtifact(projectId, 'problem', { text: problem }, {
-    author: participants[0]?.identityId,
+  await createArtifact(projectId, 'problem', { text: problem }, { author: initiator.identityId });
+  return project;
+}
+
+// Returns the next unfilled chain slot, or null if the chain is full.
+export function nextOpenSlot(project) {
+  const index = project.participants.length;
+  if (index >= project.chain.length) return null;
+  return { chainIndex: index, mode: project.chain[index] };
+}
+
+// Only the initiator accepts join requests, and acceptance is the final
+// step: the applicant is slotted into whichever position is next in the
+// chain, in order — nobody chooses their own mode.
+export async function acceptParticipant(projectId, applicant) {
+  const project = await get('research_projects', projectId);
+  if (!project) throw new Error('Project not found');
+  if (project.state === 'closed') throw new Error('This project is closed');
+  const slot = nextOpenSlot(project);
+  if (!slot) throw new Error('This project\'s chain is already full');
+  const now = Date.now();
+  project.participants.push({
+    identityId: applicant.identityId,
+    displayName: applicant.displayName,
+    chainIndex: slot.chainIndex,
+    mode: slot.mode,
+    skillMd: applicant.skillMd || '',
+    joinedAt: now,
+    lastActiveAt: now,
   });
+  await put('research_projects', project);
+  return project;
+}
+
+export function myParticipant(project, identityId) {
+  return project.participants.find((p) => p.identityId === identityId) || null;
+}
+
+// A participant is flagged as stalled purely as a display heuristic — not
+// enforced anywhere (no auto-removal, no auto-reassignment of their slot).
+export const STALLED_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+export function isStalled(participant, now = Date.now()) {
+  if (!participant || !participant.lastActiveAt) return false;
+  return now - participant.lastActiveAt > STALLED_THRESHOLD_MS;
+}
+
+// Bumps a participant's last-active timestamp — call this on any real
+// contribution (new artifact, validation) so everyone can see who's still
+// engaged and who's gone quiet.
+export async function touchParticipant(projectId, identityId) {
+  const project = await get('research_projects', projectId);
+  if (!project) return null;
+  const p = project.participants.find((x) => x.identityId === identityId);
+  if (p) p.lastActiveAt = Date.now();
+  await put('research_projects', project);
+  return project;
+}
+
+// Only the initiator can close a project. Closing is final in this build —
+// no artifacts can be added afterward, by anyone, in any mode.
+export async function closeProject(projectId, closedByIdentityId) {
+  const project = await get('research_projects', projectId);
+  if (!project) throw new Error('Project not found');
+  if (project.initiatorId !== closedByIdentityId) throw new Error('Only the initiator can close this project');
+  project.state = 'closed';
+  project.closedAt = Date.now();
+  project.closedBy = closedByIdentityId;
+  await put('research_projects', project);
   return project;
 }
 
@@ -43,6 +144,32 @@ export async function createArtifact(projectId, type, content, { author, agent, 
   };
   await put('research_artifacts', artifact);
   return artifact;
+}
+
+// --- Conflict handling ---------------------------------------------------
+// Artifacts are append-only and never mutated except `validatedBy`, which
+// two participants can add themselves to concurrently before either has
+// seen the other's write. `validatedBy` is a grow-only set, so merging two
+// versions of the same artifact is just a union — no real CRDT library
+// needed, but the semantics matter: a naive last-write-wins `put()` would
+// silently drop someone's validation. mergeArtifact() is what every
+// incoming copy of an artifact (from a fresh artifact broadcast, a
+// validation broadcast, or a sync response) should go through instead of a
+// raw put — see app.js's `research_artifact` handling.
+
+export function unionValidatedBy(existing, incoming) {
+  return [...new Set([...(existing?.validatedBy || []), ...(incoming?.validatedBy || [])])];
+}
+
+export async function mergeArtifact(incoming) {
+  const existing = await get('research_artifacts', incoming.artifactId);
+  if (!existing) {
+    await put('research_artifacts', incoming);
+    return incoming;
+  }
+  const merged = { ...existing, validatedBy: unionValidatedBy(existing, incoming) };
+  await put('research_artifacts', merged);
+  return merged;
 }
 
 export async function validateArtifact(artifactId, byIdentityId) {

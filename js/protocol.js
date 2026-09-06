@@ -19,9 +19,16 @@ export const MESSAGE_TYPES = [
   'identity_retired',
   'attachment_offer',
   'attachment_accept',
+  'document_request',
+  'document_offer',
   'research_sync_request',
   'research_sync_response',
   'research_artifact',
+  'research_join_request',
+  'research_join_accept',
+  'research_join_decline',
+  'research_project_update',
+  'research_project_announce',
 ];
 
 const MAX_MESSAGE_BYTES = 200_000;

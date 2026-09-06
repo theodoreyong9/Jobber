@@ -3,8 +3,14 @@
 // supports WebGPU, this loads a small model directly in the browser (via
 // WebLLM) with no server involved — weights are fetched by the browser from
 // the model's public host and cached locally by the browser afterwards.
+//
+// Loaded from esm.run (jsdelivr's dedicated ESM endpoint — the same one
+// WebLLM's own docs use for no-bundler browser usage) rather than esm.sh:
+// esm.sh's CJS interop shim for this package tries to polyfill Node's
+// `createRequire`, which doesn't exist in a browser and throws immediately.
 
 const DEFAULT_MODEL = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm';
 
 let enginePromise = null;
 let currentModel = null;
@@ -20,7 +26,7 @@ export async function getEngine(modelId = DEFAULT_MODEL, onProgress) {
   if (enginePromise && currentModel === modelId) return enginePromise;
 
   currentModel = modelId;
-  enginePromise = import('https://esm.sh/@mlc-ai/web-llm').then((webllm) =>
+  enginePromise = import(WEBLLM_URL).then((webllm) =>
     webllm.CreateMLCEngine(modelId, {
       initProgressCallback: (p) => onProgress && onProgress(p),
     })
