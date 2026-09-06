@@ -1,5 +1,14 @@
 // protocol.js — the wire format every peer speaks, and its validation.
 // A message that fails validation is dropped before it ever reaches app logic.
+//
+// `correlationId` is an optional, recognized field: a response message
+// (chat_accept, meeting_decline, document_offer, attachment_accept,
+// research_join_accept, ...) sets it to the `messageId` of the request it's
+// answering. This matters once more than one request to the same identity
+// can be in flight at once — without it, "any accept from sender X" gets
+// treated as answering "the request I currently have pending with X",
+// which silently misattributes a response if a stale one arrives late or
+// a new request superseded an old one.
 
 export const PROTOCOL_VERSION = '0.4';
 
@@ -57,6 +66,9 @@ export function validateMessage(msg) {
   if (typeof msg.sender !== 'string' || !msg.sender) return { ok: false, reason: 'missing sender' };
   if (typeof msg.messageId !== 'string' || !msg.messageId) return { ok: false, reason: 'missing messageId' };
   if (typeof msg.timestamp !== 'number') return { ok: false, reason: 'missing timestamp' };
+  if (msg.correlationId !== undefined && typeof msg.correlationId !== 'string') {
+    return { ok: false, reason: 'correlationId must be a string when present' };
+  }
 
   let size = 0;
   try {

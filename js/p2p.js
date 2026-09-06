@@ -74,8 +74,8 @@ export async function joinNamespaceRoom(namespace, handlers = {}) {
   const entry = {
     namespace,
     peers,
-    send(type, senderId, payload, targetPeerId) {
-      const msg = createMessage(type, namespace, senderId, payload);
+    send(type, senderId, payload, targetPeerId, correlationId) {
+      const msg = createMessage(type, namespace, senderId, payload, correlationId ? { correlationId } : {});
       sendMsg(msg, targetPeerId);
       return msg;
     },

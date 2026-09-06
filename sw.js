@@ -2,13 +2,22 @@
 // Research vault) still opens with no network. P2P discovery obviously
 // still needs a live connection, but nothing else does.
 
-const CACHE_NAME = 'jobber-shell-v1';
+const CACHE_NAME = 'jobber-shell-v2';
 const SHELL_FILES = [
   './',
   './index.html',
   './manifest.webmanifest',
   './css/style.css',
   './js/app.js',
+  './js/state.js',
+  './js/ui-kit.js',
+  './js/identity-ui.js',
+  './js/profiles.js',
+  './js/conversations.js',
+  './js/discovery-ui.js',
+  './js/research-ui.js',
+  './js/message-router.js',
+  './js/render.js',
   './js/db.js',
   './js/identity.js',
   './js/protocol.js',

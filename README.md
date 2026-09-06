@@ -161,6 +161,22 @@ build: no further artifacts can be added by anyone, in any mode, and no new
 join requests are accepted. The closure — who, and when — is broadcast to
 every connected participant immediately and shown as a banner.
 
+### Which namespace you land on
+
+The app remembers the last namespace you had open (stored in IndexedDB's
+`cache` store, not just in memory) and reopens there next time. On a
+genuinely first-ever open — nothing created anywhere yet — it shows a
+neutral welcome screen instead of guessing a namespace for you.
+
+### Attachments: real consent, not just P2P delivery
+
+Files go through an actual offer/accept handshake now — `attachment_offer`
+→ the recipient sees a banner in the chat with Accept/Decline →
+`attachment_accept` → only then do the bytes actually move over the P2P
+channel. Declining sends `attachment_decline` and nothing is ever
+transferred. This replaces the earlier simplification where a file sent
+immediately with no consent step.
+
 ## What's been hardened since the last pass
 
 - **Offline messages auto-resend.** A message written while the recipient
@@ -191,6 +207,42 @@ every connected participant immediately and shown as a banner.
   (a real ZIP is built and read back in a unit test); PDF extraction is
   written defensively but unverified.
 
+## Module architecture: why `state.render` / `state.handlers` exist
+
+`app.js` used to be a single ~2100-line file. It worked, but it had become
+exactly the kind of "god object" that's easy to make small, silent mistakes
+in — I made two of them myself in earlier passes (duplicated closing
+braces from a badly-anchored edit) purely because the file was too big to
+reliably reason about a single change in isolation.
+
+It's now split by *what changes together*, not by namespace: identity
+handling, profile editing, conversations (chat/meetings/documents/
+attachments), classic-namespace discovery, and Research are each their own
+module. The tricky part of any such split is that these modules
+legitimately need to call back into each other — discovery-ui.js needs to
+trigger the same message handling that research-ui.js does, and both need
+to trigger a re-render.
+
+Rather than have those modules import each other directly (which produces
+real circular imports — message-router.js needs research-ui.js's handlers,
+but research-ui.js needs message-router.js's dispatcher to pass to the P2P
+layer), two small registries live on the shared `state` object:
+
+```js
+state.render = { all, workspace, topbar };      // filled in by app.js
+state.handlers = { incomingMessage, toggleSearchLive }; // filled in by
+                                                          // render.js / message-router.js /
+                                                          // discovery-ui.js at their own module load
+```
+
+A feature module calls `state.render.workspace()` or
+`state.handlers.incomingMessage(...)` instead of importing the file that
+defines them. Nobody needs to import "the thing that calls me back", so
+the module graph stays a plain tree instead of a circular mess — verified
+by dynamically importing the entire graph in Node with DOM/IndexedDB stubs
+and confirming every import/export name actually resolves before any UI
+code runs.
+
 ## What each module actually does
 
 | File | Real behavior |
@@ -204,7 +256,16 @@ every connected participant immediately and shown as a banner.
 | `js/llm.js` | Loads [WebLLM](https://github.com/mlc-ai/web-llm) only if `navigator.gpu` exists, and only when you click "enrich" — never automatically. Runs a small instruction model entirely client-side. Loaded from `esm.run` (jsdelivr's dedicated ESM endpoint — the one WebLLM's own docs use), not esm.sh, which was throwing `createRequire is not defined` in-browser due to a broken CJS-interop shim. |
 | `js/extract.js` | Real text extraction from `.docx` (a hand-rolled ZIP central-directory reader + native `DecompressionStream('deflate-raw')` + `DOMParser` on `word/document.xml` — no dependency at all) and `.pdf` (via pdf.js, lazily loaded, worker version-pinned to whatever the main bundle actually resolved to). This is what a candidate's CV keywords are mined from. |
 | `js/research.js` | Research Vault: projects, typed artifacts (`hypothesis`, `critique`, `experiment`, `result`, …), parent/child provenance, export to a `project.jobber` JSON bundle, import back in. |
-| `js/app.js` | Wires all of the above to the UI: identity switcher, profile editor, live discovery + ranked matches, P2P chat with file attachments, meeting proposals, a local blocklist, and the Research graph/feed/contract panel. |
+| `js/state.js` | The shared state object, namespace config, and small pure helpers. Everything else imports from here; it imports nothing app-specific itself. Also where `state.render` / `state.handlers` live — see the "Module architecture" section below. |
+| `js/ui-kit.js` | Generic, app-agnostic UI primitives (modal dialog, toast). No app-module imports. |
+| `js/identity-ui.js` | The identity rail, the topbar, and create/rename/rotate/retire flows. |
+| `js/profiles.js` | Profile storage and the three profile editors (generic, Employment's candidate/recruiter split, Business/Independant's supply/demand split). |
+| `js/conversations.js` | Blocking, meeting proposals, document requests, persisted identity-keyed chat with an offline outbox, and the attachment offer/accept handshake. |
+| `js/discovery-ui.js` | Search Live, the matching cascade, and the results/chat UI for every non-Research namespace. |
+| `js/research-ui.js` | The whole Research namespace: chain/mode project creation, the join request/accept flow, artifacts and their graph, progress/activity, and closure. |
+| `js/message-router.js` | The single function that decides what an incoming, already-validated protocol message does — routes to conversations.js / research-ui.js. |
+| `js/render.js` | Ties the rail, topbar, and the two workspace kinds together — the one place that imports from identity-ui.js, discovery-ui.js, and research-ui.js all at once. |
+| `js/app.js` | The entry point: boot sequence, service worker registration, the WebGPU flag, and wiring `state.render` / `state.handlers` before calling `boot()`. About 100 lines — everything else moved out into the files above once the single-file version got large enough that I was making insertion mistakes editing it (duplicated braces, mis-anchored edits) purely from its size. |
 | `scripts/generate-icons.mjs` | Hand-encodes real PNGs (IHDR/IDAT/IEND, CRC32, zlib via `node:zlib`) — no canvas dependency. |
 | `test/*.test.js` | Real assertions via Node's built-in `node:test` runner — no test framework dependency. |
 
@@ -236,10 +297,6 @@ every connected participant immediately and shown as a banner.
 - **Human-in-the-loop is a single toggle, not three autonomy levels.** Every
   artifact still requires an explicit click to save — nothing here writes to
   the vault or the network without a person choosing to.
-- **Attachments skip the `attachment_offer`/`attachment_accept` handshake**
-  defined in the protocol — files send immediately on the P2P binary channel
-  rather than waiting for the recipient to accept first. The message types
-  are reserved in `protocol.js` if you want to add that confirmation step.
 - **Conflict handling is CRDT-*lite*, not general CRDT.** Artifacts are
   append-only (new UUID every time), so two people adding artifacts
   concurrently never conflict — they just coexist as siblings in the graph.

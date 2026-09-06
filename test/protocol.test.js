@@ -45,6 +45,19 @@ test('validateMessage rejects oversized payloads', () => {
   assert.equal(validateMessage(msg).ok, false);
 });
 
+test('validateMessage accepts a string correlationId and rejects a non-string one', () => {
+  const withId = createMessage('chat_accept', 'ns', 'id', {}, { correlationId: 'abc-123' });
+  assert.equal(validateMessage(withId).ok, true);
+  const badId = { ...withId, correlationId: 42 };
+  assert.equal(validateMessage(badId).ok, false);
+});
+
+test('validateMessage accepts a message with no correlationId at all', () => {
+  const msg = createMessage('chat_message', 'ns', 'id', {});
+  assert.equal(msg.correlationId, undefined);
+  assert.equal(validateMessage(msg).ok, true);
+});
+
 test('validateMessage rejects non-objects', () => {
   assert.equal(validateMessage(null).ok, false);
   assert.equal(validateMessage('hello').ok, false);
