@@ -24,6 +24,32 @@ Then open the printed local URL in **two separate browser tabs, windows, or
 devices** — Jobber talks to itself over real peer-to-peer connections, so a
 single tab alone will never discover a peer. That's expected, not a bug.
 
+## Deploy it (real CI/CD, no server to maintain)
+
+`.github/workflows/deploy.yml` runs on every push to `main`:
+
+1. **test** — runs the real unit suite (`node --test`, 32 tests, zero
+   dependencies) over `protocol.js`, `matching.js`, `discovery.js`,
+   `research.js`'s graph layout, and the WebCrypto signing primitives
+   `identity.js` is built on.
+2. **build** — regenerates the PWA icons (`scripts/generate-icons.mjs`, a
+   from-scratch PNG encoder, no image library) and checks that every file
+   `sw.js` precaches actually exists (`scripts/check-sw-manifest.mjs`), then
+   uploads the whole static site as a Pages artifact.
+3. **deploy** — publishes it via `actions/deploy-pages`.
+
+To turn this on: push the repo to GitHub, then in **Settings → Pages** set
+the source to "GitHub Actions". No other configuration — there's no backend
+to provision because there isn't one.
+
+Run the same checks locally before pushing:
+
+```bash
+npm test      # node --test
+npm run icons # regenerate icons/*.png
+npm run check # verify sw.js precache list against disk
+```
+
 ## What each module actually does
 
 | File | Real behavior |
@@ -36,7 +62,29 @@ single tab alone will never discover a peer. That's expected, not a bug.
 | `js/matching.js` | Deterministic local scoring: tokenize → synonym-normalize → Jaccard overlap → penalty for missing required terms. Versioned (`MATCHING_ENGINE_VERSION`), same formula regardless of whether AI enrichment is on. |
 | `js/llm.js` | Loads [WebLLM](https://github.com/mlc-ai/web-llm) only if `navigator.gpu` exists, and only when you click "enrich" — never automatically. Runs a small instruction model entirely client-side. |
 | `js/research.js` | Research Vault: projects, typed artifacts (`hypothesis`, `critique`, `experiment`, `result`, …), parent/child provenance, export to a `project.jobber` JSON bundle, import back in. |
-| `js/app.js` | Wires all of the above to the UI: identity switcher, profile editor, live discovery + ranked matches, P2P chat, and the Research graph/feed/contract panel. |
+| `js/app.js` | Wires all of the above to the UI: identity switcher, profile editor, live discovery + ranked matches, P2P chat with file attachments, meeting proposals, a local blocklist, and the Research graph/feed/contract panel. |
+| `scripts/generate-icons.mjs` | Hand-encodes real PNGs (IHDR/IDAT/IEND, CRC32, zlib via `node:zlib`) — no canvas dependency. |
+| `test/*.test.js` | Real assertions via Node's built-in `node:test` runner — no test framework dependency. |
+
+## Since the last pass, these are now real too
+
+- **Blocklist** (`js/db.js`'s `blocklist` store) — blocking a peer is keyed by
+  their signed identity, not their ephemeral WebRTC peer id, persists across
+  reconnects, and silently drops their messages at `handleIncomingMessage`.
+  It's explicitly local-only — the UI doesn't claim otherwise.
+- **File attachments** in chat — real `Blob` transfer over Trystero's binary
+  action channel (it chunks large payloads itself); received files become a
+  download link in the chat log.
+- **Meeting proposals** — `meeting_proposal` / `meeting_accept` /
+  `meeting_decline` are wired end-to-end with a small UI banner on the
+  result card.
+- **Discovery expiry** (spec §101) — discovered peers older than 10 minutes
+  drop out of the ranked results automatically; a 30s interval re-renders
+  while any namespace is searching so this actually happens without user
+  action.
+- **CI/CD and GitHub Pages** — see the section above.
+- **Real PWA icons** — no more inline SVG placeholder; 192px and 512px PNGs
+  generated from scratch.
 
 ## Deliberate simplifications (so you know where the edges are)
 
@@ -52,9 +100,10 @@ single tab alone will never discover a peer. That's expected, not a bug.
 - **Human-in-the-loop is a single toggle, not three autonomy levels.** Every
   artifact still requires an explicit click to save — nothing here writes to
   the vault or the network without a person choosing to.
-- **File transfer for large attachments** isn't wired into the UI yet, though
-  `p2p.js` already exposes `sendBlob` for it — Trystero chunks large payloads
-  automatically.
+- **Attachments skip the `attachment_offer`/`attachment_accept` handshake**
+  defined in the protocol — files send immediately on the P2P binary channel
+  rather than waiting for the recipient to accept first. The message types
+  are reserved in `protocol.js` if you want to add that confirmation step.
 - **Research sync** is a simple id-diff on peer join, not incremental CRDT
   merge — good enough for two participants trading artifacts live, not yet
   built for conflict resolution on concurrent edits to the *same* artifact.

@@ -1,0 +1,14 @@
+{
+  "name": "jobber",
+  "version": "0.1.0",
+  "description": "Jobber — Personal Interoperable Agency. Local-first, P2P, no backend.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "npx serve .",
+    "test": "node --test",
+    "icons": "node scripts/generate-icons.mjs",
+    "check": "node scripts/check-sw-manifest.mjs"
+  },
+  "license": "UNLICENSED"
+}

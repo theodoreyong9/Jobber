@@ -45,10 +45,14 @@ const state = {
   discovered: {},          // namespace -> Map(peerId -> meta)
   pendingChats: {},         // namespace -> Map(peerId -> {status})
   openChatWith: {},         // namespace -> peerId | null
-  chatLog: {},              // namespace -> Map(peerId -> [{from,text,ts}])
+  chatLog: {},              // namespace -> Map(peerId -> [{from,text,ts,kind}])
+  pendingMeetings: {},      // namespace -> Map(peerId -> {status, when, note})
+  blocked: {},              // namespace -> Set(identityId)
   researchProjects: [],
   activeProjectId: null,
 };
+
+const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery entries expire
 
 /* ------------------------------------------------------------------ */
 /* Modal helper (native <dialog>)                                      */
@@ -94,8 +98,16 @@ async function boot() {
     state.discovered[ns] = new Map();
     state.pendingChats[ns] = new Map();
     state.chatLog[ns] = new Map();
+    state.pendingMeetings[ns] = new Map();
+    state.blocked[ns] = new Set((await db.getAll('blocklist')).filter((b) => b.compoundId.startsWith(ns + ':')).map((b) => b.blockedIdentityId));
   }
   state.researchProjects = await research.listProjects();
+
+  // Passive expiry: while any namespace is searching live, periodically
+  // re-render so stale (TTL-expired) discovery entries drop out of results.
+  setInterval(() => {
+    if (Object.values(state.searchLive).some(Boolean)) renderWorkspace();
+  }, 30_000);
 
   // pick a sensible default active namespace/identity
   const firstNonEmpty = NAMESPACES.find((ns) => state.identitiesByNs[ns].length > 0);
@@ -358,6 +370,15 @@ async function toggleSearchLive(ns) {
       },
       onPeerLeave: () => { renderWorkspace(); renderTopbar(); },
       onMessage: (msg, peerId) => handleIncomingMessage(ns, msg, peerId),
+      onBlob: (blob, peerId, metadata) => {
+        if (!state.chatLog[ns].has(peerId)) state.chatLog[ns].set(peerId, []);
+        state.chatLog[ns].get(peerId).push({
+          from: 'them', kind: 'attachment', ts: Date.now(),
+          name: metadata.name || 'file', size: blob.size, url: URL.createObjectURL(blob),
+        });
+        toast(`Received attachment: ${metadata.name || 'file'}`);
+        renderWorkspace();
+      },
     });
   } else {
     p2p.leaveNamespaceRoom(ns);
@@ -366,9 +387,73 @@ async function toggleSearchLive(ns) {
   renderAll();
 }
 
+/* ---- Blocklist (spec §48 — local only, no global enforcement) -------- */
+
+async function blockPeer(ns, blockedIdentityId, displayNameHint) {
+  const compoundId = `${ns}:${blockedIdentityId}`;
+  await db.put('blocklist', { compoundId, namespace: ns, blockedIdentityId, displayNameHint, blockedAt: Date.now() });
+  state.blocked[ns].add(blockedIdentityId);
+  for (const [peerId, meta] of state.discovered[ns].entries()) {
+    if (meta.sender === blockedIdentityId) state.discovered[ns].delete(peerId);
+  }
+  toast(`Blocked ${blockedIdentityId.slice(0, 10)}… locally`);
+  renderWorkspace();
+}
+
+async function unblockPeer(ns, blockedIdentityId) {
+  await db.del('blocklist', `${ns}:${blockedIdentityId}`);
+  state.blocked[ns].delete(blockedIdentityId);
+  renderWorkspace();
+}
+
+/* ---- Meetings ---------------------------------------------------------- */
+
+function proposeMeetingFlow(ns, id, peerId) {
+  openModal('Propose a meeting', `
+      <label>Proposed time</label>
+      <input type="text" id="when" placeholder="e.g. Thu 14:00 CET">
+      <label>Note (optional)</label>
+      <input type="text" id="note" placeholder="Video call, coffee, on-site…">
+    `, {
+    submitLabel: 'Send proposal',
+    onSubmit: (dlg) => {
+      const when = dlg.querySelector('#when').value.trim();
+      const note = dlg.querySelector('#note').value.trim();
+      if (!when) return;
+      const room = p2p.getRoom(ns);
+      room.send('meeting_proposal', id.identityId, { when, note }, peerId);
+      state.pendingMeetings[ns].set(peerId, { status: 'outgoing', when, note });
+      renderWorkspace();
+    },
+  });
+}
+
+function respondMeeting(ns, id, peerId, accept) {
+  const room = p2p.getRoom(ns);
+  const m = state.pendingMeetings[ns].get(peerId) || {};
+  room.send(accept ? 'meeting_accept' : 'meeting_decline', id.identityId, { when: m.when }, peerId);
+  if (accept) state.pendingMeetings[ns].set(peerId, { ...m, status: 'accepted' });
+  else state.pendingMeetings[ns].delete(peerId);
+  renderWorkspace();
+}
+
 function handleIncomingMessage(ns, msg, peerId) {
+  if (state.blocked[ns]?.has(msg.sender)) return; // local blocklist — silently drop
+
   if (msg.type === 'discovery') {
-    state.discovered[ns].set(peerId, { ...msg.payload, namespace: ns, v: msg.v, sender: msg.sender, peerId });
+    state.discovered[ns].set(peerId, { ...msg.payload, namespace: ns, v: msg.v, sender: msg.sender, peerId, lastSeen: Date.now() });
+    renderWorkspace();
+  } else if (msg.type === 'meeting_proposal') {
+    state.pendingMeetings[ns].set(peerId, { status: 'incoming', when: msg.payload.when, note: msg.payload.note });
+    toast(`Meeting proposed: ${msg.payload.when}`);
+    renderWorkspace();
+  } else if (msg.type === 'meeting_accept') {
+    state.pendingMeetings[ns].set(peerId, { status: 'accepted', when: msg.payload.when });
+    toast('Meeting accepted');
+    renderWorkspace();
+  } else if (msg.type === 'meeting_decline') {
+    state.pendingMeetings[ns].delete(peerId);
+    toast('Meeting declined');
     renderWorkspace();
   } else if (msg.type === 'chat_request') {
     state.pendingChats[ns].set(peerId, { status: 'incoming', from: msg.sender });
@@ -431,7 +516,10 @@ async function renderClassicWorkspace(ns) {
   const profile = await getProfile(id.identityId);
   const myTokens = [...profile.tokens, ...(state.aiOn[ns] ? profile.aiTokens : [])];
 
-  const peers = [...state.discovered[ns].values()];
+  const now = Date.now();
+  const peers = [...state.discovered[ns].values()]
+    .filter((p) => now - (p.lastSeen || 0) < PEER_TTL_MS)
+    .filter((p) => !state.blocked[ns].has(p.sender));
   const cascade = discovery.runCascade(peers, {
     myNamespace: ns,
     protocolVersion: PROTOCOL_VERSION,
@@ -454,8 +542,19 @@ async function renderClassicWorkspace(ns) {
     : scored.map((p) => {
         const ex = matching.explain(p.match);
         const chat = state.pendingChats[ns].get(p.peerId);
+        const meeting = state.pendingMeetings[ns].get(p.peerId);
+        const meetingHtml = meeting ? `
+          <div class="meeting-banner">
+            ${meeting.status === 'incoming'
+              ? `Proposed meeting: <b>${meeting.when}</b>${meeting.note ? ` — ${meeting.note}` : ''}
+                 <button class="btn small primary meeting-yes">Accept</button>
+                 <button class="btn small meeting-no">Decline</button>`
+              : meeting.status === 'accepted'
+                ? `Meeting confirmed: <b>${meeting.when}</b>`
+                : `Meeting proposed, awaiting reply: <b>${meeting.when}</b>`}
+          </div>` : '';
         return `
-        <div class="card" data-peer="${p.peerId}">
+        <div class="card" data-peer="${p.peerId}" data-identity="${p.sender}">
           <div class="top">
             <span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>
             <div class="info">
@@ -472,15 +571,17 @@ async function renderClassicWorkspace(ns) {
             </div>
           </div>
           <div class="expl">${ex.pos.map((t) => `<div class="p">${t}</div>`).join('')}${ex.neg.map((t) => `<div class="m">${t}</div>`).join('')}</div>
+          ${meetingHtml}
           <div class="actions">
             <button class="btn ghost toggle-expl">Why this score</button>
             ${chat && chat.status === 'incoming'
               ? `<button class="btn primary respond-yes">Accept chat</button><button class="btn respond-no">Decline</button>`
               : chat && chat.status === 'accepted'
-                ? `<button class="btn primary open-chat">Open chat</button>`
+                ? `<button class="btn primary open-chat">Open chat</button><button class="btn ghost propose-meeting">Propose meeting</button>`
                 : chat && chat.status === 'outgoing'
                   ? `<button class="btn" disabled>Request sent…</button>`
                   : `<button class="btn primary request-chat">Start conversation</button>`}
+            <button class="btn ghost block-peer">Block</button>
           </div>
         </div>`;
       }).join('');
@@ -514,19 +615,33 @@ async function renderClassicWorkspace(ns) {
 
 function renderChatPanel(ns, id, peerId) {
   const log = state.chatLog[ns].get(peerId) || [];
+  const bubble = (m) => m.kind === 'attachment'
+    ? `<a class="chat-msg attachment ${m.from === 'me' ? 'mine' : ''}" href="${m.url}" download="${m.name}">📎 ${m.name} <span>(${(m.size / 1024).toFixed(1)} KB)</span></a>`
+    : `<div class="chat-msg ${m.from === 'me' ? 'mine' : ''}">${m.text}</div>`;
   return `
     <div class="panel" style="margin-top:16px">
       <div class="chat">
         <div class="chat-head">Conversation with ${peerId.slice(0, 10)}…</div>
         <div class="chat-log" id="chatLog">
-          ${log.map((m) => `<div class="chat-msg ${m.from === 'me' ? 'mine' : ''}">${m.text}</div>`).join('')}
+          ${log.map(bubble).join('') || '<div style="color:var(--low);font-size:12px">Say hello — this goes straight over WebRTC, no server in between.</div>'}
         </div>
         <div class="chat-input">
           <input type="text" id="chatInput" placeholder="Write a message…">
+          <label class="btn ghost" style="display:flex;align-items:center" title="Send a file">
+            📎<input type="file" id="chatFile" style="display:none">
+          </label>
           <button class="btn primary" id="chatSend">Send</button>
         </div>
       </div>
     </div>`;
+}
+
+function sendChatFile(ns, id, peerId, file) {
+  const room = p2p.getRoom(ns);
+  room.sendBlob(file, peerId, { name: file.name, size: file.size, type: file.type });
+  if (!state.chatLog[ns].has(peerId)) state.chatLog[ns].set(peerId, []);
+  state.chatLog[ns].get(peerId).push({ from: 'me', kind: 'attachment', ts: Date.now(), name: file.name, size: file.size, url: URL.createObjectURL(file) });
+  renderWorkspace();
 }
 
 function bindClassicEvents(ns) {
@@ -556,6 +671,21 @@ function bindClassicEvents(ns) {
   ws.querySelectorAll('.open-chat').forEach((btn) => {
     btn.addEventListener('click', () => { state.openChatWith[ns] = btn.closest('.card').dataset.peer; renderWorkspace(); });
   });
+  ws.querySelectorAll('.propose-meeting').forEach((btn) => {
+    btn.addEventListener('click', () => proposeMeetingFlow(ns, id, btn.closest('.card').dataset.peer));
+  });
+  ws.querySelectorAll('.meeting-yes').forEach((btn) => {
+    btn.addEventListener('click', () => respondMeeting(ns, id, btn.closest('.card').dataset.peer, true));
+  });
+  ws.querySelectorAll('.meeting-no').forEach((btn) => {
+    btn.addEventListener('click', () => respondMeeting(ns, id, btn.closest('.card').dataset.peer, false));
+  });
+  ws.querySelectorAll('.block-peer').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.card');
+      blockPeer(ns, card.dataset.identity, card.querySelector('.name')?.textContent);
+    });
+  });
 
   const sendBtn = ws.querySelector('#chatSend');
   if (sendBtn) {
@@ -563,6 +693,10 @@ function bindClassicEvents(ns) {
     const fire = () => { sendChatMessage(ns, id, state.openChatWith[ns], input.value); input.value = ''; };
     sendBtn.addEventListener('click', fire);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') fire(); });
+    ws.querySelector('#chatFile')?.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (f) sendChatFile(ns, id, state.openChatWith[ns], f);
+    });
     const log = ws.querySelector('#chatLog');
     if (log) log.scrollTop = log.scrollHeight;
   }

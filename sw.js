@@ -17,6 +17,8 @@ const SHELL_FILES = [
   './js/matching.js',
   './js/llm.js',
   './js/research.js',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
