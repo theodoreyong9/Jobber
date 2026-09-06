@@ -358,28 +358,33 @@ async function toggleSearchLive(ns) {
   state.searchLive[ns] = !state.searchLive[ns];
   const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
   if (state.searchLive[ns]) {
-    const room = p2p.joinNamespaceRoom(ns, {
-      onPeerJoin: async (peerId) => {
-        const profile = await getProfile(id.identityId);
-        room.send('discovery', id.identityId, {
-          category: profile.category,
-          tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
-          languages: profile.languages,
-          availableNow: profile.availableNow,
-        }, peerId);
-      },
-      onPeerLeave: () => { renderWorkspace(); renderTopbar(); },
-      onMessage: (msg, peerId) => handleIncomingMessage(ns, msg, peerId),
-      onBlob: (blob, peerId, metadata) => {
-        if (!state.chatLog[ns].has(peerId)) state.chatLog[ns].set(peerId, []);
-        state.chatLog[ns].get(peerId).push({
-          from: 'them', kind: 'attachment', ts: Date.now(),
-          name: metadata.name || 'file', size: blob.size, url: URL.createObjectURL(blob),
-        });
-        toast(`Received attachment: ${metadata.name || 'file'}`);
-        renderWorkspace();
-      },
-    });
+    try {
+      await p2p.joinNamespaceRoom(ns, {
+        onPeerJoin: async (peerId) => {
+          const profile = await getProfile(id.identityId);
+          p2p.getRoom(ns).send('discovery', id.identityId, {
+            category: profile.category,
+            tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
+            languages: profile.languages,
+            availableNow: profile.availableNow,
+          }, peerId);
+        },
+        onPeerLeave: () => { renderWorkspace(); renderTopbar(); },
+        onMessage: (msg, peerId) => handleIncomingMessage(ns, msg, peerId),
+        onBlob: (blob, peerId, metadata) => {
+          if (!state.chatLog[ns].has(peerId)) state.chatLog[ns].set(peerId, []);
+          state.chatLog[ns].get(peerId).push({
+            from: 'them', kind: 'attachment', ts: Date.now(),
+            name: metadata.name || 'file', size: blob.size, url: URL.createObjectURL(blob),
+          });
+          toast(`Received attachment: ${metadata.name || 'file'}`);
+          renderWorkspace();
+        },
+      });
+    } catch (e) {
+      toast('P2P networking unavailable: ' + e.message);
+      state.searchLive[ns] = false;
+    }
   } else {
     p2p.leaveNamespaceRoom(ns);
     state.discovered[ns].clear();
@@ -954,19 +959,24 @@ function bindResearchEvents(id) {
   ws.querySelector('#connectPeers')?.addEventListener('click', () => toggleResearchConnect(id));
 }
 
-function toggleResearchConnect(id) {
+async function toggleResearchConnect(id) {
   state.searchLive.research = !state.searchLive.research;
   if (state.searchLive.research) {
-    const room = p2p.joinNamespaceRoom('research', {
-      onPeerJoin: async () => {
-        const artifacts = state.activeProjectId ? await research.listArtifacts(state.activeProjectId) : [];
-        room.send('research_sync_request', id.identityId, {
-          projectId: state.activeProjectId,
-          knownArtifactIds: artifacts.map((a) => a.artifactId),
-        });
-      },
-      onMessage: (msg, peerId) => handleIncomingMessage('research', msg, peerId),
-    });
+    try {
+      await p2p.joinNamespaceRoom('research', {
+        onPeerJoin: async () => {
+          const artifacts = state.activeProjectId ? await research.listArtifacts(state.activeProjectId) : [];
+          p2p.getRoom('research').send('research_sync_request', id.identityId, {
+            projectId: state.activeProjectId,
+            knownArtifactIds: artifacts.map((a) => a.artifactId),
+          });
+        },
+        onMessage: (msg, peerId) => handleIncomingMessage('research', msg, peerId),
+      });
+    } catch (e) {
+      toast('P2P networking unavailable: ' + e.message);
+      state.searchLive.research = false;
+    }
   } else {
     p2p.leaveNamespaceRoom('research');
   }
