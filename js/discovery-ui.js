@@ -12,7 +12,7 @@ import { PROTOCOL_VERSION } from './protocol.js';
 import { state, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
-import { getProfile, editProfileFlow, editEmploymentProfileFlow, editSupplyDemandProfileFlow, enrichProfileWithAI } from './profiles.js';
+import { getProfile } from './profiles.js';
 import {
   blockPeer, proposeMeetingFlow, respondMeeting, requestDocument, shareDocument, declineDocument,
   loadConversation, listConversations, persistMessage, requestChat, respondChat, sendChatMessage,
@@ -140,6 +140,7 @@ export async function toggleSearchLive(ns) {
   await setSearchLive(ns, !state.searchLive[ns]);
 }
 state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar calls this indirectly
+state.handlers.rebroadcastDiscovery = rebroadcastDiscovery; // same reason — the enrich control lives in the topbar now
 
 export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) {
   if (cfg.kind === 'reciprocal') {
@@ -248,7 +249,6 @@ export async function renderClassicWorkspace(ns) {
       ${i < cascade.stages.length - 1 ? '<div class="arrow">→</div>' : ''}
     `).join('');
 
-  const myRoleLabel = id.role ? roleLabel(ns, id.role) : null;
   const theirRoleLabel = cfg.kind === 'twoSided' ? roleLabel(ns, complementaryRole(ns, id.role)) : null;
 
   function metaChips(p) {
@@ -368,29 +368,7 @@ export async function renderClassicWorkspace(ns) {
       }).join('')}
     </div>` : '';
 
-  const isLive = !!state.searchLive[ns];
   return `
-    <details class="panel" open>
-      <summary class="k" style="cursor:pointer">Your profile${myRoleLabel ? ` (${myRoleLabel})` : ''}</summary>
-      <div style="margin-top:8px">${profile.category ? `<b>${profile.category}</b>` : '<span style="color:var(--low)">No category set</span>'}</div>
-      ${ns === 'employment' || ns === 'business' || ns === 'independant' || ns === 'annonce' ? `<div style="font-size:11.5px;color:var(--low);margin-top:2px">${[profile.city, profile.country].filter(Boolean).join(', ') || 'No location set'}${(ns === 'business' || ns === 'independant' || ns === 'annonce') ? (isSupplySide ? (profile.rate != null ? ` · price ${profile.rate}` : '') : ((profile.budgetMin != null || profile.budgetMax != null) ? ` · budget ${profile.budgetMin ?? '…'}–${profile.budgetMax ?? '…'}` : '')) : ''}</div>` : ''}
-      <div class="chiprow">
-        <span class="chip">${profile.tokens.length} CPU keyword${profile.tokens.length === 1 ? '' : 's'}</span>
-        <span class="chip ai">◆ ${profile.aiTokens.length} AI keyword${profile.aiTokens.length === 1 ? '' : 's'}</span>
-      </div>
-      ${cfg.kind === 'reciprocal' ? `
-        <div class="k" style="margin-top:10px">Looking for</div>
-        <div class="chiprow">
-          <span class="chip" style="border-color:var(--agent);color:var(--agent)">${myLookingForTokens.length} keyword${myLookingForTokens.length === 1 ? '' : 's'}</span>
-        </div>` : ''}
-      <div class="actions" style="margin-top:12px">
-        <button class="btn" id="editProfile">Edit profile</button>
-        <button class="btn ${isLive ? '' : 'primary'}" id="toggleSearch">${isLive ? 'Stop searching' : 'Start searching'}</button>
-        ${isLive ? '<span style="font-size:11px;color:var(--ok);align-self:center">● searching</span>' : ''}
-        <button class="btn ${profile.aiTokens.length ? 'success' : ''}" id="enrichAI">${profile.aiTokens.length ? `Enriched — ${profile.aiTokens.length} keywords` : 'Enrich with local AI'}</button>
-      </div>
-    </details>
-
     ${chatHtml}
     ${!chatPeer ? conversationsHtml : ''}
     <div class="funnel">${funnelHtml}</div>
@@ -404,41 +382,6 @@ export function bindClassicEvents(ns) {
   const ws = document.getElementById('workspace');
 
   ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
-  ws.querySelector('#editProfile')?.addEventListener('click', () => {
-    if (ns === 'employment') editEmploymentProfileFlow(id);
-    else if (ns === 'business' || ns === 'independant' || ns === 'annonce') editSupplyDemandProfileFlow(ns, id);
-    else editProfileFlow(ns, id);
-  });
-  ws.querySelector('#enrichAI')?.addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    if (btn.disabled) return;
-    const original = btn.textContent;
-    btn.disabled = true;
-    btn.classList.remove('success');
-    btn.textContent = 'Starting…';
-    try {
-      const extra = await enrichProfileWithAI(ns, id, (p) => {
-        // WebLLM's progress callback reports model *loading* (download +
-        // compile), not per-token inference — inference itself is fast
-        // enough on a 135M model that a spinner-style label is enough.
-        if (typeof p.progress === 'number' && p.progress < 1) {
-          btn.textContent = `Loading model… ${Math.round(p.progress * 100)}%`;
-        } else {
-          btn.textContent = 'Thinking…';
-        }
-      });
-      if (extra === null) { btn.textContent = original; return; } // handled case, already toasted
-      toast(`Added ${extra.length} AI-derived keywords.`);
-      if (state.searchLive[ns]) await rebroadcastDiscovery(ns); // update anyone already connected, not just future joiners
-      state.render.workspace(); // re-render to show the chips and the persistent green state
-    } catch (err) {
-      toast('Local AI failed: ' + err.message);
-      btn.textContent = original;
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  ws.querySelector('#toggleSearch')?.addEventListener('click', () => state.handlers.toggleSearchLive(ns));
 
   ws.querySelectorAll('.toggle-expl').forEach((btn) => {
     btn.addEventListener('click', () => {

@@ -5,6 +5,7 @@
 // split. See each function's own comment for the mechanic it encodes.
 
 import * as db from './db.js';
+import * as identity from './identity.js';
 import * as matching from './matching.js';
 import * as extract from './extract.js';
 import * as llm from './llm.js';
@@ -26,6 +27,19 @@ export async function getProfile(identityId) {
   };
 }
 
+// A single "Display name" field lives at the top of every profile editor
+// now — renaming used to be a separate topbar action from editing the
+// actual profile, which was two disconnected places to change what's
+// really one thing. Saved via identity.renameIdentity alongside the
+// profile itself, only if it actually changed.
+function nameFieldHtml(id) {
+  return `<label>Display name</label><input type="text" id="dispName" value="${id.displayName}">`;
+}
+async function saveNameIfChanged(id, dlg) {
+  const newName = dlg.querySelector('#dispName').value.trim();
+  if (newName && newName !== id.displayName) await identity.renameIdentity(id.identityId, newName);
+}
+
 export function editProfileFlow(ns, id) {
   const cfg = NS_CONFIG[ns];
   const roleTag = id.role ? roleLabel(ns, id.role) : null;
@@ -41,6 +55,7 @@ export function editProfileFlow(ns, id) {
       : 'Source text (résumé / offer / listing — stays local, never sent as-is)';
 
     openModal('Edit profile', `
+      ${nameFieldHtml(id)}
       <label>Category / title</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Languages (comma separated)</label>
@@ -63,6 +78,7 @@ export function editProfileFlow(ns, id) {
         });
       },
       onSubmit: async (dlg) => {
+        await saveNameIfChanged(id, dlg);
         const sourceText = dlg.querySelector('#src').value;
         const category = dlg.querySelector('#cat').value.trim();
         const languages = dlg.querySelector('#langs').value.split(',').map((s) => s.trim()).filter(Boolean);
@@ -86,6 +102,7 @@ export function editEmploymentProfileFlow(id) {
   getProfile(id.identityId).then((profile) => {
     const isCandidate = id.role === 'candidate';
     const common = `
+      ${nameFieldHtml(id)}
       <label>${isCandidate ? 'Desired position / title' : 'Position title'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Country</label>
@@ -118,6 +135,7 @@ export function editEmploymentProfileFlow(id) {
     openModal(`Edit profile — ${roleLabel('employment', id.role)}`, common + (isCandidate ? candidateFields : recruiterFields), {
       submitLabel: 'Save profile',
       onSubmit: async (dlg) => {
+        await saveNameIfChanged(id, dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -205,6 +223,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
   const isAnnonce = ns === 'annonce';
   getProfile(id.identityId).then((profile) => {
     const common = `
+      ${nameFieldHtml(id)}
       <label>${isSupply ? (isAnnonce ? 'What you\'re selling' : 'What you offer — category') : 'What you need — category'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="${isAnnonce ? 'e.g. Mountain bike' : 'e.g. Web development'}">
       <label>Country</label>
@@ -251,6 +270,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
     openModal(`Edit profile — ${roleLabel(ns, id.role)}`, common + (isSupply ? supplyFields : demandFields), {
       submitLabel: 'Save profile',
       onSubmit: async (dlg) => {
+        await saveNameIfChanged(id, dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -328,4 +348,13 @@ export async function enrichProfileWithAI(ns, id, onProgress = () => {}) {
   profile.aiTokens = extra;
   await db.put('profiles', profile);
   return extra;
+}
+
+// One place that picks the right editor — used to be duplicated between
+// discovery-ui.js's card-click binding and (now) identity-ui.js's topbar
+// pencil, which is exactly the kind of duplication that drifts.
+export function openProfileEditor(ns, id) {
+  if (ns === 'employment') editEmploymentProfileFlow(id);
+  else if (ns === 'business' || ns === 'independant' || ns === 'annonce') editSupplyDemandProfileFlow(ns, id);
+  else editProfileFlow(ns, id);
 }

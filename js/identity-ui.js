@@ -1,16 +1,18 @@
-// identity-ui.js — the icon-based mode switcher, the topbar (including the
-// identity picker when there's more than one identity in a namespace), and
-// identity create/rename/rotate/retire flows. Deliberately has no
-// dependency on discovery-ui.js or research-ui.js: the one place it needs
-// to trigger "start searching" (the topbar's live switch, before it moved
-// into the profile panel) goes through `state.handlers.toggleSearchLive`,
-// registered by discovery-ui.js itself — see state.js's header comment for
-// why that indirection exists.
+// identity-ui.js — the icon-based mode switcher, the topbar (identity
+// picker when there's more than one identity in a namespace, the unified
+// edit/rename pencil, and — for classic namespaces — the keyword counts
+// plus Search/Enrich controls, since that's what they actually act on).
+// Safely imports profiles.js directly (profiles.js has no dependency back
+// on this file). Reaches discovery-ui.js only through
+// `state.handlers.toggleSearchLive` / `state.handlers.rebroadcastDiscovery`
+// — discovery-ui.js imports *this* file for createIdentityFlow, so a
+// direct import the other way would be a real cycle. See state.js's header.
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
 import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
+import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
 
 const MODE_ICONS = {
   employment: '💼',
@@ -94,10 +96,13 @@ export async function renderTopbar() {
 
   // A native <select> for the identity picker rather than a custom
   // dropdown — renders as a proper picker on mobile with zero extra JS.
+  // It already shows "name · #id" per option, so a standalone "#id" pill
+  // next to it would just repeat what's one click away; that pill only
+  // earns its place when there's a single identity and no picker at all.
   const picker = list.length > 1 ? `
     <select id="identityPicker" title="Switch identity">
       ${list.map((i) => `<option value="${i.identityId}" ${i.identityId === id.identityId ? 'selected' : ''}>${i.displayName} · #${i.identityId}</option>`).join('')}
-    </select>` : '';
+    </select>` : `<span class="pill">#${id.identityId}</span>`;
 
   who.innerHTML = `
     <span class="avatar" style="background:${cfg.color}">${initials(id.displayName)}</span>
@@ -105,11 +110,10 @@ export async function renderTopbar() {
       <div class="name">${id.displayName}</div>
       <div class="sub">
         ${id.role ? `<span class="pill role">${roleLabel(ns, id.role)}</span>` : ''}
-        <span class="pill">#${id.identityId}</span>
         ${picker}
         <span class="idbtns">
           <button data-act="new" title="New identity in ${cfg.label}">+</button>
-          <button data-act="rename" title="Rename">✎</button>
+          <button data-act="edit" title="${cfg.kind === 'research' ? 'Rename' : 'Edit name & profile'}">✎</button>
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
         </span>
@@ -117,7 +121,10 @@ export async function renderTopbar() {
     </div>`;
 
   who.querySelector('[data-act=new]').addEventListener('click', () => createIdentityFlow(ns));
-  who.querySelector('[data-act=rename]').addEventListener('click', () => renameFlow(id));
+  who.querySelector('[data-act=edit]').addEventListener('click', () => {
+    if (cfg.kind === 'research') renameFlow(id);
+    else openProfileEditor(ns, id);
+  });
   who.querySelector('[data-act=rotate]').addEventListener('click', () => rotateFlow(id));
   who.querySelector('[data-act=retire]').addEventListener('click', () => retireFlow(id));
   who.querySelector('#identityPicker')?.addEventListener('change', (e) => {
@@ -131,12 +138,58 @@ export async function renderTopbar() {
     return;
   }
 
-  // Search live and AI enrichment used to be topbar switches. Moved into
-  // the profile panel instead (next to Edit profile / Enrich with local
-  // AI) since that's where the controls they affect actually live —
-  // having the same feature controllable from two disconnected places was
-  // confusing, not useful.
-  controls.innerHTML = '';
+  await renderSearchAndEnrichControls(ns, id, cfg, controls);
+}
+
+// Keyword counts, Search live, and Enrich with local AI used to live in a
+// separate "Your profile" panel in the workspace — moved up here, right
+// next to the identity actions they actually relate to, instead of a
+// second disconnected place to look. Not exported: nothing outside this
+// file's topbar needs it.
+async function renderSearchAndEnrichControls(ns, id, cfg, controls) {
+  const profile = await getProfile(id.identityId);
+  const isLive = !!state.searchLive[ns];
+  const lookingForCount = cfg.kind === 'reciprocal' ? (profile.searchTokens || []).length : null;
+
+  controls.innerHTML = `
+    <span class="chip">${profile.tokens.length} CPU</span>
+    <span class="chip ai">◆ ${profile.aiTokens.length} AI</span>
+    ${lookingForCount !== null ? `<span class="chip" style="border-color:var(--agent);color:var(--agent)">${lookingForCount} looking-for</span>` : ''}
+    <button class="btn ${isLive ? 'small ghost' : 'primary'}" id="toggleSearch" title="${isLive ? 'Stop searching' : 'Start searching'}">${isLive ? '■' : 'Search'}</button>
+    <button class="btn ${profile.aiTokens.length ? 'success' : ''}" id="enrichAI">${profile.aiTokens.length ? `Enriched — ${profile.aiTokens.length}` : 'Enrich with local AI'}</button>
+  `;
+
+  controls.querySelector('#toggleSearch').addEventListener('click', () => state.handlers.toggleSearchLive(ns));
+  controls.querySelector('#enrichAI').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.classList.remove('success');
+    btn.textContent = 'Starting…';
+    try {
+      const extra = await enrichProfileWithAI(ns, id, (p) => {
+        // WebLLM's progress callback reports model *loading* (download +
+        // compile), not per-token inference — inference itself is fast
+        // enough on a 135M model that a spinner-style label is enough.
+        if (typeof p.progress === 'number' && p.progress < 1) {
+          btn.textContent = `Loading model… ${Math.round(p.progress * 100)}%`;
+        } else {
+          btn.textContent = 'Thinking…';
+        }
+      });
+      if (extra === null) { btn.textContent = original; return; } // handled case, already toasted
+      toast(`Added ${extra.length} AI-derived keywords.`);
+      if (state.searchLive[ns]) await state.handlers.rebroadcastDiscovery(ns); // update anyone already connected, not just future joiners
+      state.render.workspace();
+      state.render.topbar(); // refresh the counts and the green state
+    } catch (err) {
+      toast('Local AI failed: ' + err.message);
+      btn.textContent = original;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function renameFlow(id) {

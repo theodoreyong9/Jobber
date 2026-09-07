@@ -339,6 +339,28 @@ their own — see `sendChatMessage` and the `attachment_accept` handling in
   and the redundant "Employment — Recruiter" / hint-text header above it
   is gone — the icon bar and topbar already say what mode and role you're in.
 
+### The topbar absorbed what used to be a separate "Your profile" panel
+
+That panel is gone. Its useful bits moved to where they actually belong:
+
+- **Rename and "Edit profile" are one action now** — a single pencil (✎)
+  in the topbar, not two disconnected places to change what's really one
+  thing (your display name lives in the same form as your category,
+  location, rate, etc. now, for every editor).
+- **Category and location aren't displayed as standing text anymore** —
+  they're only ever a click away, behind that same pencil. Displaying them
+  permanently was redundant with editing them.
+- **Keyword counts, Search, and Enrich moved into the topbar**, next to
+  the identity actions they relate to. Search shows as a full "Search"
+  button when idle, and collapses to a compact "■" once live — the mode
+  icon's own green dot already tells you it's running, a second "●
+  searching" label next to it was redundant.
+- **The standalone `#id` pill is gone whenever the identity picker
+  (`<select>`) is shown** — the picker already displays "name · #id" per
+  option, so showing the id a second time right next to it was pointless.
+  It only reappears when there's a single identity and no picker to make
+  it redundant with.
+
 ## What's been hardened since the last pass
 
 - **Offline messages auto-resend.** A message written while the recipient
