@@ -1,14 +1,14 @@
 {
-  "name": "jobber",
+  "name": "jobmatch-p2p",
   "version": "0.1.0",
-  "description": "Jobber — Personal Interoperable Agency. Local-first, P2P, no backend.",
-  "type": "module",
   "private": true,
+  "description": "Plateforme P2P de mise en relation candidats/recruteurs, analyse locale (WebLLM), GitHub Pages, sans backend applicatif.",
+  "type": "module",
   "scripts": {
-    "start": "npx serve .",
-    "test": "node --test",
-    "icons": "node scripts/generate-icons.mjs",
-    "check": "node scripts/check-sw-manifest.mjs"
+    "test": "node --test tests/",
+    "serve": "npx --yes http-server . -p 8080 -c-1"
   },
-  "license": "UNLICENSED"
+  "engines": {
+    "node": ">=20"
+  }
 }

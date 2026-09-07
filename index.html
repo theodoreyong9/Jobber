@@ -1,55 +1,56 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="fr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jobber — Personal Interoperable Agency</title>
-<meta name="description" content="Local-first, peer-to-peer personal agency. No backend, no central database.">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png" type="image/png">
-<meta name="theme-color" content="#0D1114">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jobber — matching emploi local & P2P</title>
+  <meta name="description" content="Jobber : matching emploi et rencontre, en direct, assisté par IA en option, local et sans compte." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./public/icons/icon-192.png" />
+  <meta name="theme-color" content="#16211D" />
+  <link rel="stylesheet" href="./src/ui/style.css" />
+
+  <!-- Résolution des dépendances via CDN (aucun bundler requis en V1, §4).
+       On importe le paquet racine `trystero` (Nostr par défaut) — le
+       sous-chemin `trystero/nostr` est un alias de compatibilité déprécié
+       dont le comportement s'est révélé peu fiable en pratique.
+       mammoth.js est chargé séparément via un tag <script> injecté au
+       moment où un .docx est lu (voir src/app/main.js). -->
+  <script type="importmap">
+  {
+    "imports": {
+      "trystero": "https://esm.run/trystero"
+    }
+  }
+  </script>
 </head>
 <body>
-
-<div class="app">
-  <header class="modebar">
-    <div class="brand-mini"><span class="dot"></span>Jobber</div>
-    <nav id="modeIcons" class="mode-icons"></nav>
+  <header class="topbar">
+    <span class="topbar-mark" aria-hidden="true">◐</span>
+    <h1 class="topbar-title">Jobber</h1>
+    <span class="topbar-sub">local · P2P · sans compte</span>
+    <a class="topbar-github" href="https://github.com/theodoreyong9/Jobber" target="_blank" rel="noopener noreferrer">GitHub</a>
   </header>
 
-  <div class="main">
-    <header class="topbar">
-      <div class="who" id="topbarWho"></div>
-      <div class="controls" id="topbarControls"></div>
-    </header>
+  <main id="app" class="app" aria-live="polite"></main>
 
-    <section class="workspace" id="workspace"></section>
+  <aside id="log-panel" class="log-panel" hidden>
+    <div class="log-panel-head">
+      <span>Journal technique</span>
+      <button id="log-toggle" class="link-button" type="button">masquer</button>
+    </div>
+    <ul id="log-list" class="log-list"></ul>
+  </aside>
+  <button id="log-open" class="log-open" type="button" title="Journal technique">⋮</button>
 
-    <footer class="statusbar">
-      <span><b id="peerCount">0</b> peers connected · WebRTC</span>
-      <span id="webgpuFlag"></span>
-      <span class="flag" id="swFlag"></span>
-      <details class="settings-details">
-        <summary title="Storage, network status, and backup">⚙</summary>
-        <div class="settings-panel">
-          <div class="row"><span>Storage</span><b>IndexedDB</b></div>
-          <div class="row"><span>Backend</span><b>none</b></div>
-          <div class="row"><span>Protocol</span><b>v0.4</b></div>
-          <div class="row"><span>Local footprint</span><b id="usageStat">…</b></div>
-          <div class="backup-actions">
-            <button class="btn small ghost" id="exportBackup" title="Download everything (identities, profiles, blocklist, Intelligence projects) as one JSON file">Export backup</button>
-            <button class="btn small ghost" id="importBackup" title="Restore from a previously exported backup file">Import backup</button>
-            <input type="file" id="importBackupFile" accept=".json,application/json" style="display:none">
-          </div>
-        </div>
-      </details>
-    </footer>
-  </div>
-</div>
-
-<script type="module" src="js/app.js"></script>
+  <script type="module" src="./src/app/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        const base = document.querySelector('link[rel="manifest"]').href.replace('manifest.webmanifest', '');
+        navigator.serviceWorker.register(base + 'service-worker.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
