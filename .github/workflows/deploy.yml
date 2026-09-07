@@ -1,4 +1,4 @@
-name: Build, test & deploy to GitHub Pages
+name: Deploy to GitHub Pages
 
 on:
   push:
@@ -21,22 +21,33 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Run unit tests (core métier, déterministe)
-        run: node --test tests/
+          node-version: 22
+      - name: Run unit tests
+        run: node --test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate PWA icons
+        run: node scripts/generate-icons.mjs
+      - name: Verify service worker asset list matches disk
+        run: node scripts/check-sw-manifest.mjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
 
   deploy:
-    needs: test
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Upload static site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v4

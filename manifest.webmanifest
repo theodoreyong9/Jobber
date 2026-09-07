@@ -1,14 +1,14 @@
 {
-  "name": "Jobber — matching emploi local & P2P",
+  "name": "Jobber — Personal Interoperable Agency",
   "short_name": "Jobber",
-  "description": "Mise en relation candidats / recruteurs par analyse locale et réseau P2P, sans compte ni cloud.",
+  "description": "Local-first, peer-to-peer personal agency. No backend, no central database.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#EEF0EA",
-  "theme_color": "#16211D",
+  "background_color": "#0D1114",
+  "theme_color": "#0D1114",
   "icons": [
-    { "src": "./public/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "./public/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }
