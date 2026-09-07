@@ -8,7 +8,7 @@
 import * as p2p from './p2p.js';
 import * as db from './db.js';
 import { state, NAMESPACES, NS_CONFIG, setActiveNamespace } from './state.js';
-import { renderRail, renderTopbar, createIdentityFlow } from './identity-ui.js';
+import { renderModeIcons, renderTopbar, createIdentityFlow } from './identity-ui.js';
 import { renderClassicWorkspace, bindClassicEvents } from './discovery-ui.js';
 import { renderResearchWorkspace, bindResearchEvents } from './research-ui.js';
 
@@ -56,7 +56,7 @@ export async function refreshUsageStat() {
 }
 
 export function renderAll() {
-  renderRail();
+  renderModeIcons();
   renderTopbar();
   renderWorkspace();
   refreshUsageStat();

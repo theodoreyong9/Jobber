@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'independant', 'dating', 'research'];
+export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'dating', 'research'];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
 // "reciprocal" (dating) matches each identity's *search* against the
@@ -27,9 +27,12 @@ export const NS_CONFIG = {
   independant: { label: 'Independant', color: '#E8B84B', kind: 'twoSided',
     roles: [{ key: 'provider', label: 'Service' }, { key: 'user', label: 'Utilisateur' }],
     hint: 'Service providers are matched with the users who need them, with a declared rate checked against each user\'s budget range.' },
+  annonce: { label: 'Annonce', color: '#E07A5F', kind: 'twoSided',
+    roles: [{ key: 'seller', label: 'Seller' }, { key: 'buyer', label: 'Buyer' }],
+    hint: 'Sellers are matched with buyers looking for exactly that — a declared price is checked against each buyer\'s budget range.' },
   dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal',
     hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
-  research: { label: 'Research', color: '#7C9EF5', kind: 'research',
+  research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research',
     hint: 'Agent-to-agent collaboration. Hypothesis and critique are symmetric roles.' },
 };
 
@@ -66,6 +69,20 @@ export function relativeTime(ts, now = Date.now()) {
 // namespace, then reloading, brought it right back).
 export function pickActiveIdentityId(list) {
   return list.find((i) => i.active)?.identityId ?? null;
+}
+
+// Decides which namespace to land on at boot. "Nothing active anywhere"
+// always wins over any remembered preference — a `lastActiveValue` from
+// before your last identity there got retired/deleted is stale, and
+// landing on "Employment — create an identity" when the whole app is
+// empty is worse than the neutral welcome screen (this was a real shipped
+// bug: creating then deleting your only identity left the stale
+// preference in place, so the welcome screen never came back).
+export function pickActiveNamespace({ lastActiveValue, identitiesByNs }) {
+  const totalActive = NAMESPACES.reduce((n, ns) => n + (identitiesByNs[ns]?.filter((i) => i.active).length || 0), 0);
+  if (totalActive === 0) return null;
+  if (lastActiveValue && NAMESPACES.includes(lastActiveValue)) return lastActiveValue;
+  return NAMESPACES.find((ns) => identitiesByNs[ns]?.some((i) => i.active)) || NAMESPACES[0];
 }
 
 export const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery entries expire

@@ -1,7 +1,9 @@
-// identity-ui.js — the rail, the topbar, and identity create/rename/
-// rotate/retire flows. Deliberately has no dependency on discovery-ui.js
-// or research-ui.js: the one place it needs to trigger "start searching"
-// (the topbar's live switch) goes through `state.handlers.toggleSearchLive`,
+// identity-ui.js — the icon-based mode switcher, the topbar (including the
+// identity picker when there's more than one identity in a namespace), and
+// identity create/rename/rotate/retire flows. Deliberately has no
+// dependency on discovery-ui.js or research-ui.js: the one place it needs
+// to trigger "start searching" (the topbar's live switch, before it moved
+// into the profile panel) goes through `state.handlers.toggleSearchLive`,
 // registered by discovery-ui.js itself — see state.js's header comment for
 // why that indirection exists.
 
@@ -10,42 +12,35 @@ import * as p2p from './p2p.js';
 import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 
-export function renderRail() {
-  const root = document.getElementById('railGroups');
-  root.innerHTML = NAMESPACES.map((ns) => {
+const MODE_ICONS = {
+  employment: '💼',
+  business: '🤝',
+  independant: '🛠️',
+  annonce: '🏷️',
+  dating: '💗',
+  research: '🧠',
+};
+
+export function renderModeIcons() {
+  const nav = document.getElementById('modeIcons');
+  nav.innerHTML = NAMESPACES.map((ns) => {
     const cfg = NS_CONFIG[ns];
-    const list = state.identitiesByNs[ns].filter((i) => i.active);
-    const activeId = state.activeIdentityId[ns];
+    const isActive = ns === state.activeNamespace;
     const isLive = !!state.searchLive[ns];
+    const hasIdentity = (state.identitiesByNs[ns] || []).some((i) => i.active);
     return `
-      <div class="ns-group">
-        <div class="ns-group-head">
-          <span class="lbl">${cfg.label}</span>
-          <button data-add-ns="${ns}" title="New identity in ${cfg.label}">+</button>
-        </div>
-        ${list.length === 0 ? `<div class="empty-hint">No identity yet</div>` : list.map((id) => `
-          <button class="identity ${ns === state.activeNamespace && id.identityId === activeId ? 'active' : ''}"
-                  data-ns="${ns}" data-id="${id.identityId}">
-            <span class="mono" style="background:${cfg.color}">${initials(id.displayName)}</span>
-            <span class="meta">
-              <span class="nm">${id.displayName}${id.role ? ` <span class="role-badge">${roleLabel(ns, id.role)}</span>` : ''}</span>
-              <span class="id">#${id.identityId}</span>
-            </span>
-            <span class="live ${ns === 'research' ? '' : (isLive ? 'on' : '')}"></span>
-          </button>
-        `).join('')}
-      </div>`;
+      <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
+        <span class="mode-icon-glyph">${MODE_ICONS[ns] || '●'}</span>
+        <span class="mode-icon-label">${cfg.label}</span>
+        ${isLive ? '<span class="mode-icon-dot live"></span>' : (!hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
+      </button>`;
   }).join('');
 
-  root.querySelectorAll('.identity').forEach((btn) => {
+  nav.querySelectorAll('.mode-icon').forEach((btn) => {
     btn.addEventListener('click', () => {
       setActiveNamespace(btn.dataset.ns);
-      state.activeIdentityId[btn.dataset.ns] = btn.dataset.id;
       state.render.all();
     });
-  });
-  root.querySelectorAll('[data-add-ns]').forEach((btn) => {
-    btn.addEventListener('click', () => createIdentityFlow(btn.dataset.addNs));
   });
 }
 
@@ -87,7 +82,8 @@ export async function renderTopbar() {
   }
 
   const cfg = NS_CONFIG[ns];
-  const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
+  const list = state.identitiesByNs[ns].filter((i) => i.active);
+  const id = list.find((i) => i.identityId === state.activeIdentityId[ns]);
 
   if (!id) {
     who.innerHTML = `<div class="name">No identity in ${cfg.label} yet</div>`;
@@ -96,15 +92,23 @@ export async function renderTopbar() {
     return;
   }
 
+  // A native <select> for the identity picker rather than a custom
+  // dropdown — renders as a proper picker on mobile with zero extra JS.
+  const picker = list.length > 1 ? `
+    <select id="identityPicker" title="Switch identity">
+      ${list.map((i) => `<option value="${i.identityId}" ${i.identityId === id.identityId ? 'selected' : ''}>${i.displayName} · #${i.identityId}</option>`).join('')}
+    </select>` : '';
+
   who.innerHTML = `
     <span class="avatar" style="background:${cfg.color}">${initials(id.displayName)}</span>
     <div>
       <div class="name">${id.displayName}</div>
       <div class="sub">
-        <span class="pill">${ns}</span>
         ${id.role ? `<span class="pill role">${roleLabel(ns, id.role)}</span>` : ''}
         <span class="pill">#${id.identityId}</span>
+        ${picker}
         <span class="idbtns">
+          <button data-act="new" title="New identity in ${cfg.label}">+</button>
           <button data-act="rename" title="Rename">✎</button>
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
@@ -112,9 +116,14 @@ export async function renderTopbar() {
       </div>
     </div>`;
 
+  who.querySelector('[data-act=new]').addEventListener('click', () => createIdentityFlow(ns));
   who.querySelector('[data-act=rename]').addEventListener('click', () => renameFlow(id));
   who.querySelector('[data-act=rotate]').addEventListener('click', () => rotateFlow(id));
   who.querySelector('[data-act=retire]').addEventListener('click', () => retireFlow(id));
+  who.querySelector('#identityPicker')?.addEventListener('change', (e) => {
+    state.activeIdentityId[ns] = e.target.value;
+    state.render.all();
+  });
 
   if (cfg.kind === 'research') {
     controls.innerHTML = `<div class="switchctl">Human-in-the-loop <button class="switch on" id="hitl"></button></div>`;

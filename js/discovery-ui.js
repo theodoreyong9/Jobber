@@ -19,6 +19,58 @@ import {
   renderChatPanel, proposeAttachment, respondAttachmentOffer,
 } from './conversations.js';
 
+// Shared by the onPeerJoin handshake below and rebroadcastDiscovery — one
+// place that decides exactly what a namespace/role combination reveals.
+async function buildDiscoveryPayload(ns, id, profile) {
+  const cfg = NS_CONFIG[ns];
+  const payload = {
+    category: profile.category,
+    tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
+    languages: profile.languages,
+    availableNow: profile.availableNow,
+  };
+  if (cfg.kind === 'twoSided') payload.role = id.role;
+  if (cfg.kind === 'reciprocal') payload.searchTokens = profile.searchTokens.slice(0, 30);
+  if (cfg.kind === 'twoSided') {
+    payload.country = profile.country;
+    payload.city = profile.city;
+    const isSupply = id.role === cfg.roles[0].key; // candidate / offer / provider
+    if (ns === 'employment') {
+      if (isSupply) {
+        payload.earliestYear = profile.earliestYear;
+      } else {
+        payload.seniorityMin = profile.seniorityMin;
+        payload.seniorityMax = profile.seniorityMax;
+        payload.postingText = profile.jobPostingText; // job ads are public, unlike CVs
+      }
+    } else if (ns === 'business' || ns === 'independant' || ns === 'annonce') {
+      if (isSupply) {
+        payload.rate = profile.rate;
+        if (ns === 'annonce' && profile.photoDataUrl) payload.photoDataUrl = profile.photoDataUrl; // already resized to a small thumbnail
+      } else {
+        payload.budgetMin = profile.budgetMin;
+        payload.budgetMax = profile.budgetMax;
+        payload.postingText = profile.sourceText; // the request/mission text is public
+      }
+    }
+  }
+  return payload;
+}
+
+// Re-sends discovery to everyone *already* connected — not just future
+// joiners. Without this, enriching your profile with local AI (or any
+// other profile edit) only reached peers who hadn't joined yet; anyone
+// already in the room kept seeing your old keywords until they reconnected.
+export async function rebroadcastDiscovery(ns) {
+  const room = p2p.getRoom(ns);
+  if (!room) return;
+  const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
+  if (!id) return;
+  const profile = await getProfile(id.identityId);
+  const payload = await buildDiscoveryPayload(ns, id, profile);
+  room.send('discovery', id.identityId, payload); // no target = broadcast to the whole room
+}
+
 // Connects or disconnects Search Live for a namespace outright (as opposed
 // to toggling from whatever the current state happens to be) — this is
 // what both the manual toggle and the auto-resume-on-boot path call, so
@@ -33,37 +85,7 @@ export async function setSearchLive(ns, desired) {
       await p2p.joinNamespaceRoom(ns, {
         onPeerJoin: async (peerId) => {
           const profile = await getProfile(id.identityId);
-          const cfg = NS_CONFIG[ns];
-          const payload = {
-            category: profile.category,
-            tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
-            languages: profile.languages,
-            availableNow: profile.availableNow,
-          };
-          if (cfg.kind === 'twoSided') payload.role = id.role;
-          if (cfg.kind === 'reciprocal') payload.searchTokens = profile.searchTokens.slice(0, 30);
-          if (cfg.kind === 'twoSided') {
-            payload.country = profile.country;
-            payload.city = profile.city;
-            const isSupply = id.role === cfg.roles[0].key; // candidate / offer / provider
-            if (ns === 'employment') {
-              if (isSupply) {
-                payload.earliestYear = profile.earliestYear;
-              } else {
-                payload.seniorityMin = profile.seniorityMin;
-                payload.seniorityMax = profile.seniorityMax;
-                payload.postingText = profile.jobPostingText; // job ads are public, unlike CVs
-              }
-            } else if (ns === 'business' || ns === 'independant') {
-              if (isSupply) {
-                payload.rate = profile.rate;
-              } else {
-                payload.budgetMin = profile.budgetMin;
-                payload.budgetMax = profile.budgetMax;
-                payload.postingText = profile.sourceText; // the request/mission text is public
-              }
-            }
-          }
+          const payload = await buildDiscoveryPayload(ns, id, profile);
           p2p.getRoom(ns).send('discovery', id.identityId, payload, peerId);
         },
         onPeerLeave: (peerId) => {
@@ -160,6 +182,8 @@ async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
       tokens: [...p2.tokens, ...(p2.aiTokens || [])], searchTokens: p2.searchTokens,
       country: p2.country, city: p2.city, earliestYear: p2.earliestYear,
       seniorityMin: p2.seniorityMin, seniorityMax: p2.seniorityMax,
+      rate: p2.rate, budgetMin: p2.budgetMin, budgetMax: p2.budgetMax,
+      postingText: p2.jobPostingText || p2.sourceText, photoDataUrl: p2.photoDataUrl,
       languages: p2.languages, availableNow: p2.availableNow,
     };
     const match = scoreAgainstPeer(cfg, myTokens, myLookingForTokens, peerLike);
@@ -195,7 +219,7 @@ export async function renderClassicWorkspace(ns) {
     if (isSupplySide && profile.earliestYear != null) {
       hardConstraints.myEarliestYear = profile.earliestYear;
     }
-  } else if (ns === 'business' || ns === 'independant') {
+  } else if (ns === 'business' || ns === 'independant' || ns === 'annonce') {
     softConstraints.country = profile.country;
     softConstraints.city = profile.city;
     if (!isSupplySide && (profile.budgetMin != null || profile.budgetMax != null)) {
@@ -235,11 +259,12 @@ export async function renderClassicWorkspace(ns) {
         ${!isSupplySide ? `<span class="chip">${p.earliestYear ? 'earliest year ' + p.earliestYear : 'no dates detected'}</span><span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>` : ''}
       `;
     }
-    if (ns === 'business' || ns === 'independant') {
+    if (ns === 'business' || ns === 'independant' || ns === 'annonce') {
+      const priceWord = ns === 'annonce' ? 'price' : 'rate';
       return `
         <span class="chip">${[p.city, p.country].filter(Boolean).join(', ') || 'no location declared'}</span>
         ${isSupplySide && p.postingText ? `<span class="chip">budget ${p.budgetMin ?? '…'}–${p.budgetMax ?? '…'}</span>` : ''}
-        ${!isSupplySide ? `<span class="chip">${p.rate != null ? 'rate ' + p.rate : 'no rate declared'}</span><span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>` : ''}
+        ${!isSupplySide ? `<span class="chip">${p.rate != null ? priceWord + ' ' + p.rate : 'no ' + priceWord + ' declared'}</span><span class="chip">${p.availableNow ? (ns === 'annonce' ? 'Still available' : 'Available now') : 'Availability unknown'}</span>` : ''}
       `;
     }
     return `
@@ -281,7 +306,7 @@ export async function renderClassicWorkspace(ns) {
     return `
         <div class="card" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
           <div class="top">
-            <span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>
+            ${p.photoDataUrl ? `<img class="avatar-photo" src="${p.photoDataUrl}" alt="">` : `<span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>`}
             <div class="info">
               <div class="name">${local ? (p.displayName || 'Local test identity') : p.sender.slice(0, 10) + '…'}${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}${local ? ' <span class="role-badge" style="color:var(--low);border-color:var(--border)">local test</span>' : ''}</div>
               <div class="role">${p.category || 'No category declared'}</div>
@@ -345,31 +370,26 @@ export async function renderClassicWorkspace(ns) {
 
   const isLive = !!state.searchLive[ns];
   return `
-    <h2 class="section-title">${cfg.label}${myRoleLabel ? ` — ${myRoleLabel}` : ''}</h2>
-    <p class="section-sub">${cfg.hint}</p>
-
-    <div class="panel">
-      <div class="k">Your profile${myRoleLabel ? ` (${myRoleLabel})` : ''}</div>
-      <div>${profile.category ? `<b>${profile.category}</b>` : '<span style="color:var(--low)">No category set</span>'}</div>
-      ${ns === 'employment' || ns === 'business' || ns === 'independant' ? `<div style="font-size:11.5px;color:var(--low);margin-top:2px">${[profile.city, profile.country].filter(Boolean).join(', ') || 'No location set'}${(ns === 'business' || ns === 'independant') ? (isSupplySide ? (profile.rate != null ? ` · rate ${profile.rate}` : '') : ((profile.budgetMin != null || profile.budgetMax != null) ? ` · budget ${profile.budgetMin ?? '…'}–${profile.budgetMax ?? '…'}` : '')) : ''}</div>` : ''}
+    <details class="panel" open>
+      <summary class="k" style="cursor:pointer">Your profile${myRoleLabel ? ` (${myRoleLabel})` : ''}</summary>
+      <div style="margin-top:8px">${profile.category ? `<b>${profile.category}</b>` : '<span style="color:var(--low)">No category set</span>'}</div>
+      ${ns === 'employment' || ns === 'business' || ns === 'independant' || ns === 'annonce' ? `<div style="font-size:11.5px;color:var(--low);margin-top:2px">${[profile.city, profile.country].filter(Boolean).join(', ') || 'No location set'}${(ns === 'business' || ns === 'independant' || ns === 'annonce') ? (isSupplySide ? (profile.rate != null ? ` · price ${profile.rate}` : '') : ((profile.budgetMin != null || profile.budgetMax != null) ? ` · budget ${profile.budgetMin ?? '…'}–${profile.budgetMax ?? '…'}` : '')) : ''}</div>` : ''}
       <div class="chiprow">
-        ${profile.tokens.slice(0, 10).map((t) => `<span class="chip">${t}</span>`).join('')}
-        ${profile.aiTokens.slice(0, 10).map((t) => `<span class="chip ai">◆ ${t}</span>`).join('')}
-        ${!profile.tokens.length && !profile.aiTokens.length ? '<span style="color:var(--low);font-size:11px">No keywords extracted yet</span>' : ''}
+        <span class="chip">${profile.tokens.length} CPU keyword${profile.tokens.length === 1 ? '' : 's'}</span>
+        <span class="chip ai">◆ ${profile.aiTokens.length} AI keyword${profile.aiTokens.length === 1 ? '' : 's'}</span>
       </div>
       ${cfg.kind === 'reciprocal' ? `
         <div class="k" style="margin-top:10px">Looking for</div>
         <div class="chiprow">
-          ${myLookingForTokens.slice(0, 10).map((t) => `<span class="chip" style="border-color:var(--agent);color:var(--agent)">${t}</span>`).join('')}
-          ${!myLookingForTokens.length ? '<span style="color:var(--low);font-size:11px">Not set yet</span>' : ''}
+          <span class="chip" style="border-color:var(--agent);color:var(--agent)">${myLookingForTokens.length} keyword${myLookingForTokens.length === 1 ? '' : 's'}</span>
         </div>` : ''}
       <div class="actions" style="margin-top:12px">
         <button class="btn" id="editProfile">Edit profile</button>
-        <button class="btn" id="enrichAI">Enrich with local AI</button>
         <button class="btn ${isLive ? '' : 'primary'}" id="toggleSearch">${isLive ? 'Stop searching' : 'Start searching'}</button>
         ${isLive ? '<span style="font-size:11px;color:var(--ok);align-self:center">● searching</span>' : ''}
+        <button class="btn ${profile.aiTokens.length ? 'success' : ''}" id="enrichAI">${profile.aiTokens.length ? `Enriched — ${profile.aiTokens.length} keywords` : 'Enrich with local AI'}</button>
       </div>
-    </div>
+    </details>
 
     ${chatHtml}
     ${!chatPeer ? conversationsHtml : ''}
@@ -386,10 +406,38 @@ export function bindClassicEvents(ns) {
   ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
   ws.querySelector('#editProfile')?.addEventListener('click', () => {
     if (ns === 'employment') editEmploymentProfileFlow(id);
-    else if (ns === 'business' || ns === 'independant') editSupplyDemandProfileFlow(ns, id);
+    else if (ns === 'business' || ns === 'independant' || ns === 'annonce') editSupplyDemandProfileFlow(ns, id);
     else editProfileFlow(ns, id);
   });
-  ws.querySelector('#enrichAI')?.addEventListener('click', () => enrichProfileWithAI(ns, id));
+  ws.querySelector('#enrichAI')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.classList.remove('success');
+    btn.textContent = 'Starting…';
+    try {
+      const extra = await enrichProfileWithAI(ns, id, (p) => {
+        // WebLLM's progress callback reports model *loading* (download +
+        // compile), not per-token inference — inference itself is fast
+        // enough on a 135M model that a spinner-style label is enough.
+        if (typeof p.progress === 'number' && p.progress < 1) {
+          btn.textContent = `Loading model… ${Math.round(p.progress * 100)}%`;
+        } else {
+          btn.textContent = 'Thinking…';
+        }
+      });
+      if (extra === null) { btn.textContent = original; return; } // handled case, already toasted
+      toast(`Added ${extra.length} AI-derived keywords.`);
+      if (state.searchLive[ns]) await rebroadcastDiscovery(ns); // update anyone already connected, not just future joiners
+      state.render.workspace(); // re-render to show the chips and the persistent green state
+    } catch (err) {
+      toast('Local AI failed: ' + err.message);
+      btn.textContent = original;
+    } finally {
+      btn.disabled = false;
+    }
+  });
   ws.querySelector('#toggleSearch')?.addEventListener('click', () => state.handlers.toggleSearchLive(ns));
 
   ws.querySelectorAll('.toggle-expl').forEach((btn) => {

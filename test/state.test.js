@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickActiveIdentityId, roleLabel, complementaryRole, initials, relativeTime, NS_CONFIG } from '../js/state.js';
+import { pickActiveIdentityId, roleLabel, complementaryRole, initials, relativeTime, NS_CONFIG, pickActiveNamespace } from '../js/state.js';
 
 test('pickActiveIdentityId returns the active identity, never a retired one', () => {
   const list = [
@@ -62,4 +62,63 @@ test('every namespace with roles has exactly two, and dating/research have none'
     if (cfg.kind === 'twoSided') assert.equal(cfg.roles.length, 2, `${ns} should have exactly 2 roles`);
     if (cfg.kind === 'reciprocal' || cfg.kind === 'research') assert.equal(cfg.roles, undefined, `${ns} should have no fixed roles`);
   }
+});
+
+/* ---- pickActiveNamespace: which namespace to land on at boot ---- */
+
+test('pickActiveNamespace shows the welcome screen on a genuine first-ever open (nothing anywhere)', () => {
+  const result = pickActiveNamespace({
+    lastActiveValue: undefined,
+    identitiesByNs: { employment: [], business: [], independant: [], dating: [], research: [] },
+  });
+  assert.equal(result, null);
+});
+
+test('pickActiveNamespace reproduces and fixes the real shipped bug: create an identity, delete it, reload', () => {
+  // Employment was visited (so "lastActiveValue" is stale-cached as
+  // 'employment'), but the identity that made it active has since been
+  // retired — nothing is active anywhere. The stale preference must not win.
+  const result = pickActiveNamespace({
+    lastActiveValue: 'employment',
+    identitiesByNs: {
+      employment: [{ identityId: 'X', active: false }], // retired, not deleted from history
+      business: [], independant: [], dating: [], research: [],
+    },
+  });
+  assert.equal(result, null);
+});
+
+test('pickActiveNamespace honors the remembered namespace once something is actually active', () => {
+  const result = pickActiveNamespace({
+    lastActiveValue: 'dating',
+    identitiesByNs: {
+      employment: [{ identityId: 'X', active: true }],
+      business: [], independant: [],
+      dating: [{ identityId: 'Y', active: true }],
+      research: [],
+    },
+  });
+  assert.equal(result, 'dating');
+});
+
+test('pickActiveNamespace falls back to "wherever you have an active identity" with no remembered preference', () => {
+  const result = pickActiveNamespace({
+    lastActiveValue: undefined,
+    identitiesByNs: {
+      employment: [], business: [{ identityId: 'Z', active: true }],
+      independant: [], dating: [], research: [],
+    },
+  });
+  assert.equal(result, 'business');
+});
+
+test('pickActiveNamespace ignores a remembered namespace that no longer exists', () => {
+  const result = pickActiveNamespace({
+    lastActiveValue: 'not_a_real_namespace',
+    identitiesByNs: {
+      employment: [{ identityId: 'X', active: true }],
+      business: [], independant: [], dating: [], research: [],
+    },
+  });
+  assert.equal(result, 'employment');
 });

@@ -7,19 +7,21 @@
 // involved, and no application data ever passes through that layer.
 //
 // Trystero's current releases ship as plain ESM source (no bundled `dist/`
-// files anymore), with subpath exports per strategy declared in its
-// package.json (`./torrent`, `./nostr`, ...). We resolve that through
-// esm.run (jsdelivr's dedicated ESM endpoint) rather than esm.sh: esm.sh's
-// CJS/export-map interop for this kind of subpath doesn't reliably expose
-// a named `joinRoom` export (the same failure mode we hit with WebLLM,
-// fixed the same way in llm.js). Loading it lazily with dynamic import()
-// means a CDN hiccup only disables P2P — identity, profiles, and Research
-// still work offline.
+// files anymore), split into scoped packages per strategy
+// (`@trystero-p2p/torrent`, `@trystero-p2p/nostr`, ...) as of v0.23 — the
+// old `trystero/<strategy>` subpath imports still exist but are deprecated
+// compatibility shims now, which is worth resolving directly rather than
+// relying on. We resolve through esm.run (jsdelivr's dedicated ESM
+// endpoint) rather than esm.sh: esm.sh's CJS/export-map interop for this
+// kind of subpath doesn't reliably expose a named `joinRoom` export (the
+// same failure mode we hit with WebLLM, fixed the same way in llm.js).
+// Loading it lazily with dynamic import() means a CDN hiccup only disables
+// P2P — identity, profiles, and Research still work offline.
 
 import { validateMessage, createMessage } from './protocol.js';
 
 const APP_ID = 'jobber-personal-interoperable-agency';
-const TRYSTERO_URL = 'https://esm.run/trystero/torrent';
+const TRYSTERO_URL = 'https://esm.run/@trystero-p2p/torrent';
 
 const rooms = new Map(); // namespace -> room handle
 let joinRoomFn = null;

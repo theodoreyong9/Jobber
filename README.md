@@ -75,13 +75,22 @@ npm run check # verify sw.js precache list against disk
   `.pdf`/`.txt` attachment — genuinely optional, unlike Employment's CV —
   adds keywords on top of it rather than replacing it. The demand side's
   request text is public and shown to the supply side, the same way a job
-  posting is shown to candidates.
+  posting is shown to candidates. **Business** additionally requires a
+  professional email on the Offer side; **Independant** requires a
+  self-declared LinkedIn URL on the Service side (both real HTML5
+  `required` fields).
+- **Annonce** — the same Offer/Client mechanic again (Seller/Buyer here),
+  built for peer-to-peer sales rather than services: the Seller can attach
+  a photo, resized client-side to a small thumbnail and sent as part of
+  the discovery broadcast itself, so it shows up the moment a listing is
+  discovered — no separate download step.
 - **Dating** — no fixed roles. Every identity has both a profile ("about
   me") and a search ("looking for"). A match score is the *minimum* of two
   directions: how well their profile fits what you're looking for, and how
   well your profile fits what they're looking for — a real match needs both
   sides to work, not just one.
-- **Research** — a build/critic **chain**, not a free-for-all. The
+- **Intelligence** (internally still the `research` namespace — see below)
+  — a build/critic **chain**, not a free-for-all. The
   initiator defines an ordered sequence of modes when creating the project
   (e.g. Build → Critic → Build), and occupies slot 0 themselves. Anyone else
   requests to join — optionally attaching a `.md` describing their agent's
@@ -164,9 +173,13 @@ every connected participant immediately and shown as a banner.
 ### Which namespace you land on
 
 The app remembers the last namespace you had open (stored in IndexedDB's
-`cache` store, not just in memory) and reopens there next time. On a
-genuinely first-ever open — nothing created anywhere yet — it shows a
-neutral welcome screen instead of guessing a namespace for you.
+`cache` store, not just in memory) and reopens there next time. But "nothing
+active anywhere" always wins over that remembered preference — a real
+shipped bug was creating an identity (which sets the remembered namespace),
+then retiring/deleting it: the preference stayed pointed at that now-empty
+namespace, so the welcome screen never came back and you'd land on
+"Employment — create an identity" instead. Fixed and unit-tested against
+that exact sequence — see `pickActiveNamespace` in `state.js`.
 
 ### Attachments: real consent, not just P2P delivery
 
@@ -259,6 +272,72 @@ conversation. Fixed by generating one canonical id per logical message
 attachments) and having both sides store *that* id instead of minting
 their own — see `sendChatMessage` and the `attachment_accept` handling in
 `message-router.js`.
+
+### Real fixes: Trystero's package split, a lighter local model, and a better enrich flow
+
+- **Trystero deprecation warning, fixed for real.** As of v0.23, Trystero
+  split into scoped packages per strategy (`@trystero-p2p/torrent`,
+  `@trystero-p2p/nostr`, ...); the old `trystero/<strategy>` subpath is now
+  a deprecated compatibility shim. `p2p.js` resolves the real package
+  directly now.
+- **WebLLM's default model is much smaller.** It went from a 1B-parameter
+  chat model down to `SmolLM2-135M-Instruct-q0f32-MLC` (~720MB VRAM vs.
+  well over a gigabyte) — the only thing this ever does is turn CPU-
+  extracted keywords into a slightly richer list, not open-ended chat, so
+  a bigger model was never buying anything except a much higher chance of
+  the GPU hitting a "device lost" reset on modest hardware.
+- **"Device was lost" is now caught and explained**, not left to crash
+  silently: it's a WebGPU driver-level reset, so `llm.js` throws the dead
+  engine away and gives a plain-language message instead of surfacing the
+  raw browser error. Unit-tested (`friendlyLlmError`).
+- **"Enrich with local AI" moved after "Start searching"** in the profile
+  panel, shows real progress on the button itself while the model loads
+  (not toast spam), turns **green and stays green** once keywords exist
+  (`profile.aiTokens.length > 0` — the button's own state doubles as the
+  indicator, no separate flag), and — the part that actually matters —
+  **rebroadcasts your updated keywords to everyone already connected**
+  once enrichment finishes. Before this, an already-open Search Live
+  session only picked up profile changes for *future* peers who joined
+  after the edit; anyone already in the room kept seeing your old
+  keywords until they reconnected.
+
+### A round of real UI and product fixes
+
+- **Enter key in dialogs now submits, not cancels.** The Cancel button had
+  no explicit `type`, so it defaulted to `type="submit"` — and since it was
+  first in the DOM, the browser activated *it* (not the real submit
+  button) when you pressed Enter in a text field. Cancel is now
+  `type="button"`, wired manually; only the actual submit button responds
+  to Enter.
+- **Keyword summary is a count, not a truncated list.** "Your profile"
+  now shows "N CPU keywords" / "N AI keywords" instead of the first ten
+  chips — the full list was never that useful at a glance anyway.
+- **"Research" is now "Intelligence"** everywhere in the UI. The internal
+  namespace key stays `research` (storage, migration, message types,
+  tests all untouched) — only the label changed, which is the lower-risk
+  way to rename something without touching identity/data continuity.
+- **Business (Offer) requires a professional email; Independant (Service)
+  requires a LinkedIn URL.** Both are real HTML5 `required` fields — the
+  browser blocks saving without them. LinkedIn is explicitly labeled
+  self-declared: Jobber has no backend and no way to independently verify
+  it, and the UI says so rather than implying a check that isn't real.
+- **New namespace: Annonce**, peer-to-peer sales with a photo. Built on
+  the same asymmetric Offer/Client mechanic Business and Independant
+  already use (Seller declares a price, Buyer declares a budget range,
+  hard-filtered against each other) rather than inventing a parallel
+  system. The photo is resized client-side to a small JPEG thumbnail
+  (max 200px, canvas-based) and travels *inside* the discovery broadcast
+  itself — no separate "request to download the photo" round trip, it's
+  just there the moment a listing is discovered.
+- **Sidebar replaced with a top icon bar.** The old identity-list sidebar
+  didn't hold up on desktop and was worse on mobile. Mode switching is now
+  a row of icons at the top; switching identities within a namespace (when
+  you have more than one) is a native `<select>` in the topbar — renders
+  as a proper picker on mobile with no custom dropdown code. Storage/
+  backup moved into a small `⚙` panel in the status bar instead of a
+  permanent sidebar block. "Your profile" is now a collapsible `<details>`,
+  and the redundant "Employment — Recruiter" / hint-text header above it
+  is gone — the icon bar and topbar already say what mode and role you're in.
 
 ## What's been hardened since the last pass
 

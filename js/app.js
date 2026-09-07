@@ -16,7 +16,7 @@ import * as identity from './identity.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
 import * as backup from './backup.js';
-import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
 import { setSearchLive } from './discovery-ui.js';
@@ -135,21 +135,14 @@ async function boot() {
     if (Object.values(state.searchLive).some(Boolean)) renderWorkspace();
   }, 30_000);
 
-  // Which namespace to land on: remember the last one the person actually
-  // opened (persisted, not just in-memory — survives a reload), falling
-  // back to "wherever you already have an identity" only if we've never
-  // recorded a choice, and to a neutral welcome screen (no namespace
-  // preselected) on a genuinely first-ever open with nothing anywhere.
+  // Which namespace to land on. "Nothing active anywhere" always wins,
+  // regardless of any remembered last-active preference — that preference
+  // is stale the moment your last identity gets retired/deleted, and
+  // landing on "Employment — create identity" when the whole app is empty
+  // is worse than just showing the welcome screen. See state.js's
+  // pickActiveNamespace for the exact priority order and why.
   const lastActive = await db.get('cache', 'lastActiveNamespace');
-  const totalIdentities = NAMESPACES.reduce((n, ns) => n + state.identitiesByNs[ns].filter((i) => i.active).length, 0);
-
-  if (lastActive?.value && NAMESPACES.includes(lastActive.value)) {
-    state.activeNamespace = lastActive.value;
-  } else if (totalIdentities === 0) {
-    state.activeNamespace = null; // first open, nothing created yet — show the welcome screen
-  } else {
-    state.activeNamespace = NAMESPACES.find((ns) => state.identitiesByNs[ns].some((i) => i.active)) || NAMESPACES[0];
-  }
+  state.activeNamespace = pickActiveNamespace({ lastActiveValue: lastActive?.value, identitiesByNs: state.identitiesByNs });
   for (const ns of NAMESPACES) {
     const activeId = pickActiveIdentityId(state.identitiesByNs[ns]);
     if (activeId) state.activeIdentityId[ns] = activeId;

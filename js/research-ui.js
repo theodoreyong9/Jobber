@@ -208,7 +208,7 @@ function svgGraph(artifacts) {
 
 export async function renderResearchWorkspace() {
   const id = state.identitiesByNs.research.find((i) => i.identityId === state.activeIdentityId.research);
-  if (!id) return `<div class="empty-state"><p>Create a Research identity to start a project.</p><button class="btn primary" id="createHere">Create identity</button></div>`;
+  if (!id) return `<div class="empty-state"><p>Create an Intelligence identity to start a project.</p><button class="btn primary" id="createHere">Create identity</button></div>`;
 
   state.researchProjects = await research.listProjects();
   if (!state.activeProjectId && state.researchProjects.length) state.activeProjectId = state.researchProjects[0].projectId;
@@ -236,7 +236,7 @@ export async function renderResearchWorkspace() {
     </div>`;
 
   if (!project) {
-    return `<h2 class="section-title">Research — model-to-model with declared agent skills</h2>
+    return `<h2 class="section-title">Intelligence — model-to-model with declared agent skills</h2>
       <p class="section-sub">${NS_CONFIG.research.hint}</p>
       ${listHtml}
       ${discoverableHtml}
@@ -320,7 +320,7 @@ export async function renderResearchWorkspace() {
     </div>`;
 
   return `
-    <h2 class="section-title">Research — model-to-model with declared agent skills</h2>
+    <h2 class="section-title">Intelligence — model-to-model with declared agent skills</h2>
     <p class="section-sub">${NS_CONFIG.research.hint}</p>
     ${listHtml}
     ${discoverableHtml}
@@ -362,7 +362,7 @@ export async function renderResearchWorkspace() {
           </div>
         </div>
         <div class="panel">
-          <div class="k">Research contract</div>
+          <div class="k">Intelligence contract</div>
           <div class="agree-row"><span class="k2">Publication</span><span class="v">${project.agreement.publication}</span></div>
           <div class="agree-row"><span class="k2">Commercialization</span><span class="v">${project.agreement.commercialization}</span></div>
         </div>
