@@ -22,6 +22,7 @@ const MODE_ICONS = {
   drive: '🚗',
   dating: '💗',
   research: '🧠',
+  near: '📍',
   agent: '🤖',
 };
 
@@ -30,13 +31,14 @@ export function renderModeIcons() {
   nav.innerHTML = NAMESPACES.map((ns) => {
     const cfg = NS_CONFIG[ns];
     const isActive = ns === state.activeNamespace;
-    const isLive = !!state.searchLive[ns];
-    const hasIdentity = (state.identitiesByNs[ns] || []).some((i) => i.active);
+    const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
+    const needsIdentity = cfg.kind !== 'near'; // Near has no identity of its own — see near-ui.js
+    const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
     return `
       <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
         <span class="mode-icon-glyph">${MODE_ICONS[ns] || '●'}</span>
         <span class="mode-icon-label">${cfg.label}</span>
-        ${isLive ? '<span class="mode-icon-dot live"></span>' : (!hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
+        ${isLive ? '<span class="mode-icon-dot live"></span>' : (needsIdentity && !hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
       </button>`;
   }).join('');
 
@@ -86,6 +88,13 @@ export async function renderTopbar() {
   }
 
   const cfg = NS_CONFIG[ns];
+
+  if (cfg.kind === 'near') {
+    who.innerHTML = `<div class="name">Near</div><div class="sub" style="color:var(--low);font-size:11.5px">Location is opt-in, set below — no identity needed here.</div>`;
+    controls.innerHTML = '';
+    return;
+  }
+
   const list = state.identitiesByNs[ns].filter((i) => i.active);
   const id = list.find((i) => i.identityId === state.activeIdentityId[ns]);
 

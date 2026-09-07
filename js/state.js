@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'dating', 'research', 'agent'];
+export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'dating', 'research', 'near', 'agent'];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
 // "reciprocal" (dating) matches each identity's *search* against the
@@ -37,6 +37,8 @@ export const NS_CONFIG = {
     hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
   research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research',
     hint: 'Agent-to-agent collaboration. Hypothesis and critique are symmetric roles.' },
+  near: { label: 'Near', color: '#6FBF73', kind: 'near',
+    hint: 'Aggregates everyone you\'ve already discovered in other modes who\'s within your radius — opt-in location sharing, off by default, and it doesn\'t discover new people on its own.' },
   agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent',
     hint: 'Prototype. Reads what you\'ve shared and your Intelligence graphs to propose operations, connections, and moves — not built out yet, this is a placeholder to build on.' },
 };
@@ -129,6 +131,12 @@ export const state = {
   outgoingJoinRequests: new Map(), // projectId -> 'pending' | 'accepted' | 'declined'
   outgoingJoinRequestIds: new Map(), // projectId -> messageId of the join request I sent, for correlationId checks
   discoverableProjects: new Map(), // projectId -> {problem, chain, filledCount, initiatorDisplayName, fromPeerId}
+
+  // Near mode: a device-level fact layered onto whichever namespace
+  // identities are actively broadcasting, not tied to any one identity.
+  nearLocationEnabled: false,
+  nearCoords: null, // { lat, lon } | null — real GPS coords once granted
+  nearRadiusKm: 25,
 
   // Filled in by app.js once every module has loaded — see the note above.
   render: { all: null, workspace: null, topbar: null },

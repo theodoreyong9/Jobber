@@ -11,6 +11,7 @@ import { state, NAMESPACES, NS_CONFIG, setActiveNamespace } from './state.js';
 import { renderModeIcons, renderTopbar, createIdentityFlow } from './identity-ui.js';
 import { renderClassicWorkspace, bindClassicEvents } from './discovery-ui.js';
 import { renderResearchWorkspace, bindResearchEvents } from './research-ui.js';
+import { renderNearWorkspace, bindNearEvents } from './near-ui.js';
 
 function renderWelcomeScreen() {
   return `
@@ -57,6 +58,9 @@ export async function renderWorkspace() {
     else ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
   } else if (NS_CONFIG[ns].kind === 'agent') {
     ws.innerHTML = renderAgentPlaceholder();
+  } else if (NS_CONFIG[ns].kind === 'near') {
+    ws.innerHTML = await renderNearWorkspace();
+    bindNearEvents();
   } else {
     ws.innerHTML = await renderClassicWorkspace(ns);
     bindClassicEvents(ns);

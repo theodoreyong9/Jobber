@@ -408,11 +408,31 @@ That panel is gone. Its useful bits moved to where they actually belong:
   substantial enough to deserve its own dedicated pass rather than being
   half-built alongside everything else in this one. This just reserves the
   namespace/identity slot for it.
-- **"Near" (radius-gauge geographic filtering across all modes) is
-  deliberately not built yet.** It needs real lat/lon on every profile via
-  opt-in Geolocation, which no namespace currently stores (only free-text
-  country/city) — that's a real data-model change across every namespace,
-  not a UI addition, and deserves its own pass rather than being rushed.
+
+### Near — built for real this time
+
+Opt-in location sharing, a real radius slider, and real distance filtering
+against everyone already discovered in other modes:
+
+- **Real coordinates, real permission prompt.** `geo.js` wraps
+  `navigator.geolocation.getCurrentPosition` in a Promise — the browser's
+  actual permission dialog is what grants coordinates, nothing is
+  simulated. Distance is the real haversine great-circle formula,
+  unit-tested against known city-to-city distances (Paris–London ≈ 344 km,
+  Lausanne–Geneva ≈ 52 km).
+- **Location is a device-level fact, not an identity's.** Near has no
+  identity of its own — turning location sharing on piggybacks your real
+  coordinates onto whichever namespace discovery broadcasts you're already
+  sending (via the same `buildDiscoveryPayload` every namespace already
+  uses), rather than Near running a separate discovery mechanism. Turning
+  it off, or moving the radius slider, immediately rebroadcasts to anyone
+  already connected — same reasoning as the AI-enrichment rebroadcast.
+- **It only aggregates, it doesn't discover.** Near reads
+  `state.discovered` across every other active namespace and filters to
+  peers who (a) also opted into sharing their coordinates and (b) fall
+  within your radius, sorted by distance. If you haven't started
+  "Search" anywhere else, there's nothing to aggregate — the UI says so
+  rather than pretending to search on its own.
 
 ## What's been hardened since the last pass
 

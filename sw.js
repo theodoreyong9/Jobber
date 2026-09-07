@@ -16,6 +16,8 @@ const SHELL_FILES = [
   './js/conversations.js',
   './js/discovery-ui.js',
   './js/research-ui.js',
+  './js/near-ui.js',
+  './js/geo.js',
   './js/message-router.js',
   './js/render.js',
   './js/db.js',

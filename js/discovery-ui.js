@@ -29,6 +29,13 @@ async function buildDiscoveryPayload(ns, id, profile) {
     languages: profile.languages,
     availableNow: profile.availableNow,
   };
+  // Near mode's opt-in location is a device-level fact, not owned by any
+  // one namespace's profile — it piggybacks on whichever discovery
+  // broadcast is already going out, rather than Near making its own.
+  if (state.nearLocationEnabled && state.nearCoords) {
+    payload.lat = state.nearCoords.lat;
+    payload.lon = state.nearCoords.lon;
+  }
   if (cfg.kind === 'twoSided') payload.role = id.role;
   if (cfg.kind === 'reciprocal') payload.searchTokens = profile.searchTokens.slice(0, 30);
   if (cfg.kind === 'twoSided') {

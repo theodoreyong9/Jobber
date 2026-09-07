@@ -60,7 +60,7 @@ test('relativeTime buckets correctly across the boundaries', () => {
 test('every namespace with roles has exactly two, and dating/research have none', () => {
   for (const [ns, cfg] of Object.entries(NS_CONFIG)) {
     if (cfg.kind === 'twoSided') assert.equal(cfg.roles.length, 2, `${ns} should have exactly 2 roles`);
-    if (cfg.kind === 'reciprocal' || cfg.kind === 'research' || cfg.kind === 'agent') assert.equal(cfg.roles, undefined, `${ns} should have no fixed roles`);
+    if (cfg.kind === 'reciprocal' || cfg.kind === 'research' || cfg.kind === 'agent' || cfg.kind === 'near') assert.equal(cfg.roles, undefined, `${ns} should have no fixed roles`);
   }
 });
 
