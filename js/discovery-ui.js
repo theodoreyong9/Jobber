@@ -25,7 +25,12 @@ async function buildDiscoveryPayload(ns, id, profile) {
   const cfg = NS_CONFIG[ns];
   const payload = {
     category: profile.category,
-    tokens: [...profile.tokens, ...profile.aiTokens].slice(0, 30),
+    // Sent as two separate fields, not merged — losing the CPU/AI
+    // distinction on the wire would make it impossible for a receiver (in
+    // particular, Agent's cross-referencing) to know whether a match
+    // needed AI enrichment or was pure-CPU all along.
+    tokens: profile.tokens.slice(0, 30),
+    aiTokens: profile.aiTokens.slice(0, 30),
     languages: profile.languages,
     availableNow: profile.availableNow,
   };
@@ -150,12 +155,13 @@ state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar c
 state.handlers.rebroadcastDiscovery = rebroadcastDiscovery; // same reason — the enrich control lives in the topbar now
 
 export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) {
+  const peerTokens = [...(p.tokens || []), ...(p.aiTokens || [])]; // tokens/aiTokens travel separately on the wire now — see buildDiscoveryPayload
   if (cfg.kind === 'reciprocal') {
-    const forward = matching.matchTokens(myLookingForTokens, p.tokens || []);   // does their profile fit what I want
+    const forward = matching.matchTokens(myLookingForTokens, peerTokens);   // does their profile fit what I want
     const backward = matching.matchTokens(p.searchTokens || [], myTokens);       // does my profile fit what they want
     return { score: Math.min(forward.score, backward.score), forward, backward };
   }
-  return matching.matchTokens(myTokens, p.tokens || []);
+  return matching.matchTokens(myTokens, peerTokens);
 }
 
 export function explainMatch(cfg, match) {
@@ -187,7 +193,7 @@ async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
     const p2 = await getProfile(other.identityId);
     const peerLike = {
       sender: other.identityId, displayName: other.displayName, category: p2.category,
-      tokens: [...p2.tokens, ...(p2.aiTokens || [])], searchTokens: p2.searchTokens,
+      tokens: p2.tokens, aiTokens: p2.aiTokens, searchTokens: p2.searchTokens,
       country: p2.country, city: p2.city, earliestYear: p2.earliestYear,
       seniorityMin: p2.seniorityMin, seniorityMax: p2.seniorityMax,
       rate: p2.rate, budgetMin: p2.budgetMin, budgetMax: p2.budgetMax,

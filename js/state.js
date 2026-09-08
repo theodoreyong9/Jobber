@@ -40,7 +40,7 @@ export const NS_CONFIG = {
   near: { label: 'Near', color: '#6FBF73', kind: 'near',
     hint: 'Aggregates everyone you\'ve already discovered in other modes who\'s within your radius — opt-in location sharing, off by default, and it doesn\'t discover new people on its own.' },
   agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent',
-    hint: 'Prototype. Reads what you\'ve shared and your Intelligence graphs to propose operations, connections, and moves — not built out yet, this is a placeholder to build on.' },
+    hint: 'Cross-references what you offer and search for (across every namespace) against what everyone you\'ve already discovered offers and searches for — surfacing matches a single namespace\'s own matching would never see. Every finding says whether it needed AI-enriched keywords or was pure CPU.' },
 };
 
 export function roleLabel(ns, roleKey) {

@@ -12,6 +12,7 @@ import { renderModeIcons, renderTopbar, createIdentityFlow } from './identity-ui
 import { renderClassicWorkspace, bindClassicEvents } from './discovery-ui.js';
 import { renderResearchWorkspace, bindResearchEvents } from './research-ui.js';
 import { renderNearWorkspace, bindNearEvents } from './near-ui.js';
+import { renderAgentWorkspace } from './agent-ui.js';
 
 function renderWelcomeScreen() {
   return `
@@ -21,19 +22,6 @@ function renderWelcomeScreen() {
       <div class="research-actions" style="margin-top:14px">
         ${NAMESPACES.map((ns) => `<button class="btn primary welcome-pick" data-ns="${ns}">${NS_CONFIG[ns].label}</button>`).join('')}
       </div>
-    </div>`;
-}
-
-// Agent is an explicit, deliberate placeholder — a real cross-namespace
-// agent (reading every match and every Intelligence graph to propose
-// operations/connections/moves) is a substantial feature on its own, not
-// something to half-build alongside everything else. This just gives it a
-// real namespace/identity slot to grow into.
-function renderAgentPlaceholder() {
-  return `
-    <div class="empty-state" style="max-width:560px;margin:40px auto;text-align:left">
-      <h2 class="section-title" style="margin-bottom:6px">Agent — prototype</h2>
-      <p class="section-sub">${NS_CONFIG.agent.hint}</p>
     </div>`;
 }
 
@@ -57,7 +45,7 @@ export async function renderWorkspace() {
     if (id) bindResearchEvents(id);
     else ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
   } else if (NS_CONFIG[ns].kind === 'agent') {
-    ws.innerHTML = renderAgentPlaceholder();
+    ws.innerHTML = await renderAgentWorkspace();
   } else if (NS_CONFIG[ns].kind === 'near') {
     ws.innerHTML = await renderNearWorkspace();
     bindNearEvents();

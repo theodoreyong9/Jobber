@@ -402,12 +402,22 @@ That panel is gone. Its useful bits moved to where they actually belong:
   mechanic as Business/Independant/Annonce (Driver declares a price per
   seat, Passenger declares a budget range) — the passenger decides,
   automatically, from the same generic rule above.
-- **New namespace: Agent**, an explicit, honest placeholder — not a real
-  feature yet. A genuine cross-namespace agent (reading every match and
-  every Intelligence graph to propose operations/connections/moves) is
-  substantial enough to deserve its own dedicated pass rather than being
-  half-built alongside everything else in this one. This just reserves the
-  namespace/identity slot for it.
+- **Agent, corrected and actually built.** I initially shipped this as a
+  placeholder, misunderstanding what was wanted — it's not a "propose
+  operations on the research graph" assistant, it's a real cross-namespace
+  matcher (`agent.js`): among everyone you've already discovered anywhere,
+  does anyone need what you offer in some *other* namespace, or offer what
+  you're searching for in some *other* namespace? That's a class of
+  opportunity same-namespace matching structurally can't see — you were
+  discovered as a Business contact, but what they need happens to match
+  what you offer as an Independant. Every finding is explicit about
+  whether it needed AI-enriched keywords or was reachable from CPU
+  keywords alone (`usedAi`, unit-tested against both cases) — the same
+  CPU/AI transparency the rest of the app already keeps, applied here
+  instead of folded invisibly into a score. This required a real protocol
+  fix: discovery broadcasts used to merge CPU and AI-derived keywords into
+  one field, which threw away exactly the distinction this needs — `tokens`
+  and `aiTokens` now travel as separate fields on the wire.
 
 ### Near — built for real this time
 
