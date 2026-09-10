@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'dating', 'research', 'near', 'agent'];
+export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'wallet', 'tribute'];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
 // "reciprocal" (dating) matches each identity's *search* against the
@@ -33,6 +33,9 @@ export const NS_CONFIG = {
   drive: { label: 'Drive', color: '#5AA9E6', kind: 'twoSided',
     roles: [{ key: 'driver', label: 'Driver' }, { key: 'passenger', label: 'Passenger' }],
     hint: 'Drivers are matched with passengers looking for that route — a declared price per seat is checked against each passenger\'s budget range.' },
+  outdoor: { label: 'Outdoor', color: '#4C9A6B', kind: 'twoSided',
+    roles: [{ key: 'organizer', label: 'Organizer' }, { key: 'participant', label: 'Participant' }],
+    hint: 'Organizers post an out-of-home activity — any theme, freely chosen — with a contact method and a participant limit; participants are matched by shared interest, not a price range.' },
   dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal',
     hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
   research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research',
@@ -41,6 +44,20 @@ export const NS_CONFIG = {
     hint: 'Aggregates everyone you\'ve already discovered in other modes who\'s within your radius — opt-in location sharing, off by default, and it doesn\'t discover new people on its own.' },
   agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent',
     hint: 'Cross-references what you offer and search for (across every namespace) against what everyone you\'ve already discovered offers and searches for — surfacing matches a single namespace\'s own matching would never see. Every finding says whether it needed AI-enriched keywords or was pure CPU.' },
+
+  // "external" namespaces aren't part of Jobber's own matching at all —
+  // the icon just opens another app in this same portfolio in a new tab.
+  // No identity, no profile, nothing to render here; identity-ui.js skips
+  // setActiveNamespace entirely for this kind and opens `url` instead.
+  creator: { label: 'Creator', color: '#F0A830', kind: 'external',
+    url: 'https://theodoreyong9.github.io/YourMinedApp/',
+    hint: 'Opens YourMine — publish JavaScript apps and interface themes, permissionlessly.' },
+  wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external',
+    url: 'https://theodoreyong9.github.io/AIWA_chain/',
+    hint: 'Opens AIWA — local, geographically-independent value accrual.' },
+  tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external',
+    url: 'https://theodoreyong9.github.io/SGD/',
+    hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
 };
 
 export function roleLabel(ns, roleKey) {
