@@ -88,7 +88,7 @@ export function editProfileFlow(ns, id) {
         const category = dlg.querySelector('#cat').value.trim();
         const languages = dlg.querySelector('#langs').value.split(',').map((s) => s.trim()).filter(Boolean);
         const availableNow = dlg.querySelector('#avail').checked;
-        const tokens = matching.tokenize(sourceText + ' ' + category);
+        const tokens = matching.tokenize(sourceText, category);
         const lookingForText = isDating ? dlg.querySelector('#looking').value : '';
         const searchTokens = isDating ? matching.tokenize(lookingForText) : [];
         await db.put('profiles', {
@@ -170,7 +170,7 @@ export function editEmploymentProfileFlow(id) {
           // first save had no CV at all). Category alone is now enough to
           // produce some CPU keywords instead of a permanently empty
           // profile until a CV happens to be attached.
-          const tokens = matching.tokenize([cvExtractedText, category].filter(Boolean).join(' '));
+          const tokens = matching.tokenize(cvExtractedText, category);
           if (file) toast(`Extracted ${tokens.length} keywords from ${file.name}${earliestYear ? `, earliest year ${earliestYear}` : ''}`);
 
           await db.put('profiles', {
@@ -182,7 +182,7 @@ export function editEmploymentProfileFlow(id) {
           const jobPostingText = dlg.querySelector('#posting').value;
           const seniorityMin = dlg.querySelector('#senMin').value.trim();
           const seniorityMax = dlg.querySelector('#senMax').value.trim();
-          const tokens = matching.tokenize(jobPostingText + ' ' + category);
+          const tokens = matching.tokenize(jobPostingText, category);
           await db.put('profiles', {
             ...profile, category, country, city, jobPostingText, tokens,
             seniorityMin: seniorityMin ? parseInt(seniorityMin, 10) : null,
@@ -255,7 +255,7 @@ export function editOutdoorProfileFlow(id) {
           const contactType = dlg.querySelector('#contactType').value;
           const contactValue = dlg.querySelector('#contactValue').value.trim();
           const limit = dlg.querySelector('#limit').value.trim();
-          const tokens = matching.tokenize(sourceText + ' ' + category);
+          const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
             ...profile, category, country, city, sourceText, availableNow, tokens,
             contactType, contactValue,
@@ -264,7 +264,7 @@ export function editOutdoorProfileFlow(id) {
           });
         } else {
           const sourceText = dlg.querySelector('#interests').value;
-          const tokens = matching.tokenize(sourceText + ' ' + category);
+          const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
             ...profile, category, country, city, sourceText, availableNow, tokens,
             updatedAt: Date.now(),
@@ -401,7 +401,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
               }
             }
           }
-          const tokens = matching.tokenize([desc, category, cvExtractedText].filter(Boolean).join(' '));
+          const tokens = matching.tokenize([desc, cvExtractedText].filter(Boolean).join(' '), category);
           await db.put('profiles', {
             ...profile, category, country, city, sourceText: desc, tokens,
             cvFileName, cvExtractedText, rate: rate ? parseFloat(rate) : null, availableNow,
@@ -411,7 +411,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
         } else {
           const budgetMin = dlg.querySelector('#budgetMin').value.trim();
           const budgetMax = dlg.querySelector('#budgetMax').value.trim();
-          const tokens = matching.tokenize(desc + ' ' + category);
+          const tokens = matching.tokenize(desc, category);
           await db.put('profiles', {
             ...profile, category, country, city, sourceText: desc, tokens,
             budgetMin: budgetMin ? parseFloat(budgetMin) : null,
