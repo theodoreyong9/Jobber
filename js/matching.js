@@ -68,13 +68,11 @@ const SYNONYMS = {
 // alike than they are, just because one has a longer document.
 export const MAX_KEYWORDS = 60;
 
-// Returns unique tokens ranked by frequency (repeated terms are usually the
-// point of a document) then length (longer words tend to be more specific/
-// technical than short generic ones) — not document order. This is what
-// both matching and the displayed "keywords" chips are built from, so a
-// word mentioned once in passing doesn't outrank one repeated five times.
-export function tokenize(text) {
-  const raw = (text || '')
+// Shared normalization step for both tokenize()'s main text and its
+// priorityText — lowercase, strip punctuation/accents, drop stopwords,
+// listing boilerplate, and pure numbers, fold known synonyms.
+function cleanWords(text) {
+  return (text || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // é→e, à→a — fold, don't delete
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -85,12 +83,32 @@ export function tokenize(text) {
     .filter((w) => !STOPWORDS.has(w))
     .filter((w) => !BOILERPLATE.has(w))
     .map((w) => SYNONYMS[w] || w);
+}
+
+// Returns unique tokens ranked by frequency (repeated terms are usually the
+// point of a document) then length (longer words tend to be more specific/
+// technical than short generic ones) — not document order. This is what
+// both matching and the displayed "keywords" chips are built from, so a
+// word mentioned once in passing doesn't outrank one repeated five times.
+//
+// `priorityText` — typically just the category/title field — is exempt from
+// that ranking and always survives the MAX_KEYWORDS cap. Without this, a
+// real CV's sheer length could bump a short, one-off word like a
+// deliberately-typed "Vendeur" out of the top 60 purely because dozens of
+// longer CV words happened to tie it on frequency (both appear once) and
+// win the length tiebreak — silently erasing the one keyword the person
+// actually chose, from the one field meant to represent them best.
+export function tokenize(text, priorityText = '') {
+  const priorityWords = [...new Set(cleanWords(priorityText))].slice(0, MAX_KEYWORDS);
+  const prioritySet = new Set(priorityWords);
 
   const freq = new Map();
-  for (const w of raw) freq.set(w, (freq.get(w) || 0) + 1);
-  return [...freq.keys()]
-    .sort((a, b) => (freq.get(b) - freq.get(a)) || (b.length - a.length))
-    .slice(0, MAX_KEYWORDS);
+  for (const w of cleanWords(text)) freq.set(w, (freq.get(w) || 0) + 1);
+  const ranked = [...freq.keys()]
+    .filter((w) => !prioritySet.has(w))
+    .sort((a, b) => (freq.get(b) - freq.get(a)) || (b.length - a.length));
+
+  return [...priorityWords, ...ranked].slice(0, MAX_KEYWORDS);
 }
 
 // The recruiter's seniority range (spec: "année d'ancienneté min/max") is
