@@ -10,7 +10,7 @@
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
-import { state, NAMESPACES, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
+import { state, NAMESPACE_GROUPS, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
 
@@ -30,24 +30,31 @@ const MODE_ICONS = {
   tribute: '🕸️',
 };
 
+function modeIconHtml(ns) {
+  const cfg = NS_CONFIG[ns];
+  const isActive = ns === state.activeNamespace;
+  const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
+  // Near has no identity of its own (see near-ui.js), and external
+  // namespaces (creator/wallet/tribute) just open another app — neither
+  // needs the "no identity yet" empty-dot indicator.
+  const needsIdentity = cfg.kind !== 'near' && cfg.kind !== 'external';
+  const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
+  return `
+    <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
+      <span class="mode-icon-glyph">${MODE_ICONS[ns] || '●'}</span>
+      <span class="mode-icon-label">${cfg.label}</span>
+      ${isLive ? '<span class="mode-icon-dot live"></span>' : (needsIdentity && !hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
+    </button>`;
+}
+
 export function renderModeIcons() {
   const nav = document.getElementById('modeIcons');
-  nav.innerHTML = NAMESPACES.map((ns) => {
-    const cfg = NS_CONFIG[ns];
-    const isActive = ns === state.activeNamespace;
-    const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
-    // Near has no identity of its own (see near-ui.js), and external
-    // namespaces (creator/wallet/tribute) just open another app — neither
-    // needs the "no identity yet" empty-dot indicator.
-    const needsIdentity = cfg.kind !== 'near' && cfg.kind !== 'external';
-    const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
-    return `
-      <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
-        <span class="mode-icon-glyph">${MODE_ICONS[ns] || '●'}</span>
-        <span class="mode-icon-label">${cfg.label}</span>
-        ${isLive ? '<span class="mode-icon-dot live"></span>' : (needsIdentity && !hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
-      </button>`;
-  }).join('');
+  // Grouped into visually separated clusters (NAMESPACE_GROUPS) instead of
+  // one flat row — thirteen icons side by side with no structure was the
+  // actual problem, not any one icon's own styling.
+  nav.innerHTML = NAMESPACE_GROUPS.map((group) => `
+    <span class="mode-group">${group.namespaces.map(modeIconHtml).join('')}</span>
+  `).join('<span class="mode-group-divider"></span>');
 
   nav.querySelectorAll('.mode-icon').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -134,9 +141,9 @@ export async function renderTopbar() {
         ${id.role ? `<span class="pill role">${roleLabel(ns, id.role)}</span>` : ''}
         <span class="pill">#${id.identityId}</span>
         ${picker}
+        <button class="edit-profile-btn" data-act="edit" title="${cfg.kind === 'research' || cfg.kind === 'agent' ? 'Rename' : 'Edit name & profile'}">✎ ${cfg.kind === 'research' || cfg.kind === 'agent' ? 'Rename' : 'Edit profile'}</button>
         <span class="idbtns">
           <button data-act="new" title="New identity in ${cfg.label}">+</button>
-          <button data-act="edit" title="${cfg.kind === 'research' || cfg.kind === 'agent' ? 'Rename' : 'Edit name & profile'}">✎</button>
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
         </span>
@@ -187,7 +194,7 @@ async function renderSearchAndEnrichControls(ns, id, cfg, controls) {
   const profileEmpty = !isLive && profile.tokens.length === 0;
 
   controls.innerHTML = `
-    <span class="chip">${profile.tokens.length} CPU</span>
+    <span class="chip">${profile.tokens.length} words</span>
     <span class="chip ai">◆ ${profile.aiTokens.length} AI</span>
     ${lookingForCount !== null ? `<span class="chip" style="border-color:var(--agent);color:var(--agent)">${lookingForCount} looking-for</span>` : ''}
     <button class="btn ${isLive ? 'small ghost' : 'primary'}" id="toggleSearch" ${profileEmpty ? 'disabled' : ''} title="${isLive ? 'Stop searching' : profileEmpty ? 'Complete your profile first — add a category, CV, or posting text' : 'Start searching'}">${isLive ? '■' : 'Search'}</button>
