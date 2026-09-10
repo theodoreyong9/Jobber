@@ -13,6 +13,18 @@ import * as db from './db.js';
 
 export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'wallet', 'tribute'];
 
+// Purely a display grouping for the mode-icon bar (identity-ui.js) — every
+// other consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still
+// just wants the flat list, so this doesn't replace it. Three clusters:
+// the actual P2P matching namespaces, the cross-cutting tools that read
+// what those already discovered, and the links out to the rest of this
+// portfolio.
+export const NAMESPACE_GROUPS = [
+  { label: 'Match', namespaces: ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating'] },
+  { label: 'Insight', namespaces: ['research', 'near', 'agent'] },
+  { label: 'Ecosystem', namespaces: ['creator', 'wallet', 'tribute'] },
+];
+
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
 // "reciprocal" (dating) matches each identity's *search* against the
 // other's *profile*, in both directions — a real match needs both sides
