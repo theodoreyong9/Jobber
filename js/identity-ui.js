@@ -166,12 +166,20 @@ async function renderSearchAndEnrichControls(ns, id, cfg, controls) {
   const profile = await getProfile(id.identityId);
   const isLive = !!state.searchLive[ns];
   const lookingForCount = cfg.kind === 'reciprocal' ? (profile.searchTokens || []).length : null;
+  // tokens is populated by every profile editor as soon as there's
+  // anything to match on (category, CV, job posting, description...) — an
+  // empty array means "nothing entered yet", the same signal across every
+  // namespace kind. Going live with nothing to broadcast wastes a P2P
+  // connection and produces meaningless matches, so it's blocked here
+  // rather than silently allowed and only failing to matter once results
+  // come back empty.
+  const profileEmpty = !isLive && profile.tokens.length === 0;
 
   controls.innerHTML = `
     <span class="chip">${profile.tokens.length} CPU</span>
     <span class="chip ai">◆ ${profile.aiTokens.length} AI</span>
     ${lookingForCount !== null ? `<span class="chip" style="border-color:var(--agent);color:var(--agent)">${lookingForCount} looking-for</span>` : ''}
-    <button class="btn ${isLive ? 'small ghost' : 'primary'}" id="toggleSearch" title="${isLive ? 'Stop searching' : 'Start searching'}">${isLive ? '■' : 'Search'}</button>
+    <button class="btn ${isLive ? 'small ghost' : 'primary'}" id="toggleSearch" ${profileEmpty ? 'disabled' : ''} title="${isLive ? 'Stop searching' : profileEmpty ? 'Complete your profile first — add a category, CV, or posting text' : 'Start searching'}">${isLive ? '■' : 'Search'}</button>
     <button class="btn ${profile.aiTokens.length ? 'success' : ''}" id="enrichAI">${profile.aiTokens.length ? `Enriched — ${profile.aiTokens.length}` : 'Enrich with local AI'}</button>
   `;
 
