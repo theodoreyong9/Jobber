@@ -77,7 +77,7 @@ export async function renderAgentWorkspace() {
             <div class="role">${directionText}</div>
             <div class="meta">
               <span class="chip">${o.matchedKeywords.slice(0, 6).join(', ') || 'no shared keywords listed'}</span>
-              <span class="chip ${o.usedAi ? 'ai' : ''}">${o.usedAi ? '◆ needed AI enrichment' : '○ CPU only, no AI needed'}</span>
+              <span class="chip ${o.usedAi ? 'ai' : ''}">${o.usedAi ? '◆ needed AI enrichment' : '○ words only, no AI needed'}</span>
             </div>
           </div>
           <div class="score">
