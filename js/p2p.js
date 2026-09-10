@@ -25,7 +25,15 @@
 import { validateMessage, createMessage } from './protocol.js';
 
 const APP_ID = 'jobber-personal-interoperable-agency';
-const TRYSTERO_URL = 'https://esm.run/@trystero-p2p/nostr';
+// Pinned to an exact version — an earlier unpinned "latest" resolve is the
+// most likely explanation for reports of "P2P networking unavailable:
+// object is not iterable": Trystero's makeAction() has always returned a
+// synchronous [send, receive] array in the versions this app was built
+// against, so a CDN resolve that silently moved to a release which changed
+// that shape (an object, or an async factory) would break the
+// destructuring below with exactly that native error. Pinning stops the
+// import from drifting again; bump this deliberately, not by accident.
+const TRYSTERO_URL = 'https://esm.run/@trystero-p2p/nostr@0.25.4';
 
 // Well-known, generally reliable public Nostr relays. Any peer using any
 // subset that overlaps with another peer's list can still find them —
@@ -57,13 +65,32 @@ async function loadTrystero() {
   return loadPromise;
 }
 
+// makeAction() has always returned a synchronous [send, receive] pair in
+// every Trystero release this app has targeted. If a future bump lands on
+// a version that changed this shape (an object with named keys, or an
+// async factory resolving to a Promise), destructuring it directly throws
+// a cryptic native "object is not iterable" error with no indication of
+// why. This adapts the common object-shape case and turns anything else
+// into a clear, actionable diagnostic instead of guessing silently.
+function normalizeAction(result, actionId) {
+  if (Array.isArray(result)) return result;
+  if (result && typeof result.then === 'function') {
+    throw new Error(`Trystero's makeAction('${actionId}') returned a Promise — this build expects a synchronous [send, receive] pair. The pinned Trystero version may have changed its API.`);
+  }
+  if (result && typeof result === 'object' && ('send' in result || 'get' in result || 'receive' in result)) {
+    console.warn(`[jobber/p2p] Trystero's makeAction('${actionId}') returned an object instead of an array — adapting. If P2P still misbehaves, check Trystero's current makeAction() return shape.`);
+    return [result.send, result.get || result.receive, result.onProgress];
+  }
+  throw new Error(`Trystero's makeAction('${actionId}') returned an unexpected value — the pinned Trystero version may have changed its API.`);
+}
+
 export async function joinNamespaceRoom(namespace, handlers = {}) {
   if (rooms.has(namespace)) return rooms.get(namespace);
 
   const joinRoom = await loadTrystero();
   const room = joinRoom({ appId: APP_ID, relayUrls: NOSTR_RELAY_URLS }, `jobber-${namespace}`);
-  const [sendMsg, getMsg] = room.makeAction('jobber-msg');
-  const [sendBlob, getBlob] = room.makeAction('jobber-blob');
+  const [sendMsg, getMsg] = normalizeAction(room.makeAction('jobber-msg'), 'jobber-msg');
+  const [sendBlob, getBlob] = normalizeAction(room.makeAction('jobber-blob'), 'jobber-blob');
 
   const peers = new Set();
 

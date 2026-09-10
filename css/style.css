@@ -83,6 +83,13 @@ a{color:var(--agent);}
 .topbar .who .idbtns{ display:flex; gap:4px; margin-left:4px; }
 .topbar .who .idbtns button{ width:22px; height:22px; border-radius:5px; border:1px solid var(--border); background:var(--panel-raised); color:var(--mid); font-size:11px; display:flex; align-items:center; justify-content:center; }
 .topbar .who .idbtns button:hover{ color:var(--hi); border-color:var(--mid); }
+/* Edit-profile is the action people actually need most often here — the
+   other three (new/rotate/retire) are occasional identity-management
+   actions. Giving it the accent color instead of the same neutral gray as
+   the rest makes it findable at a glance instead of one of four
+   indistinguishable icon buttons. */
+.topbar .who .idbtns button[data-act=edit]{ border-color:var(--accent); color:var(--accent); }
+.topbar .who .idbtns button[data-act=edit]:hover{ background:var(--accent); color:#fff; }
 .topbar .controls{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
 .switchctl{ display:flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:20px; padding:5px 10px 5px 12px; background:var(--panel-raised); font-size:11.5px; color:var(--mid); }
 .switch{ width:30px; height:17px; border-radius:20px; background:var(--border); position:relative; border:none; flex:0 0 auto; transition:background .15s ease; }
