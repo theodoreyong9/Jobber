@@ -64,6 +64,18 @@ async function buildDiscoveryPayload(ns, id, profile) {
         payload.budgetMax = profile.budgetMax;
         payload.postingText = profile.sourceText; // the request/mission text is public
       }
+    } else if (ns === 'outdoor') {
+      if (isSupply) {
+        // Unlike Employment/Business, it's the supply side (the organizer)
+        // whose text participants actually want to read — so postingText
+        // travels the opposite direction here. Contact info is shown
+        // directly, not gated behind a request/consent flow the way a CV
+        // or cover letter is: the whole point of posting is to be reachable.
+        payload.postingText = profile.sourceText;
+        payload.contactType = profile.contactType;
+        payload.contactValue = profile.contactValue;
+        payload.participantLimit = profile.participantLimit;
+      }
     }
   }
   return payload;
@@ -242,6 +254,12 @@ export async function renderClassicWorkspace(ns) {
     if (isSupplySide && profile.rate != null) {
       hardConstraints.myRate = profile.rate;
     }
+  } else if (ns === 'outdoor') {
+    // No numeric range to hard-filter on (no rate/budget equivalent) —
+    // matching is pure keyword overlap between theme and interests, same
+    // as every namespace's baseline. Location is still worth soft-ranking.
+    softConstraints.country = profile.country;
+    softConstraints.city = profile.city;
   }
 
   const cascade = discovery.runCascade(peers, {
@@ -280,6 +298,15 @@ export async function renderClassicWorkspace(ns) {
         ${!isSupplySide ? `<span class="chip">${p.rate != null ? priceWord + ' ' + p.rate : 'no ' + priceWord + ' declared'}</span><span class="chip">${p.availableNow ? (ns === 'annonce' ? 'Still available' : 'Available now') : 'Availability unknown'}</span>` : ''}
       `;
     }
+    if (ns === 'outdoor') {
+      const contactIcon = p.contactType === 'phone' ? '📞' : p.contactType === 'other' ? '✉️' : '📧';
+      return `
+        <span class="chip">${[p.city, p.country].filter(Boolean).join(', ') || 'no location declared'}</span>
+        ${!isSupplySide && p.contactValue ? `<span class="chip">${contactIcon} ${p.contactValue}</span>` : ''}
+        ${!isSupplySide && p.participantLimit != null ? `<span class="chip">Max ${p.participantLimit} participants</span>` : ''}
+        <span class="chip">${p.availableNow ? (isSupplySide ? 'Available now' : 'Still open') : 'Availability unknown'}</span>
+      `;
+    }
     return `
       <span class="chip">${(p.languages || []).join(' / ') || 'no language declared'}</span>
       <span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>
@@ -313,8 +340,13 @@ export async function renderClassicWorkspace(ns) {
                 ? `You shared your ${doc.doc.replace('_', ' ')}.`
                 : `Received their ${doc.doc.replace('_', ' ')}: <button class="btn small ghost view-doc">View</button>`}
         </div>` : '';
-    const postingPreview = (isSupplySide && p.postingText)
-      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
+    // Outdoor is the one namespace where it's the supply side (organizer)
+    // whose text is worth previewing, not the demand side — see
+    // buildDiscoveryPayload's comment for why postingText travels the
+    // opposite direction there.
+    const previewFromSupplySide = ns !== 'outdoor';
+    const postingPreview = ((previewFromSupplySide ? isSupplySide : !isSupplySide) && p.postingText)
+      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
 
     return `
         <div class="card" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
