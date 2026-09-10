@@ -20,10 +20,14 @@ const MODE_ICONS = {
   independant: '🛠️',
   annonce: '🏷️',
   drive: '🚗',
+  outdoor: '🏕️',
   dating: '💗',
   research: '🧠',
   near: '📍',
   agent: '🤖',
+  creator: '🎨',
+  wallet: '👛',
+  tribute: '🕸️',
 };
 
 export function renderModeIcons() {
@@ -32,7 +36,10 @@ export function renderModeIcons() {
     const cfg = NS_CONFIG[ns];
     const isActive = ns === state.activeNamespace;
     const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
-    const needsIdentity = cfg.kind !== 'near'; // Near has no identity of its own — see near-ui.js
+    // Near has no identity of its own (see near-ui.js), and external
+    // namespaces (creator/wallet/tribute) just open another app — neither
+    // needs the "no identity yet" empty-dot indicator.
+    const needsIdentity = cfg.kind !== 'near' && cfg.kind !== 'external';
     const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
     return `
       <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
@@ -44,6 +51,10 @@ export function renderModeIcons() {
 
   nav.querySelectorAll('.mode-icon').forEach((btn) => {
     btn.addEventListener('click', () => {
+      const cfg = NS_CONFIG[btn.dataset.ns];
+      // External namespaces never become the active view — they're a
+      // launcher, not a mode with its own workspace/topbar to render.
+      if (cfg.kind === 'external') { window.open(cfg.url, '_blank', 'noopener'); return; }
       setActiveNamespace(btn.dataset.ns);
       state.render.all();
     });
