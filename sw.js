@@ -56,14 +56,19 @@ self.addEventListener('fetch', (event) => {
   // WebLLM, fonts) and any P2P-related network traffic pass straight through.
   if (url.origin !== self.location.origin) return;
 
+  // Network-first, cache as fallback — not cache-first. CACHE_NAME never
+  // changes on its own between deploys (nothing in this repo bumps it), so
+  // cache-first meant a plain reload could keep serving a stale app shell
+  // indefinitely, until CACHE_NAME happened to be edited by hand — exactly
+  // the "have to reload for an update and even that doesn't work" report.
+  // This makes an online reload always fetch the live deploy, and only
+  // falls back to whatever's cached when the network request actually
+  // fails — which is the one case (genuinely offline) this shell exists for.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return res;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      return res;
+    }).catch(() => caches.match(event.request))
   );
 });
