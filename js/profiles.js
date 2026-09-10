@@ -93,6 +93,7 @@ export function editProfileFlow(ns, id) {
         });
         toast('Profile saved locally');
         state.render.workspace();
+        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
       },
     });
   });
@@ -145,20 +146,27 @@ export function editEmploymentProfileFlow(id) {
           const availableNow = dlg.querySelector('#avail').checked;
           const file = dlg.querySelector('#cv').files[0];
 
-          let { cvFileName, cvExtractedText, tokens, earliestYear } = profile;
+          let { cvFileName, cvExtractedText, earliestYear } = profile;
           if (file) {
             toast('Extracting text from ' + file.name + '…');
             try {
               cvExtractedText = await extract.extractText(file);
               cvFileName = file.name;
-              tokens = matching.tokenize(cvExtractedText + ' ' + category);
               earliestYear = matching.extractEarliestYear(cvExtractedText);
-              toast(`Extracted ${tokens.length} keywords from ${file.name}${earliestYear ? `, earliest year ${earliestYear}` : ''}`);
             } catch (e) {
               toast('Could not read that file: ' + e.message);
               return;
             }
           }
+          // Recomputed on every save, not just when a new CV is uploaded —
+          // a file input never keeps a previous selection, so re-saving
+          // without re-picking the file used to silently reset tokens to
+          // whatever they were before (often still empty, if the very
+          // first save had no CV at all). Category alone is now enough to
+          // produce some CPU keywords instead of a permanently empty
+          // profile until a CV happens to be attached.
+          const tokens = matching.tokenize([cvExtractedText, category].filter(Boolean).join(' '));
+          if (file) toast(`Extracted ${tokens.length} keywords from ${file.name}${earliestYear ? `, earliest year ${earliestYear}` : ''}`);
 
           await db.put('profiles', {
             ...profile, category, country, city, coverLetterText, availableNow,
@@ -179,6 +187,7 @@ export function editEmploymentProfileFlow(id) {
         }
         toast('Profile saved locally');
         state.render.workspace();
+        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
       },
     });
   });
@@ -327,6 +336,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
         }
         toast('Profile saved locally');
         state.render.workspace();
+        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
       },
     });
   });
