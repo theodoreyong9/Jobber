@@ -24,6 +24,11 @@ export async function getProfile(identityId) {
     // Business / Independant / Annonce specific:
     rate: null, budgetMin: null, budgetMax: null,
     professionalEmail: '', linkedinUrl: '', photoDataUrl: '',
+    // Outdoor-specific (see editOutdoorProfileFlow) — an organizer's
+    // contact method is shown directly on their card (not gated behind a
+    // request/consent flow like Employment's cover letter): the whole
+    // point of posting an activity is to be reachable about it.
+    contactType: 'email', contactValue: '', participantLimit: null,
   };
 }
 
@@ -188,6 +193,86 @@ export function editEmploymentProfileFlow(id) {
         toast('Profile saved locally');
         state.render.workspace();
         state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
+      },
+    });
+  });
+}
+
+// Outdoor profile editor — same twoSided mechanic as Employment/Business,
+// but there's no rate/budget range to check: an organizer's theme is
+// completely free (matched purely by keyword overlap, like everywhere
+// else), and the only asymmetric field, participant limit, is display-only
+// (a chip on the card) rather than something the other side's profile is
+// checked against — Jobber has no reliable central way to count RSVPs
+// over P2P, so it doesn't pretend to enforce a real cap.
+export function editOutdoorProfileFlow(id) {
+  getProfile(id.identityId).then((profile) => {
+    const isOrganizer = id.role === 'organizer';
+    const common = `
+      ${nameFieldHtml(id)}
+      <label>${isOrganizer ? 'Activity theme — anything, freely chosen' : 'What kind of activity are you looking for?'}</label>
+      <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Sunrise hike, beach volleyball, board game night">
+      <label>Country</label>
+      <input type="text" id="country" value="${profile.country || ''}" placeholder="e.g. Switzerland">
+      <label>City</label>
+      <input type="text" id="city" value="${profile.city || ''}" placeholder="e.g. Lausanne">
+    `;
+
+    const organizerFields = `
+      <label>Details — this IS used for keyword matching, and is shown to participants as-is</label>
+      <textarea id="desc" placeholder="Date, meeting point, what to bring…">${profile.sourceText || ''}</textarea>
+      <label>Contact method — shown directly on your card, so interested people can reach you</label>
+      <div style="display:flex;gap:8px">
+        <select id="contactType" style="flex:0 0 110px">
+          <option value="email" ${profile.contactType === 'email' ? 'selected' : ''}>Email</option>
+          <option value="phone" ${profile.contactType === 'phone' ? 'selected' : ''}>Phone</option>
+          <option value="other" ${profile.contactType === 'other' ? 'selected' : ''}>Other</option>
+        </select>
+        <input type="text" id="contactValue" value="${profile.contactValue || ''}" placeholder="you@example.com" style="flex:1">
+      </div>
+      <label>Participant limit — shown as a headcount, not enforced (Jobber has no central RSVP count over P2P)</label>
+      <input type="text" id="limit" value="${profile.participantLimit ?? ''}" placeholder="e.g. 8">
+      <label><input type="checkbox" id="avail" ${profile.availableNow ? 'checked' : ''}> Still open</label>
+    `;
+
+    const participantFields = `
+      <label>What you're interested in — this is what gets matched against organizers' themes</label>
+      <textarea id="interests" placeholder="e.g. Hiking, casual sports, anything outdoors on weekends">${profile.sourceText || ''}</textarea>
+      <label><input type="checkbox" id="avail" ${profile.availableNow ? 'checked' : ''}> Available now</label>
+    `;
+
+    openModal(`Edit profile — ${roleLabel('outdoor', id.role)}`, common + (isOrganizer ? organizerFields : participantFields), {
+      submitLabel: 'Save profile',
+      onSubmit: async (dlg) => {
+        await saveNameIfChanged(id, dlg);
+        const category = dlg.querySelector('#cat').value.trim();
+        const country = dlg.querySelector('#country').value.trim();
+        const city = dlg.querySelector('#city').value.trim();
+        const availableNow = dlg.querySelector('#avail').checked;
+
+        if (isOrganizer) {
+          const sourceText = dlg.querySelector('#desc').value;
+          const contactType = dlg.querySelector('#contactType').value;
+          const contactValue = dlg.querySelector('#contactValue').value.trim();
+          const limit = dlg.querySelector('#limit').value.trim();
+          const tokens = matching.tokenize(sourceText + ' ' + category);
+          await db.put('profiles', {
+            ...profile, category, country, city, sourceText, availableNow, tokens,
+            contactType, contactValue,
+            participantLimit: limit ? parseInt(limit, 10) : null,
+            updatedAt: Date.now(),
+          });
+        } else {
+          const sourceText = dlg.querySelector('#interests').value;
+          const tokens = matching.tokenize(sourceText + ' ' + category);
+          await db.put('profiles', {
+            ...profile, category, country, city, sourceText, availableNow, tokens,
+            updatedAt: Date.now(),
+          });
+        }
+        toast('Profile saved locally');
+        state.render.workspace();
+        state.render.topbar();
       },
     });
   });
@@ -365,6 +450,7 @@ export async function enrichProfileWithAI(ns, id, onProgress = () => {}) {
 // pencil, which is exactly the kind of duplication that drifts.
 export function openProfileEditor(ns, id) {
   if (ns === 'employment') editEmploymentProfileFlow(id);
+  else if (ns === 'outdoor') editOutdoorProfileFlow(id);
   else if (ns === 'business' || ns === 'independant' || ns === 'annonce' || ns === 'drive') editSupplyDemandProfileFlow(ns, id);
   else editProfileFlow(ns, id);
 }
