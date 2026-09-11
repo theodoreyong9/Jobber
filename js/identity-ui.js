@@ -9,9 +9,14 @@
 //
 // Picking *which mode* an identity belongs to no longer happens here — the
 // Bureau (desktop-ui.js) is where that decision gets made, before this
-// flow ever opens; it just names (and roles) whatever ns it's handed. It's
-// still called directly with a fixed ns for "add another identity in this
-// same mode" (the topbar's + button, below).
+// flow ever opens; it just names (and roles) whatever ns it's handed. The
+// topbar used to have its own "+" for "add another identity in this same
+// mode", but the Bureau's own "+ New identity" already covers that exact
+// case (pick the same mode again, it only offers whatever role isn't
+// taken yet) — a second entry point to the same thing was just
+// redundant, so it's gone; `quickCreate` below is the only in-workspace
+// fallback left, for the edge case of landing on a workspace with no
+// active identity at all.
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
@@ -125,7 +130,6 @@ export async function renderTopbar() {
         ${id.role ? `<span class="pill role">${roleLabel(ns, id.role)}</span>` : ''}
         <span class="pill">#${id.identityId}</span>
         <span class="idbtns">
-          <button data-act="new" title="New identity in ${cfg.label}">+</button>
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
         </span>
@@ -133,7 +137,6 @@ export async function renderTopbar() {
       </div>
     </div>`;
 
-  who.querySelector('[data-act=new]').addEventListener('click', () => createIdentityFlow(ns));
   who.querySelector('[data-act=edit]').addEventListener('click', () => {
     if (cfg.kind === 'research') renameFlow(id);
     else openProfileEditor(ns, id);
