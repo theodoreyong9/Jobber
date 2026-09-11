@@ -8,6 +8,7 @@ import * as p2p from './p2p.js';
 import * as db from './db.js';
 import * as discovery from './discovery.js';
 import * as matching from './matching.js';
+import * as credibility from './credibility.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 import { state, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole, canInitiateChat } from './state.js';
 import { openModal, toast } from './ui-kit.js';
@@ -283,6 +284,13 @@ export async function renderClassicWorkspace(ns) {
   const scored = [...scoredRemote, ...await localTestMatches(ns, cfg, id, myTokens, myLookingForTokens)]
     .sort((a, b) => b.match.score - a.match.score);
 
+  // Credibility is a completely separate question from Match (see
+  // credibility.js) — computed once per card here rather than inline in
+  // renderCard, since it needs an IndexedDB read and renderCard itself
+  // stays a plain synchronous template function.
+  const credibilityBySender = new Map();
+  for (const p of scored) credibilityBySender.set(p.sender, await credibility.computeCredibility(ns, p.sender));
+
   const funnelHtml = cascade.stages.map((s, i) => `
       <div class="stage"><div class="n">${s.count}</div><div class="lbl">${s.label}</div></div>
       ${i < cascade.stages.length - 1 ? '<div class="arrow">→</div>' : ''}
@@ -322,6 +330,7 @@ export async function renderClassicWorkspace(ns) {
 
   function renderCard(p) {
     const ex = explainMatch(cfg, p.match);
+    const cred = credibilityBySender.get(p.sender); // null = never observed at all, distinct from a real, low score
     const chat = state.pendingChats[ns].get(p.sender);
     const meeting = state.pendingMeetings[ns].get(p.sender);
     const doc = state.pendingDocs[ns].get(p.sender);
@@ -367,14 +376,25 @@ export async function renderClassicWorkspace(ns) {
             <div class="score">
               <div class="pct">${p.match.score}%</div>
               <div class="bar"><i style="width:${p.match.score}%"></i></div>
+              <div class="cred">
+                <span class="cred-label">Credibility</span>
+                ${cred ? `<b>${cred.score}</b>` : `<span class="cred-none">—</span>`}
+              </div>
             </div>
           </div>
-          <div class="expl">${ex.pos.map((t) => `<div class="p">${t}</div>`).join('')}${ex.neg.map((t) => `<div class="m">${t}</div>`).join('')}</div>
+          <div class="expl">
+            <div class="k">Match</div>
+            ${ex.pos.map((t) => `<div class="p">${t}</div>`).join('')}${ex.neg.map((t) => `<div class="m">${t}</div>`).join('')}
+            <div class="k" style="margin-top:8px">Credibility — from your own local history with them, never a global score</div>
+            ${cred
+              ? cred.factors.map((f) => `<div class="${f.sign === '+' ? 'p' : 'm'}">${f.text}</div>`).join('')
+              : `<div class="m">Never observed before — no opinion yet, not a low score</div>`}
+          </div>
           ${postingPreview}
           ${meetingHtml}
           ${docHtml}
           <div class="actions">
-            <button class="btn ghost toggle-expl">Why this score</button>
+            <button class="btn ghost toggle-expl">Why these scores</button>
             ${chat && chat.status === 'incoming'
               ? `<button class="btn primary respond-yes">Accept chat</button><button class="btn respond-no">Decline</button>`
               : chat && chat.status === 'accepted'
@@ -434,7 +454,7 @@ export function bindClassicEvents(ns) {
     btn.addEventListener('click', () => {
       const card = btn.closest('.card');
       card.classList.toggle('open');
-      btn.textContent = card.classList.contains('open') ? 'Hide explanation' : 'Why this score';
+      btn.textContent = card.classList.contains('open') ? 'Hide explanation' : 'Why these scores';
     });
   });
   ws.querySelectorAll('.request-chat').forEach((btn) => {
