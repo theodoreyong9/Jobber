@@ -188,15 +188,17 @@ export function explainMatch(cfg, match) {
     : matching.explain(match);
 }
 
-// Real P2P discovery needs a second peer — one browser tab is one WebRTC
-// identity, so two identities created in the *same* tab can never discover
-// each other over the network. This computes the same match directly from
-// local data so you can sanity-check matching without needing a second tab.
+// WebRTC can't connect a browser tab to itself, so two identities created
+// in the same browser (any tab) never discover each other over the real
+// network — this computes the same match directly from local data instead.
+// Merged straight into the same results list as real peers (see
+// renderClassicWorkspace): no separate "local" treatment, no badge, same
+// card, same actions — an identity is an identity.
 async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
   if (cfg.kind === 'research') return [];
   const wantRole = cfg.kind === 'twoSided' ? complementaryRole(ns, id.role) : null;
   const candidates = state.identitiesByNs[ns].filter((other) =>
-    other.identityId !== id.identityId && other.active &&
+    other.identityId !== id.identityId && other.active && !state.blocked[ns].has(other.identityId) &&
     (cfg.kind !== 'twoSided' || other.role === wantRole)
   );
   const out = [];
@@ -210,6 +212,7 @@ async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
       rate: p2.rate, budgetMin: p2.budgetMin, budgetMax: p2.budgetMax,
       postingText: p2.jobPostingText || p2.sourceText, photoDataUrl: p2.photoDataUrl,
       languages: p2.languages, availableNow: p2.availableNow,
+      contactType: p2.contactType, contactValue: p2.contactValue, participantLimit: p2.participantLimit,
     };
     const match = scoreAgainstPeer(cfg, myTokens, myLookingForTokens, peerLike);
     out.push({ ...peerLike, match });
@@ -268,11 +271,17 @@ export async function renderClassicWorkspace(ns) {
     softConstraints,
   });
 
-  const scored = cascade.pool
-    .map((p) => ({ ...p, match: scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) }))
-    .sort((a, b) => b.match.score - a.match.score);
+  const scoredRemote = cascade.pool.map((p) => ({ ...p, match: scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) }));
 
-  const localMatches = await localTestMatches(ns, cfg, id, myTokens, myLookingForTokens);
+  // Anyone matching from the same browser (a second identity you created
+  // yourself, in this tab or another) is scored exactly the same way and
+  // shown in the exact same list — WebRTC can't connect a tab to itself,
+  // so there's no live peerId behind it, but that's invisible here: it's
+  // still just a peer, discovered like any other. Trying to chat with one
+  // hits the same "not currently connected" path a real peer who went
+  // offline would.
+  const scored = [...scoredRemote, ...await localTestMatches(ns, cfg, id, myTokens, myLookingForTokens)]
+    .sort((a, b) => b.match.score - a.match.score);
 
   const funnelHtml = cascade.stages.map((s, i) => `
       <div class="stage"><div class="n">${s.count}</div><div class="lbl">${s.label}</div></div>
@@ -311,11 +320,11 @@ export async function renderClassicWorkspace(ns) {
     `;
   }
 
-  function renderCard(p, { local = false } = {}) {
+  function renderCard(p) {
     const ex = explainMatch(cfg, p.match);
-    const chat = local ? null : state.pendingChats[ns].get(p.sender);
-    const meeting = local ? null : state.pendingMeetings[ns].get(p.sender);
-    const doc = local ? null : state.pendingDocs[ns].get(p.sender);
+    const chat = state.pendingChats[ns].get(p.sender);
+    const meeting = state.pendingMeetings[ns].get(p.sender);
+    const doc = state.pendingDocs[ns].get(p.sender);
     const meetingHtml = meeting ? `
         <div class="meeting-banner">
           ${meeting.status === 'incoming'
@@ -351,7 +360,7 @@ export async function renderClassicWorkspace(ns) {
           <div class="top">
             ${p.photoDataUrl ? `<img class="avatar-photo" src="${p.photoDataUrl}" alt="">` : `<span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>`}
             <div class="info">
-              <div class="name">${local ? (p.displayName || 'Local test identity') : p.sender.slice(0, 10) + '…'}${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}${local ? ' <span class="role-badge" style="color:var(--low);border-color:var(--border)">local test</span>' : ''}</div>
+              <div class="name">${p.sender.slice(0, 10)}…${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}</div>
               <div class="role">${p.category || 'No category declared'}</div>
               <div class="meta">${metaChips(p)}</div>
             </div>
@@ -366,7 +375,7 @@ export async function renderClassicWorkspace(ns) {
           ${docHtml}
           <div class="actions">
             <button class="btn ghost toggle-expl">Why this score</button>
-            ${local ? '' : (chat && chat.status === 'incoming'
+            ${chat && chat.status === 'incoming'
               ? `<button class="btn primary respond-yes">Accept chat</button><button class="btn respond-no">Decline</button>`
               : chat && chat.status === 'accepted'
                 ? `<button class="btn primary open-chat">Open chat</button><button class="btn ghost propose-meeting">Propose meeting</button>`
@@ -374,22 +383,16 @@ export async function renderClassicWorkspace(ns) {
                   ? `<button class="btn" disabled>Request sent…</button>`
                   : canInitiateChat(ns, id.role)
                     ? `<button class="btn primary request-chat">Start conversation</button>`
-                    : `<span style="font-size:11.5px;color:var(--low);align-self:center">They can reach out to start a conversation</span>`)}
-            ${!local && ns === 'employment' && id.role === 'recruiter' && !doc ? `<button class="btn ghost request-doc" data-doc="cover_letter">Request cover letter</button>` : ''}
-            ${local ? '' : `<button class="btn ghost block-peer">Block</button>`}
+                    : `<span style="font-size:11.5px;color:var(--low);align-self:center">They can reach out to start a conversation</span>`}
+            ${ns === 'employment' && id.role === 'recruiter' && !doc ? `<button class="btn ghost request-doc" data-doc="cover_letter">Request cover letter</button>` : ''}
+            <button class="btn ghost block-peer">Block</button>
           </div>
         </div>`;
   }
 
   const resultsHtml = scored.length === 0
-    ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Open Jobber in another browser tab, device, or share this build with someone else — discovery is real WebRTC, it just needs a second peer.</div>`
+    ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Create a complementary identity — in this browser or a real second device — and it'll show up here.</div>`
     : scored.map((p) => renderCard(p)).join('');
-
-  const localHtml = localMatches.length ? `
-    <div class="k" style="margin:18px 0 8px">Local test matches</div>
-    <p class="section-sub" style="margin-bottom:10px">Other ${theirRoleLabel || ''} identities you created in this browser — useful to sanity-check matching without a second device. These never go over the network.</p>
-    <div class="results">${localMatches.map((p) => renderCard(p, { local: true })).join('')}</div>
-  ` : '';
 
   const chatPeer = state.openChatWith[ns];
   if (chatPeer) await loadConversation(ns, chatPeer); // defensive — most entry points already hydrate before opening
@@ -418,7 +421,6 @@ export async function renderClassicWorkspace(ns) {
     ${!chatPeer ? conversationsHtml : ''}
     <div class="funnel">${funnelHtml}</div>
     <div class="results">${resultsHtml}</div>
-    ${localHtml}
   `;
 }
 
