@@ -12,13 +12,15 @@
 import { state, NAMESPACES, NS_CONFIG, NAMESPACE_GROUPS, setActiveNamespace } from './state.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { openModal } from './ui-kit.js';
+import { countPendingNotifications } from './messages-ui.js';
 
 // Namespaces an identity actually gets created in. Near has no identity of
 // its own (see near-ui.js), Agent cross-references your *other* identities
-// instead of needing one of its own (see agent-ui.js), and "external"
-// namespaces are just launchers — none of these belong in "which mode is
-// this identity for".
-const NO_IDENTITY_KINDS = ['near', 'agent', 'external'];
+// instead of needing one of its own (see agent-ui.js), Messages likewise
+// just reads what your other identities already have (see messages-ui.js),
+// and "external" namespaces are just launchers — none of these belong in
+// "which mode is this identity for".
+const NO_IDENTITY_KINDS = ['near', 'agent', 'messages', 'external'];
 const CREATABLE = NAMESPACES.filter((ns) => !NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 const TOOL_NAMESPACES = NAMESPACES.filter((ns) => NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 
@@ -38,10 +40,11 @@ export function goToDesktop() {
 // into a workspace (there's no separate back button in the topbar).
 document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 
-function tileHtml(ns, { label, sub = '', dataAttrs }) {
+function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
   const cfg = NS_CONFIG[ns];
   return `
     <button type="button" class="desktop-tile" style="--tile-color:${cfg.color}" ${dataAttrs}>
+      ${badge ? `<span class="desktop-tile-badge">${badge > 9 ? '9+' : badge}</span>` : ''}
       <span class="desktop-tile-glyph">${cfg.icon}</span>
       <span class="desktop-tile-label">${label}</span>
       ${sub ? `<span class="desktop-tile-sub">${sub}</span>` : ''}
@@ -67,6 +70,8 @@ export async function renderDesktop() {
       <span class="desktop-tile-label">New identity</span>
     </button>`;
 
+  const pendingCount = countPendingNotifications();
+
   // NAMESPACE_GROUPS is Match/Insight/Ecosystem order; the Bureau reads the
   // opposite way — the portfolio's other apps and the cross-cutting tools
   // first, your own identities last — hence the reverse().
@@ -74,7 +79,11 @@ export async function renderDesktop() {
     <div class="desktop-section">
       <div class="desktop-section-label">${g.label}</div>
       <div class="desktop-grid">
-        ${g.namespaces.map((ns) => tileHtml(ns, { label: NS_CONFIG[ns].label, dataAttrs: `data-act="tool" data-ns="${ns}"` })).join('')}
+        ${g.namespaces.map((ns) => tileHtml(ns, {
+          label: NS_CONFIG[ns].label,
+          dataAttrs: `data-act="tool" data-ns="${ns}"`,
+          badge: ns === 'messages' ? pendingCount : 0,
+        })).join('')}
       </div>
     </div>`).join('');
 
