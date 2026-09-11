@@ -32,6 +32,14 @@ export function handleIncomingMessage(ns, msg, peerId) {
   }
 
   if (msg.type === 'discovery') {
+    // Reconnecting (a page reload on their end, a dropped/renegotiated
+    // WebRTC link, ...) hands the same identity a brand new peerId — the
+    // Map is keyed by peerId, so without this it would sit alongside the
+    // stale entry as a second "discovery" of the same person, inflating
+    // the funnel counts every time either side reloads.
+    for (const [existingPeerId, meta] of state.discovered[ns]) {
+      if (existingPeerId !== peerId && meta.sender === msg.sender) state.discovered[ns].delete(existingPeerId);
+    }
     state.discovered[ns].set(peerId, { ...msg.payload, namespace: ns, v: msg.v, sender: msg.sender, peerId, lastSeen: Date.now() });
     state.render.workspace();
   } else if (msg.type === 'meeting_proposal') {
