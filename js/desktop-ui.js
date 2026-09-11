@@ -14,10 +14,13 @@ import { createIdentityFlow } from './identity-ui.js';
 import { openModal } from './ui-kit.js';
 
 // Namespaces an identity actually gets created in. Near has no identity of
-// its own (see near-ui.js) and "external" namespaces are just launchers —
-// neither belongs in "which mode is this identity for".
-const CREATABLE = NAMESPACES.filter((ns) => ns !== 'near' && NS_CONFIG[ns].kind !== 'external');
-const TOOL_NAMESPACES = NAMESPACES.filter((ns) => ns === 'near' || NS_CONFIG[ns].kind === 'external');
+// its own (see near-ui.js), Agent cross-references your *other* identities
+// instead of needing one of its own (see agent-ui.js), and "external"
+// namespaces are just launchers — none of these belong in "which mode is
+// this identity for".
+const NO_IDENTITY_KINDS = ['near', 'agent', 'external'];
+const CREATABLE = NAMESPACES.filter((ns) => !NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
+const TOOL_NAMESPACES = NAMESPACES.filter((ns) => NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 
 function groupsOf(list) {
   return NAMESPACE_GROUPS
@@ -98,7 +101,7 @@ export function bindDesktopEvents() {
       const ns = btn.dataset.ns;
       const cfg = NS_CONFIG[ns];
       if (cfg.kind === 'external') { window.open(cfg.url, '_blank', 'noopener'); return; }
-      // Near: no identity to pick, opens straight into its own workspace.
+      // Near / Agent: no identity to pick, opens straight into its own workspace.
       setActiveNamespace(ns);
       state.view = 'workspace';
       state.render.all();
