@@ -40,21 +40,29 @@ async function migrateLegacyNamespaces() {
   }
 }
 
+// Both flags show a short label plus the reused .online-dot indicator
+// (same one identity cards use) — the bottom bar is compact by design now,
+// full detail lives in the title tooltip instead of in the text itself.
+function setFlag(el, ok, shortLabel, fullText) {
+  el.innerHTML = `<span class="online-dot ${ok ? 'on' : ''}"></span>${shortLabel}`;
+  el.title = fullText;
+}
+
 function registerServiceWorker() {
   const flag = document.getElementById('swFlag');
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js')
-      .then(() => { flag.textContent = 'Offline shell ready'; })
-      .catch(() => { flag.textContent = 'Offline shell unavailable'; });
+      .then(() => setFlag(flag, true, 'Offline', 'Offline shell ready'))
+      .catch(() => setFlag(flag, false, 'Offline', 'Offline shell unavailable'));
   } else {
-    flag.textContent = 'Service workers unsupported';
+    setFlag(flag, false, 'Offline', 'Service workers unsupported');
   }
 }
 
 function reportWebGPU() {
-  document.getElementById('webgpuFlag').textContent = llm.isWebGPUAvailable()
-    ? '· Local AI available (WebGPU)'
-    : '· Local AI unavailable on this device';
+  const available = llm.isWebGPUAvailable();
+  setFlag(document.getElementById('webgpuFlag'), available, 'AI',
+    available ? 'Local AI available (WebGPU)' : 'Local AI unavailable on this device');
 }
 
 // Full local-data backup/restore — see backup.js for exactly what's
