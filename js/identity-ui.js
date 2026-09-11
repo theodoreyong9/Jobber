@@ -30,7 +30,7 @@ const MODE_ICONS = {
   tribute: '🌐',
 };
 
-function modeIconHtml(ns) {
+function modeSwitcherItemHtml(ns) {
   const cfg = NS_CONFIG[ns];
   const isActive = ns === state.activeNamespace;
   const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
@@ -40,31 +40,47 @@ function modeIconHtml(ns) {
   const needsIdentity = cfg.kind !== 'near' && cfg.kind !== 'external';
   const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
   return `
-    <button class="mode-icon ${isActive ? 'active' : ''}" data-ns="${ns}" title="${cfg.label}">
-      <span class="mode-icon-glyph">${MODE_ICONS[ns] || '●'}</span>
-      <span class="mode-icon-label">${cfg.label}</span>
+    <button class="mode-switcher-item ${isActive ? 'active' : ''}" data-ns="${ns}">
+      <span class="mode-switcher-item-glyph">${MODE_ICONS[ns] || '●'}</span>
+      <span class="mode-switcher-item-label">${cfg.label}</span>
       ${isLive ? '<span class="mode-icon-dot live"></span>' : (needsIdentity && !hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
     </button>`;
 }
 
+// A single always-visible "current mode" button that opens a dropdown
+// listing every mode with its icon *and* name, grouped under a caption —
+// not a permanently-visible grid of icons, which is what actually didn't
+// fit/read well on a phone no matter how it was arranged. Built on a
+// native <details>/<summary> disclosure, the same pattern already used by
+// the status bar's ⚙ storage/backup panel — no custom open/close JS needed
+// for the toggle itself, just closing it again on selection.
 export function renderModeIcons() {
   const nav = document.getElementById('modeIcons');
-  // Grouped into visually separated clusters (NAMESPACE_GROUPS), each on
-  // its own row with a caption — not a single flat row. A vertical
-  // divider between groups doesn't read as "grouped" on a phone screen
-  // narrow enough that the first group alone (7 icons) already fills the
-  // width: you'd have to scroll past the whole group before ever seeing
-  // where it ends. Wrapping into rows makes every group visible without
-  // scrolling regardless of screen width.
-  nav.innerHTML = NAMESPACE_GROUPS.map((group) => `
-    <span class="mode-group">
-      <span class="mode-group-label">${group.label}</span>
-      <span class="mode-group-icons">${group.namespaces.map(modeIconHtml).join('')}</span>
-    </span>
-  `).join('');
+  const activeCfg = state.activeNamespace ? NS_CONFIG[state.activeNamespace] : null;
+  const currentGlyph = activeCfg ? (MODE_ICONS[state.activeNamespace] || '●') : '☰';
+  const currentLabel = activeCfg ? activeCfg.label : 'Choose a mode';
 
-  nav.querySelectorAll('.mode-icon').forEach((btn) => {
+  nav.innerHTML = `
+    <details class="mode-switcher">
+      <summary class="mode-switcher-current">
+        <span class="mode-switcher-item-glyph">${currentGlyph}</span>
+        <span>${currentLabel}</span>
+        <span class="mode-switcher-chevron">▾</span>
+      </summary>
+      <div class="mode-switcher-panel">
+        ${NAMESPACE_GROUPS.map((group) => `
+          <div class="mode-switcher-group">
+            <div class="mode-switcher-group-label">${group.label}</div>
+            ${group.namespaces.map(modeSwitcherItemHtml).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </details>`;
+
+  const details = nav.querySelector('.mode-switcher');
+  nav.querySelectorAll('.mode-switcher-item').forEach((btn) => {
     btn.addEventListener('click', () => {
+      details.removeAttribute('open');
       const cfg = NS_CONFIG[btn.dataset.ns];
       // External namespaces never become the active view — they're a
       // launcher, not a mode with its own workspace/topbar to render.
@@ -74,6 +90,15 @@ export function renderModeIcons() {
     });
   });
 }
+
+// Registered once, not per-render: closes the dropdown on any click
+// outside it. Native <details> only toggles on its own <summary>, so
+// without this it would stay open until the next unrelated re-render
+// happened to wipe modeIcons' innerHTML.
+document.addEventListener('click', (e) => {
+  const details = document.querySelector('.mode-switcher[open]');
+  if (details && !details.contains(e.target)) details.removeAttribute('open');
+});
 
 export function createIdentityFlow(ns) {
   const cfg = NS_CONFIG[ns];
