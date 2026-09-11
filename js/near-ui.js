@@ -25,7 +25,7 @@ function collectNearbyPeers() {
   if (!state.nearCoords) return [];
   const out = [];
   for (const ns of NAMESPACES) {
-    if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent') continue;
+    if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent' || NS_CONFIG[ns].kind === 'messages') continue;
     const discovered = state.discovered[ns];
     if (!discovered) continue;
     for (const p of discovered.values()) {
@@ -40,7 +40,7 @@ function collectNearbyPeers() {
 export async function renderNearWorkspace() {
   await hydrateNearPrefs();
   const nearby = collectNearbyPeers();
-  const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && state.searchLive[ns]);
+  const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && NS_CONFIG[ns].kind !== 'messages' && state.searchLive[ns]);
 
   const listHtml = !isGeolocationAvailable()
     ? `<div class="empty-state">Geolocation isn't available in this browser.</div>`
@@ -125,7 +125,7 @@ export function bindNearEvents() {
 // rebroadcast in discovery-ui.js.
 async function rebroadcastToActiveNamespaces() {
   for (const ns of NAMESPACES) {
-    if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent') continue;
+    if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent' || NS_CONFIG[ns].kind === 'messages') continue;
     if (state.searchLive[ns] && state.handlers.rebroadcastDiscovery) {
       await state.handlers.rebroadcastDiscovery(ns);
     }
