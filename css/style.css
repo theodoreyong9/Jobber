@@ -188,10 +188,16 @@ h2.section-title{ font-family:var(--font-head); font-size:15px; font-weight:600;
 .card .info .name{ font-weight:600; font-size:13px; font-family:var(--font-mono); }
 .card .info .role{ color:var(--mid); font-size:12px; }
 .card .meta{ display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
-.card .score{ text-align:right; flex:0 0 auto; width:88px; }
+.card .score{ text-align:right; flex:0 0 auto; width:96px; }
 .card .score .pct{ font-family:var(--font-mono); font-size:18px; font-weight:500; }
 .card .score .bar{ height:4px; border-radius:3px; background:var(--border-soft); margin-top:6px; overflow:hidden; }
 .card .score .bar i{ display:block; height:100%; background:var(--accent); border-radius:3px; }
+/* A separate number, deliberately not merged into the match bar above —
+   "does this fit me" and "can I trust their history" are two different
+   questions (see credibility.js). */
+.card .score .cred{ margin-top:8px; font-size:10.5px; color:var(--low); display:flex; justify-content:flex-end; align-items:baseline; gap:5px; }
+.card .score .cred b{ font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--agent); }
+.card .score .cred .cred-none{ font-family:var(--font-mono); color:var(--border); }
 .card .expl{ margin-top:10px; padding-top:10px; border-top:1px solid var(--border-soft); display:none; }
 .card.open .expl{ display:block; }
 .card .expl div{ font-size:12px; padding:2px 0; }
