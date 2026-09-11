@@ -69,7 +69,7 @@ test('every namespace with roles has exactly two, and dating/research have none'
 test('pickActiveNamespace shows the welcome screen on a genuine first-ever open (nothing anywhere)', () => {
   const result = pickActiveNamespace({
     lastActiveValue: undefined,
-    identitiesByNs: { employment: [], business: [], independant: [], dating: [], research: [] },
+    identitiesByNs: { employment: [], business: [], dating: [], research: [] },
   });
   assert.equal(result, null);
 });
@@ -82,7 +82,7 @@ test('pickActiveNamespace reproduces and fixes the real shipped bug: create an i
     lastActiveValue: 'employment',
     identitiesByNs: {
       employment: [{ identityId: 'X', active: false }], // retired, not deleted from history
-      business: [], independant: [], dating: [], research: [],
+      business: [], dating: [], research: [],
     },
   });
   assert.equal(result, null);
@@ -93,7 +93,7 @@ test('pickActiveNamespace honors the remembered namespace once something is actu
     lastActiveValue: 'dating',
     identitiesByNs: {
       employment: [{ identityId: 'X', active: true }],
-      business: [], independant: [],
+      business: [],
       dating: [{ identityId: 'Y', active: true }],
       research: [],
     },
@@ -106,7 +106,7 @@ test('pickActiveNamespace falls back to "wherever you have an active identity" w
     lastActiveValue: undefined,
     identitiesByNs: {
       employment: [], business: [{ identityId: 'Z', active: true }],
-      independant: [], dating: [], research: [],
+      dating: [], research: [],
     },
   });
   assert.equal(result, 'business');
@@ -117,7 +117,7 @@ test('pickActiveNamespace ignores a remembered namespace that no longer exists',
     lastActiveValue: 'not_a_real_namespace',
     identitiesByNs: {
       employment: [{ identityId: 'X', active: true }],
-      business: [], independant: [], dating: [], research: [],
+      business: [], dating: [], research: [],
     },
   });
   assert.equal(result, 'employment');
@@ -130,8 +130,8 @@ test('canInitiateChat: only the demand-side role can start a conversation in two
   assert.equal(canInitiateChat('employment', 'candidate'), false);
   assert.equal(canInitiateChat('business', 'client'), true);
   assert.equal(canInitiateChat('business', 'offer'), false);
-  assert.equal(canInitiateChat('independant', 'user'), true);
-  assert.equal(canInitiateChat('independant', 'provider'), false);
+  assert.equal(canInitiateChat('outdoor', 'participant'), true);
+  assert.equal(canInitiateChat('outdoor', 'organizer'), false);
 });
 
 test('canInitiateChat: reciprocal and research namespaces are never gated', () => {
