@@ -66,6 +66,11 @@ export async function renderTopbar() {
     controls.innerHTML = '';
     return;
   }
+  if (cfg.kind === 'agent') {
+    who.innerHTML = `<div class="name">Agent</div><div class="sub" style="color:var(--low);font-size:11.5px">Cross-references your other identities' profiles against what they've already discovered — no identity of its own needed here.</div>`;
+    controls.innerHTML = '';
+    return;
+  }
 
   const list = state.identitiesByNs[ns].filter((i) => i.active);
   const id = list.find((i) => i.identityId === state.activeIdentityId[ns]);
@@ -99,13 +104,13 @@ export async function renderTopbar() {
           <button data-act="rotate" title="Rotate (replace this key, keep the name)">⟲</button>
           <button data-act="retire" title="Retire this identity">⨯</button>
         </span>
-        <button class="edit-profile-btn" data-act="edit" title="${cfg.kind === 'research' || cfg.kind === 'agent' ? 'Rename' : 'Edit name & profile'}">✎ ${cfg.kind === 'research' || cfg.kind === 'agent' ? 'Rename' : 'Edit profile'}</button>
+        <button class="edit-profile-btn" data-act="edit" title="${cfg.kind === 'research' ? 'Rename' : 'Edit name & profile'}">✎ ${cfg.kind === 'research' ? 'Rename' : 'Edit profile'}</button>
       </div>
     </div>`;
 
   who.querySelector('[data-act=new]').addEventListener('click', () => createIdentityFlow(ns));
   who.querySelector('[data-act=edit]').addEventListener('click', () => {
-    if (cfg.kind === 'research' || cfg.kind === 'agent') renameFlow(id);
+    if (cfg.kind === 'research') renameFlow(id);
     else openProfileEditor(ns, id);
   });
   who.querySelector('[data-act=rotate]').addEventListener('click', () => rotateFlow(id));
@@ -118,10 +123,6 @@ export async function renderTopbar() {
   if (cfg.kind === 'research') {
     controls.innerHTML = `<div class="switchctl">Human-in-the-loop <button class="switch on" id="hitl"></button></div>`;
     document.getElementById('hitl').addEventListener('click', (e) => e.currentTarget.classList.toggle('on'));
-    return;
-  }
-  if (cfg.kind === 'agent') {
-    controls.innerHTML = ''; // prototype — nothing to control yet
     return;
   }
 
