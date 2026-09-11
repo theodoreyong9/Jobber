@@ -7,6 +7,7 @@
 
 import * as db from './db.js';
 import * as p2p from './p2p.js';
+import * as credibility from './credibility.js';
 import { state, canInitiateChat } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile } from './profiles.js';
@@ -57,9 +58,13 @@ export function respondMeeting(ns, id, theirIdentityId, accept) {
   const peerId = state.identityToPeer[ns].get(theirIdentityId);
   const m = state.pendingMeetings[ns].get(theirIdentityId) || {};
   if (peerId) p2p.getRoom(ns).send(accept ? 'meeting_accept' : 'meeting_decline', id.identityId, { when: m.when }, peerId, m.requestId);
-  if (accept) state.pendingMeetings[ns].set(theirIdentityId, { ...m, status: 'accepted' });
-  else state.pendingMeetings[ns].delete(theirIdentityId);
-  state.render.workspace();
+  if (accept) {
+    state.pendingMeetings[ns].set(theirIdentityId, { ...m, status: 'accepted' });
+    credibility.recordEvent(ns, theirIdentityId, credibility.EVENT.MEETING_CONFIRMED, `meeting:${m.requestId}`).then(() => state.render.workspace());
+  } else {
+    state.pendingMeetings[ns].delete(theirIdentityId);
+    state.render.workspace();
+  }
 }
 
 /* ---- Document request/offer (Employment cover letter, spec-adjacent) -- */
@@ -81,6 +86,7 @@ export async function shareDocument(ns, id, theirIdentityId, doc) {
   const requestId = state.pendingDocs[ns].get(theirIdentityId)?.requestId;
   p2p.getRoom(ns).send('document_offer', id.identityId, { doc, text }, peerId, requestId);
   state.pendingDocs[ns].set(theirIdentityId, { status: 'shared', doc });
+  await credibility.recordEvent(ns, theirIdentityId, credibility.EVENT.DOCUMENT_SHARED, `document:${requestId}`);
   state.render.workspace();
 }
 
@@ -233,9 +239,14 @@ export function respondChat(ns, id, theirIdentityId, accept) {
   const requestId = state.pendingChats[ns].get(theirIdentityId)?.requestId;
   const room = p2p.getRoom(ns);
   room.send(accept ? 'chat_accept' : 'chat_decline', id.identityId, {}, peerId, requestId);
-  if (accept) { state.pendingChats[ns].set(theirIdentityId, { status: 'accepted' }); state.openChatWith[ns] = theirIdentityId; }
-  else state.pendingChats[ns].delete(theirIdentityId);
-  state.render.workspace();
+  if (accept) {
+    state.pendingChats[ns].set(theirIdentityId, { status: 'accepted' });
+    state.openChatWith[ns] = theirIdentityId;
+    credibility.recordEvent(ns, theirIdentityId, credibility.EVENT.CHAT_ACCEPTED).then(() => state.render.workspace());
+  } else {
+    state.pendingChats[ns].delete(theirIdentityId);
+    state.render.workspace();
+  }
 }
 
 // The canonical id for this logical message is generated here and put in
@@ -329,7 +340,11 @@ export function respondAttachmentOffer(ns, id, offerId, accept) {
   if (peerId) {
     p2p.getRoom(ns).send(accept ? 'attachment_accept' : 'attachment_decline', id.identityId, { offerId }, peerId);
   }
-  if (accept) state.pendingAttachmentOffers[ns].set(offerId, { ...offer, status: 'incoming-accepted' });
-  else state.pendingAttachmentOffers[ns].delete(offerId);
-  state.render.workspace();
+  if (accept) {
+    state.pendingAttachmentOffers[ns].set(offerId, { ...offer, status: 'incoming-accepted' });
+    credibility.recordEvent(ns, offer.theirIdentityId, credibility.EVENT.ATTACHMENT_COMPLETED, `attachment:${offerId}`).then(() => state.render.workspace());
+  } else {
+    state.pendingAttachmentOffers[ns].delete(offerId);
+    state.render.workspace();
+  }
 }
