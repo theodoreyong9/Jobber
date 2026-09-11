@@ -2,7 +2,7 @@
 // Every namespace's data lives in the browser's own IndexedDB instance.
 
 const DB_NAME = 'jobber';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function openDB() {
@@ -39,6 +39,14 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('blocklist')) {
         db.createObjectStore('blocklist', { keyPath: 'compoundId' });
+      }
+      if (!db.objectStoreNames.contains('credibility_events')) {
+        // See credibility.js. `rowId` (not the DAG event's own content-hash
+        // `id`) is the primary key — two different subjects could, in
+        // principle, produce the same content-hash id from an identical
+        // payload, so the row key embeds subjectKey too.
+        const s = db.createObjectStore('credibility_events', { keyPath: 'rowId' });
+        s.createIndex('subjectKey', 'subjectKey', { unique: false });
       }
     };
 
