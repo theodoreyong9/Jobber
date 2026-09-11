@@ -1,106 +1,23 @@
-// identity-ui.js — the icon-based mode switcher, the topbar (identity
-// picker when there's more than one identity in a namespace, the unified
-// edit/rename pencil, and — for classic namespaces — the keyword counts
-// plus Search/Enrich controls, since that's what they actually act on).
-// Safely imports profiles.js directly (profiles.js has no dependency back
-// on this file). Reaches discovery-ui.js only through
-// `state.handlers.toggleSearchLive` / `state.handlers.rebroadcastDiscovery`
-// — discovery-ui.js imports *this* file for createIdentityFlow, so a
-// direct import the other way would be a real cycle. See state.js's header.
+// identity-ui.js — the topbar (identity picker, the unified edit/rename
+// pencil, and — for classic namespaces — the Search/Enrich controls, since
+// that's what they actually act on) and the create-identity flow. Safely
+// imports profiles.js directly (profiles.js has no dependency back on this
+// file). Reaches discovery-ui.js only through `state.handlers.toggleSearchLive`
+// / `state.handlers.rebroadcastDiscovery` — discovery-ui.js imports *this*
+// file for createIdentityFlow, so a direct import the other way would be a
+// real cycle. See state.js's header.
+//
+// Picking *which mode* an identity belongs to no longer happens here — the
+// Bureau (desktop-ui.js) is where that decision gets made, before this
+// flow ever opens; it just names (and roles) whatever ns it's handed. It's
+// still called directly with a fixed ns for "add another identity in this
+// same mode" (the topbar's + button, below).
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
-import { state, NAMESPACE_GROUPS, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
+import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
-
-const MODE_ICONS = {
-  employment: '💼',
-  business: '🤝',
-  independant: '🛠️',
-  annonce: '🏷️',
-  drive: '🚗',
-  outdoor: '🏕️',
-  dating: '💗',
-  research: '🧠',
-  near: '📍',
-  agent: '🤖',
-  creator: '🎨',
-  discover: '🧭',
-  contribute: '🖋️',
-  wallet: '👛',
-  tribute: '🌐',
-};
-
-function modeSwitcherItemHtml(ns) {
-  const cfg = NS_CONFIG[ns];
-  const isActive = ns === state.activeNamespace;
-  const isLive = cfg.kind === 'near' ? state.nearLocationEnabled : !!state.searchLive[ns];
-  // Near has no identity of its own (see near-ui.js), and external
-  // namespaces (creator/wallet/tribute) just open another app — neither
-  // needs the "no identity yet" empty-dot indicator.
-  const needsIdentity = cfg.kind !== 'near' && cfg.kind !== 'external';
-  const hasIdentity = needsIdentity && (state.identitiesByNs[ns] || []).some((i) => i.active);
-  return `
-    <button class="mode-switcher-item ${isActive ? 'active' : ''}" data-ns="${ns}">
-      <span class="mode-switcher-item-glyph">${MODE_ICONS[ns] || '●'}</span>
-      <span class="mode-switcher-item-label">${cfg.label}</span>
-      ${isLive ? '<span class="mode-icon-dot live"></span>' : (needsIdentity && !hasIdentity ? '<span class="mode-icon-dot empty"></span>' : '')}
-    </button>`;
-}
-
-// A single always-visible "current mode" button that opens a dropdown
-// listing every mode with its icon *and* name, grouped under a caption —
-// not a permanently-visible grid of icons, which is what actually didn't
-// fit/read well on a phone no matter how it was arranged. Built on a
-// native <details>/<summary> disclosure, the same pattern already used by
-// the status bar's ⚙ storage/backup panel — no custom open/close JS needed
-// for the toggle itself, just closing it again on selection.
-export function renderModeIcons() {
-  const nav = document.getElementById('modeIcons');
-  const activeCfg = state.activeNamespace ? NS_CONFIG[state.activeNamespace] : null;
-  const currentGlyph = activeCfg ? (MODE_ICONS[state.activeNamespace] || '●') : '☰';
-  const currentLabel = activeCfg ? activeCfg.label : 'Choose a mode';
-
-  nav.innerHTML = `
-    <details class="mode-switcher">
-      <summary class="mode-switcher-current">
-        <span class="mode-switcher-item-glyph">${currentGlyph}</span>
-        <span>${currentLabel}</span>
-        <span class="mode-switcher-chevron">▾</span>
-      </summary>
-      <div class="mode-switcher-panel">
-        ${NAMESPACE_GROUPS.map((group) => `
-          <div class="mode-switcher-group">
-            <div class="mode-switcher-group-label">${group.label}</div>
-            ${group.namespaces.map(modeSwitcherItemHtml).join('')}
-          </div>
-        `).join('')}
-      </div>
-    </details>`;
-
-  const details = nav.querySelector('.mode-switcher');
-  nav.querySelectorAll('.mode-switcher-item').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      details.removeAttribute('open');
-      const cfg = NS_CONFIG[btn.dataset.ns];
-      // External namespaces never become the active view — they're a
-      // launcher, not a mode with its own workspace/topbar to render.
-      if (cfg.kind === 'external') { window.open(cfg.url, '_blank', 'noopener'); return; }
-      setActiveNamespace(btn.dataset.ns);
-      state.render.all();
-    });
-  });
-}
-
-// Registered once, not per-render: closes the dropdown on any click
-// outside it. Native <details> only toggles on its own <summary>, so
-// without this it would stay open until the next unrelated re-render
-// happened to wipe modeIcons' innerHTML.
-document.addEventListener('click', (e) => {
-  const details = document.querySelector('.mode-switcher[open]');
-  if (details && !details.contains(e.target)) details.removeAttribute('open');
-});
 
 export function createIdentityFlow(ns) {
   const cfg = NS_CONFIG[ns];
@@ -122,6 +39,7 @@ export function createIdentityFlow(ns) {
       state.identitiesByNs[ns] = await identity.listIdentities(ns);
       setActiveNamespace(ns);
       state.activeIdentityId[ns] = rec.identityId;
+      state.view = 'workspace'; // land straight in it — a no-op if we were already there (the topbar's own + button)
       toast(`Identity #${rec.identityId} created for ${cfg.label}${role ? ' (' + roleLabel(ns, role) + ')' : ''}`);
       state.render.all();
     },
@@ -129,16 +47,18 @@ export function createIdentityFlow(ns) {
 }
 
 export async function renderTopbar() {
-  const ns = state.activeNamespace;
   const who = document.getElementById('topbarWho');
   const controls = document.getElementById('topbarControls');
 
-  if (!ns) {
-    who.innerHTML = `<div class="name">Welcome to Jobber</div>`;
+  // The Bureau (desktop-ui.js) has its own screen — nothing to show here
+  // until a tile's actually been tapped into.
+  if (state.view !== 'workspace' || !state.activeNamespace) {
+    who.innerHTML = `<div class="name">Bureau</div>`;
     controls.innerHTML = '';
     return;
   }
 
+  const ns = state.activeNamespace;
   const cfg = NS_CONFIG[ns];
 
   if (cfg.kind === 'near') {
@@ -322,6 +242,9 @@ function retireFlow(id) {
       await identity.retireIdentity(id.identityId);
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
       state.activeIdentityId[id.namespace] = pickActiveIdentityId(state.identitiesByNs[id.namespace]);
+      // Nothing left to show in this workspace — back to the Bureau rather
+      // than a dead "no identity here yet" screen.
+      if (!state.activeIdentityId[id.namespace]) state.view = 'desktop';
       state.render.all();
     },
   });
