@@ -6,6 +6,7 @@
 
 import * as p2p from './p2p.js';
 import * as research from './research.js';
+import * as credibility from './credibility.js';
 import { state } from './state.js';
 import { toast } from './ui-kit.js';
 import { flushOutbox, loadConversation, persistMessage, requestConversationSync, handleConversationSyncRequest, handleConversationSyncResponse } from './conversations.js';
@@ -41,7 +42,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
       if (existingPeerId !== peerId && meta.sender === msg.sender) state.discovered[ns].delete(existingPeerId);
     }
     state.discovered[ns].set(peerId, { ...msg.payload, namespace: ns, v: msg.v, sender: msg.sender, peerId, lastSeen: Date.now() });
-    state.render.workspace();
+    // Awaited before rendering — the card that's about to show this peer's
+    // credibility would otherwise race the write and read "never seen" on
+    // the very first render, one tick before it's actually true.
+    credibility.recordEvent(ns, msg.sender, credibility.EVENT.FIRST_SEEN).then(() => state.render.workspace());
   } else if (msg.type === 'meeting_proposal') {
     state.pendingMeetings[ns].set(msg.sender, { status: 'incoming', when: msg.payload.when, note: msg.payload.note, requestId: msg.messageId });
     toast(`Meeting proposed: ${msg.payload.when}`);
@@ -55,11 +59,12 @@ export function handleIncomingMessage(ns, msg, peerId) {
     if (msg.type === 'meeting_accept') {
       state.pendingMeetings[ns].set(msg.sender, { status: 'accepted', when: msg.payload.when });
       toast('Meeting accepted');
+      credibility.recordEvent(ns, msg.sender, credibility.EVENT.MEETING_CONFIRMED, `meeting:${msg.correlationId}`).then(() => state.render.workspace());
     } else {
       state.pendingMeetings[ns].delete(msg.sender);
       toast('Meeting declined');
+      state.render.workspace();
     }
-    state.render.workspace();
   } else if (msg.type === 'document_request') {
     state.pendingDocs[ns].set(msg.sender, { status: 'incoming', doc: msg.payload.doc, requestId: msg.messageId });
     toast(`${msg.sender.slice(0, 6)}… requested your ${msg.payload.doc.replace('_', ' ')}`);
@@ -72,7 +77,7 @@ export function handleIncomingMessage(ns, msg, peerId) {
     }
     state.pendingDocs[ns].set(msg.sender, { status: 'received', doc: msg.payload.doc, text: msg.payload.text });
     toast(`Received ${msg.payload.doc.replace('_', ' ')}`);
-    state.render.workspace();
+    credibility.recordEvent(ns, msg.sender, credibility.EVENT.DOCUMENT_SHARED, `document:${msg.correlationId}`).then(() => state.render.workspace());
   } else if (msg.type === 'attachment_offer') {
     state.pendingAttachmentOffers[ns].set(msg.payload.offerId, {
       status: 'incoming', name: msg.payload.name, size: msg.payload.size, type: msg.payload.type, theirIdentityId: msg.sender,
@@ -81,6 +86,7 @@ export function handleIncomingMessage(ns, msg, peerId) {
     state.render.workspace();
   } else if (msg.type === 'attachment_accept') {
     const offer = state.pendingAttachmentOffers[ns].get(msg.payload.offerId);
+    let credibilityRecorded = Promise.resolve();
     if (offer && offer.status === 'outgoing' && offer.file) {
       const targetPeerId = state.identityToPeer[ns].get(offer.theirIdentityId);
       if (targetPeerId) {
@@ -93,11 +99,12 @@ export function handleIncomingMessage(ns, msg, peerId) {
         state.chatLog[ns].get(offer.theirIdentityId).push(entry);
         state.loadedConversations[ns].add(offer.theirIdentityId);
         persistMessage(ns, offer.theirIdentityId, { ...entry, url: undefined, blob: offer.file });
+        credibilityRecorded = credibility.recordEvent(ns, offer.theirIdentityId, credibility.EVENT.ATTACHMENT_COMPLETED, `attachment:${msg.payload.offerId}`);
         toast(`${offer.name} accepted — sending now.`);
       }
     }
     state.pendingAttachmentOffers[ns].delete(msg.payload.offerId);
-    state.render.workspace();
+    credibilityRecorded.then(() => state.render.workspace());
   } else if (msg.type === 'attachment_decline') {
     state.pendingAttachmentOffers[ns].delete(msg.payload.offerId);
     toast('Attachment declined.');
@@ -114,7 +121,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
     }
     if (msg.type === 'chat_accept') {
       state.pendingChats[ns].set(msg.sender, { status: 'accepted' });
-      loadConversation(ns, msg.sender).then(() => {
+      Promise.all([
+        credibility.recordEvent(ns, msg.sender, credibility.EVENT.CHAT_ACCEPTED), // once per relationship, not per message
+        loadConversation(ns, msg.sender),
+      ]).then(() => {
         state.openChatWith[ns] = msg.sender;
         state.render.workspace();
       });
@@ -134,6 +144,10 @@ export function handleIncomingMessage(ns, msg, peerId) {
     persistMessage(ns, msg.sender, entry);
     state.render.workspace();
   } else if (msg.type === 'identity_retired') {
+    // Re-key whatever credibility history *I've* built about them onto
+    // their new id — without this, every rotation would silently reset
+    // to "never seen" from every observer's point of view.
+    credibility.handleRotation(ns, msg.payload.retiredId, msg.payload.rotatedTo);
     toast(`Peer identity retired: #${msg.payload.retiredId} → #${msg.payload.rotatedTo}`);
   } else if (msg.type === 'research_sync_request') {
     handleResearchSyncRequest(ns, msg, peerId);
