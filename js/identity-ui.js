@@ -19,12 +19,28 @@ import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveId
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
 
+// Two-sided namespaces cap at one *active* identity per role — a
+// namespace's roles are fixed slots (Candidate, Recruiter, …), not a list
+// you can pile identities into. Retiring one frees its role back up.
+function takenRoles(ns) {
+  return new Set((state.identitiesByNs[ns] || []).filter((i) => i.active && i.role).map((i) => i.role));
+}
+
 export function createIdentityFlow(ns) {
   const cfg = NS_CONFIG[ns];
-  const roleField = cfg.roles ? `
+  let roles = cfg.roles;
+  if (roles) {
+    const taken = takenRoles(ns);
+    roles = roles.filter((r) => !taken.has(r.key));
+    if (!roles.length) {
+      toast(`You already have an active identity for every role in ${cfg.label} — retire one first to create another.`);
+      return;
+    }
+  }
+  const roleField = roles ? `
       <label for="role">Role</label>
       <select id="role">
-        ${cfg.roles.map((r) => `<option value="${r.key}">${r.label}</option>`).join('')}
+        ${roles.map((r) => `<option value="${r.key}">${r.label}</option>`).join('')}
       </select>` : '';
   openModal(`New identity — ${cfg.label}`, `
       <label for="dn">Display name</label>
