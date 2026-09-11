@@ -33,15 +33,21 @@ a{color:var(--agent);}
 
 .app{ display:flex; flex-direction:column; height:100vh; }
 
-/* ---------- MODE BAR (replaces the old identity-list sidebar) ---------- */
-.modebar{ position:relative; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex:0 0 auto; flex-wrap:wrap; }
-.brand-mini{ font-family:var(--font-head); font-weight:700; font-size:14px; display:flex; align-items:center; gap:6px; flex:0 0 auto; cursor:pointer; }
-.brand-mini .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
-
-/* Was a standalone footer bar; now lives in the header next to the brand
-   mark instead — see index.html. */
-.statusbar{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:11px; color:var(--low); }
-.statusbar b{ color:var(--mid); font-family:var(--font-mono); font-weight:500; }
+/* ---------- MODE BAR — a compact, always-visible bottom bar. The brand
+   mark sits dead center as the button back to the Bureau; peers/AI status
+   on one side and offline/settings on the other, each side an equal-width
+   flex column so the center stays centered regardless of which side has
+   more in it. ---------- */
+.modebar{ position:relative; display:flex; align-items:center; gap:10px; padding:6px 14px; background:var(--panel); border-top:1px solid var(--border); flex:0 0 auto; }
+.modebar-side{ flex:1; min-width:0; display:flex; align-items:center; gap:10px; font-size:10.5px; color:var(--low); }
+.modebar-side-right{ justify-content:flex-end; }
+.modebar-side .stat{ display:flex; align-items:center; gap:4px; white-space:nowrap; }
+.modebar-side .stat b{ color:var(--mid); font-family:var(--font-mono); font-weight:500; }
+.brand-mini{
+  font-family:var(--font-head); font-weight:700; font-size:13px; display:flex; align-items:center; gap:5px;
+  flex:0 0 auto; cursor:pointer; border:none; background:none; padding:2px 4px; color:var(--hi);
+}
+.brand-mini .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
 
 /* ---------- BUREAU (the home screen — desktop-ui.js) ---------- */
 .desktop{ max-width:720px; margin:0 auto; padding:8px 4px 24px; }
@@ -67,16 +73,17 @@ a{color:var(--agent);}
 .online-dot{ width:6px; height:6px; border-radius:50%; background:var(--border); display:inline-block; }
 .online-dot.on{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
 
-/* ---------- SETTINGS (storage/backup — collapsed in the title bar) ---------- */
+/* ---------- SETTINGS (storage/backup — collapsed in the bottom bar) ---------- */
 .settings-details summary{ cursor:pointer; list-style:none; color:var(--low); font-size:13px; }
 .settings-details summary::-webkit-details-marker{ display:none; }
 .settings-details summary:hover{ color:var(--mid); }
 /* Positioned relative to .modebar (not .settings-details itself): the
-   status text before the gear wraps to a second line on narrow screens,
-   which moves the gear around — anchoring to the header instead means the
-   panel always opens flush under it, never sliding off either edge. */
+   status text before the gear can wrap, which moves the gear around —
+   anchoring to the bar instead means the panel always opens flush above
+   it, never sliding off either edge. Opens upward now that the bar itself
+   is pinned to the bottom of the screen. */
 .settings-panel{
-  position:absolute; top:calc(100% + 6px); right:0; z-index:20; width:260px;
+  position:absolute; bottom:calc(100% + 6px); right:0; z-index:20; width:260px;
   background:var(--panel-raised); border:1px solid var(--border); border-radius:var(--radius-m);
   padding:12px; box-shadow:0 8px 28px rgba(0,0,0,.45);
 }
