@@ -29,7 +29,7 @@ state.render.workspace = renderWorkspace;
 state.render.topbar = renderTopbar;
 
 async function migrateLegacyNamespaces() {
-  const legacyMap = { job_candidate: 'employment', mission: 'business', service: 'independant' };
+  const legacyMap = { job_candidate: 'employment', mission: 'business' };
   const all = await db.getAll('identities');
   for (const rec of all) {
     if (legacyMap[rec.namespace]) {
