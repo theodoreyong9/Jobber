@@ -28,10 +28,11 @@ single tab alone will never discover a peer. That's expected, not a bug.
 
 `.github/workflows/deploy.yml` runs on every push to `main`:
 
-1. **test** — runs the real unit suite (`node --test`, 32 tests, zero
-   dependencies) over `protocol.js`, `matching.js`, `discovery.js`,
-   `research.js`'s graph layout, and the WebCrypto signing primitives
-   `identity.js` is built on.
+1. **test** — runs the real unit suite (`node --test`, 128 tests as of this
+   writing, zero dependencies, see `test/*.test.js`) over `protocol.js`,
+   `matching.js`, `discovery.js`, `research.js`'s graph layout, the
+   WebCrypto signing primitives `identity.js` is built on, and
+   `trust-dag.js`/`credibility.js`'s scoring formula.
 2. **build** — regenerates the PWA icons (`scripts/generate-icons.mjs`, a
    from-scratch PNG encoder, no image library) and checks that every file
    `sw.js` precaches actually exists (`scripts/check-sw-manifest.mjs`), then
@@ -65,25 +66,28 @@ npm run check # verify sw.js precache list against disk
   4-digit year found anywhere in the candidate's CV text — a simple,
   transparent proxy for "how long ago did they start". Matching only ever
   happens candidate ↔ recruiter, never candidate ↔ candidate.
-- **Business** (formerly "Mission") and **Independant** (formerly
-  "Service") now have the same asymmetric mechanic as Employment, adapted
-  to money instead of years: the supply side (*Offer* / *Service*) declares
-  a single rate; the demand side (*Client* / *Utilisateur*) declares a
-  budget range; a hard filter checks the rate falls inside the range, in
-  whichever direction applies. The supply side's description text is
-  always tokenized directly (no file required), and an optional `.docx`/
-  `.pdf`/`.txt` attachment — genuinely optional, unlike Employment's CV —
-  adds keywords on top of it rather than replacing it. The demand side's
-  request text is public and shown to the supply side, the same way a job
-  posting is shown to candidates. **Business** additionally requires a
-  professional email on the Offer side; **Independant** requires a
-  self-declared LinkedIn URL on the Service side (both real HTML5
-  `required` fields).
-- **Annonce** — the same Offer/Client mechanic again (Seller/Buyer here),
-  built for peer-to-peer sales rather than services: the Seller can attach
-  a photo, resized client-side to a small thumbnail and sent as part of
-  the discovery broadcast itself, so it shows up the moment a listing is
-  discovered — no separate download step.
+- **Business** (formerly "Mission") has the same asymmetric mechanic as
+  Employment, adapted to money instead of years: the supply side (*Offer*)
+  declares a single rate; the demand side (*Client*) declares a budget
+  range; a hard filter checks the rate falls inside the range, in whichever
+  direction applies. The supply side's description text is always
+  tokenized directly (no file required), and an optional `.docx`/`.pdf`/
+  `.txt` attachment — genuinely optional, unlike Employment's CV — adds
+  keywords on top of it rather than replacing it. The demand side's request
+  text is public and shown to the supply side, the same way a job posting
+  is shown to candidates. Requires a professional email on the Offer side
+  (a real HTML5 `required` field). (Independant, Annonce, and Drive existed
+  for a while as three more namespaces built on this same pattern — a
+  freelance-services, a peer-to-peer-sales, and a carpooling variant — and
+  were later removed rather than kept as surface area nobody was actually
+  using.)
+- **Outdoor** — the two-sided mechanic without a price axis: an Organizer
+  posts an out-of-home activity (any theme, freely chosen) with a contact
+  method (email/phone/other) and a participant headcount shown as a
+  declared number, not an enforced RSVP count — Jobber has no server to
+  count against. A Participant is matched by keyword overlap on theme/
+  interest alone, the same baseline every namespace uses, with no
+  hard-filtered range like Employment's seniority or Business's rate.
 - **Dating** — no fixed roles. Every identity has both a profile ("about
   me") and a search ("looking for"). A match score is the *minimum* of two
   directions: how well their profile fits what you're looking for, and how
@@ -109,9 +113,14 @@ npm run check # verify sw.js precache list against disk
 Two-sided namespaces ask for a role when you create the identity. **The role
 cannot be changed afterward** — each identity is either one side or the
 other, permanently; create a second identity if you need to appear as both.
-Older local data created before this naming existed is migrated
-automatically on first load: `job_candidate` → `employment`, `mission` →
-`business`, `service` → `independant`, with a best-guess default role.
+They also cap you at **one active identity per role** (`takenRoles` in
+`identity-ui.js`) — the role picker only ever offers roles you don't already
+have an active identity in, and creating one for a full namespace is
+blocked with an explicit toast rather than silently allowed and left
+ambiguous which one a peer is even matching against. Retiring an identity
+frees its role back up. Older local data created before this naming existed
+is migrated automatically on first load: `job_candidate` → `employment`,
+`mission` → `business`, with a best-guess default role.
 
 ### Cover-letter request/offer flow (Employment)
 
@@ -124,14 +133,20 @@ else in the app (meetings, research publication, etc.).
 ### Testing matches without a second device
 
 Real discovery needs two actual peers — one browser tab is one WebRTC
-identity, so two identities you create in the *same* tab can never discover
-each other over the network (this is a property of WebRTC, not a bug).
-Every two-sided or reciprocal namespace shows a **"Local test matches"**
-panel: it computes the same scoring function directly against any other
-complementary-role identity you've created locally, with no network
-involved, clearly labeled as a local preview. Use it to sanity-check a
-candidate/recruiter pair (or any other role pair) before testing over a
-real connection.
+identity, so two identities you create in the *same* tab (or in a second
+tab, since WebRTC can't connect a tab to itself) never discover each other
+over the network. Every two-sided or reciprocal namespace still scores any
+other complementary-role identity you've created locally, exactly the same
+way it scores a real peer — and shows it in the **exact same results
+list**, with no visual or behavioral separation. This used to be a
+separately labeled "Local test matches" panel; it was folded into the main
+list because the underlying claim ("every identity is a peer discovered
+like any other, regardless of browser or tab") is only actually true if the
+UI doesn't contradict it by treating local test identities as a distinct
+category. Blocking, chatting, and every other card action work on a local
+match too, except that there's no live peer connection behind it, so
+messaging one hits the same "not currently connected" path a real peer who
+went offline would.
 
 ### Finding a Research project to join
 
@@ -321,14 +336,15 @@ their own — see `sendChatMessage` and the `attachment_accept` handling in
   browser blocks saving without them. LinkedIn is explicitly labeled
   self-declared: Jobber has no backend and no way to independently verify
   it, and the UI says so rather than implying a check that isn't real.
-- **New namespace: Annonce**, peer-to-peer sales with a photo. Built on
-  the same asymmetric Offer/Client mechanic Business and Independant
-  already use (Seller declares a price, Buyer declares a budget range,
-  hard-filtered against each other) rather than inventing a parallel
-  system. The photo is resized client-side to a small JPEG thumbnail
-  (max 200px, canvas-based) and travels *inside* the discovery broadcast
-  itself — no separate "request to download the photo" round trip, it's
-  just there the moment a listing is discovered.
+- **New namespace: Annonce** *(later removed — see the Namespaces section
+  above)*, peer-to-peer sales with a photo. Built on the same asymmetric
+  Offer/Client mechanic Business and Independant already use (Seller
+  declares a price, Buyer declares a budget range, hard-filtered against
+  each other) rather than inventing a parallel system. The photo was
+  resized client-side to a small JPEG thumbnail (max 200px, canvas-based)
+  and traveled *inside* the discovery broadcast itself — no separate
+  "request to download the photo" round trip, it was just there the moment
+  a listing was discovered.
 - **Sidebar replaced with a top icon bar.** The old identity-list sidebar
   didn't hold up on desktop and was worse on mobile. Mode switching is now
   a row of icons at the top; switching identities within a namespace (when
@@ -398,10 +414,11 @@ That panel is gone. Its useful bits moved to where they actually belong:
   hiding a button). Dating and Intelligence are unchanged — Dating already
   requires both sides to independently act, Intelligence has its own
   join/accept model.
-- **New namespace: Drive**, peer-to-peer carpooling. Same Offer/Client
-  mechanic as Business/Independant/Annonce (Driver declares a price per
-  seat, Passenger declares a budget range) — the passenger decides,
-  automatically, from the same generic rule above.
+- **New namespace: Drive** *(later removed — see the Namespaces section
+  above)*, peer-to-peer carpooling. Same Offer/Client mechanic as
+  Business/Independant/Annonce (Driver declares a price per seat, Passenger
+  declares a budget range) — the passenger decided, automatically, from the
+  same generic rule above.
 - **Agent, corrected and actually built.** I initially shipped this as a
   placeholder, misunderstanding what was wanted — it's not a "propose
   operations on the research graph" assistant, it's a real cross-namespace
@@ -410,7 +427,7 @@ That panel is gone. Its useful bits moved to where they actually belong:
   you're searching for in some *other* namespace? That's a class of
   opportunity same-namespace matching structurally can't see — you were
   discovered as a Business contact, but what they need happens to match
-  what you offer as an Independant. Every finding is explicit about
+  what you offer in Outdoor. Every finding is explicit about
   whether it needed AI-enriched keywords or was reachable from CPU
   keywords alone (`usedAi`, unit-tested against both cases) — the same
   CPU/AI transparency the rest of the app already keeps, applied here
@@ -443,6 +460,47 @@ against everyone already discovered in other modes:
   within your radius, sorted by distance. If you haven't started
   "Search" anywhere else, there's nothing to aggregate — the UI says so
   rather than pretending to search on its own.
+
+### The Bureau — one home screen for every identity
+
+The app no longer opens straight into a namespace. It opens onto the
+**Bureau** (`desktop-ui.js`): every identity you've created, across every
+namespace, as one tile — tap it to open its workspace, the same way you'd
+tap an app icon. Tapping "+" starts identity creation from the Bureau too:
+pick which mode it's for first, *then* name it, rather than the other way
+round.
+
+Tools and links live on the Bureau as tiles too, grouped into three rows
+(`NAMESPACE_GROUPS` in `state.js`):
+
+- **Match** — the actual P2P matching namespaces (Employment, Business,
+  Outdoor, Dating).
+- **Insight** — cross-cutting tools that read what Match already
+  discovered, without needing an identity of their own: **Near**
+  (opt-in location, described above), **Agent** (the cross-namespace
+  opportunity matcher, also described above), and **Messages** (below).
+- **Ecosystem** — external links that open another app in this same
+  portfolio in a new tab (Creator → YourMine, Wallet → AIWA, Tribute →
+  SGD). No identity, no profile — the tile just navigates.
+
+Creator, Wallet, and Agent are tagged with an amber "cooking" badge on
+their tile (`COOKING` in `desktop-ui.js`) to signal they're not finished
+yet, distinct from Messages' notification-count badge (a red pill showing
+how many pending items are waiting, computed the same way the Messages
+workspace itself counts them).
+
+### Messages — every conversation and pending request, in one place
+
+`messages-ui.js` centralizes what interacting across every namespace used
+to scatter across each one's own workspace: every pending chat/meeting/
+document/attachment request, and every ongoing conversation, gathered from
+every mode's own state (it has no identity or storage of its own — like
+Near and Agent, it just reads what your other identities already
+accumulated). It deliberately doesn't reimplement the chat panel itself:
+"Open" on a conversation jumps you into that namespace's own workspace,
+where the existing chat UI (offline-queueing, attachments, resync, all of
+it) already works — centralizing here is about *finding* a conversation,
+not rendering it a second time.
 
 ## What's been hardened since the last pass
 
@@ -487,6 +545,38 @@ resurrecting a retired identity as if it were current. Fixed — see
 decision is made, and is unit-tested specifically against "everything in
 this namespace is retired" returning nothing rather than the wrong record.
 
+### Credibility — a local, account-free trust score, separate from Match
+
+Every result card shows two numbers now: **Match** (does our profile fit
+theirs — the deterministic scoring `matching.js` always did) and
+**Credibility** (`credibility.js` — what have I actually seen this
+identity do). They answer different questions and are computed
+completely independently.
+
+Credibility is deliberately **not** a global reputation number Jobber
+computes and broadcasts. Each observer builds their own append-only,
+content-addressed event log (`trust-dag.js`'s `EventDag`, ported from
+[AIWA_chain](https://github.com/theodoreyong9/AIWA_chain)'s generic
+`event-dag.js`) from what they've personally witnessed about one peer, and
+scores it locally. Nobody else's Credibility number for that same peer has
+to agree with yours — the UI says so directly in the "Why these scores"
+explanation, not just in a code comment.
+
+No account or payment is required — that was the explicit design
+constraint. Sybil resistance instead comes from requiring **distinct
+kinds** of real, two-way interaction that Jobber's own protocol already
+proves happened: a chat accepted, a meeting confirmed, a document shared,
+an attachment completed. Each type is scored with diminishing returns
+per-type, so spamming one interaction type over and over can't substitute
+for genuine diversity of interaction types — repeating one kind of
+interaction twenty times scores lower than doing four different kinds
+once each. `recordEvent` is idempotent (a `dedupeKey` per interaction, so
+replaying the same accept twice gives zero additional influence — the
+same principle AIWA's `causal-tick.js` documents), and rotating an
+identity re-keys the observer's whole accumulated history onto the new id
+(`handleRotation`) instead of resetting a peer you already know back to
+"never seen."
+
 ## Module architecture: why `state.render` / `state.handlers` exist
 
 `app.js` used to be a single ~2100-line file. It worked, but it had become
@@ -527,24 +617,33 @@ code runs.
 
 | File | Real behavior |
 |---|---|
-| `js/db.js` | IndexedDB wrapper: identities, profiles, cache, conversations, research projects/artifacts. Nothing here is a server call. |
+| `js/db.js` | IndexedDB wrapper: identities, profiles, cache, conversations, blocklist, research projects/artifacts, and credibility events. Nothing here is a server call. |
 | `js/identity.js` | Generates a real ECDSA P-256 keypair per identity via WebCrypto. The identity id is a SHA-256 hash of the public key. Rotation generates a fresh keypair and marks the old one retired; retirement is local-only (there's no global authority to enforce it network-wide — the UI says so). |
 | `js/protocol.js` | The actual wire format (`v`, `type`, `namespace`, `sender`, `messageId`, `timestamp`, `payload`) and validation used by every message before it's trusted. |
-| `js/p2p.js` | Real WebRTC data channels via [Trystero](https://github.com/dmotz/trystero) (`torrent` strategy — public BitTorrent trackers are used only so two browsers can find each other's connection info; no app data passes through them). Loads the pre-bundled browser file from jsdelivr **lazily**, so if a CDN or export-shape hiccup ever breaks it, only P2P is disabled — the rest of the app (identity, profiles, Research vault) keeps working. If `https://cdn.jsdelivr.net/npm/trystero/dist/trystero-torrent.min.js` ever 404s or its export shape changes, swap `TRYSTERO_URL` at the top of the file for `https://unpkg.com/trystero/dist/trystero-torrent.min.js` or a pinned version. |
+| `js/p2p.js` | Real WebRTC data channels via [Trystero](https://github.com/dmotz/trystero)'s `nostr` strategy (a pinned list of public Nostr relays over plain WebSocket, used only as a rendezvous layer so two browsers can find each other's connection info — no app data passes through them; switched from the `torrent` strategy, which was inconsistently reachable from plain browser JS). Loads `@trystero-p2p/nostr` from `esm.run` **lazily**, so if the CDN or export shape ever breaks, only P2P is disabled — the rest of the app (identity, profiles, Research vault) keeps working. |
+| `js/geo.js` | Wraps the real `navigator.geolocation` permission prompt in a Promise, plus the haversine great-circle distance formula Near filters by. |
 | `js/discovery.js` | The real cascade: namespace/protocol match → hard filters → soft ranking → budget cap, before anything expensive runs. |
 | `js/matching.js` | Deterministic local scoring: tokenize → synonym-normalize → Jaccard overlap → penalty for missing required terms. Versioned (`MATCHING_ENGINE_VERSION`), same formula regardless of whether AI enrichment is on. |
 | `js/llm.js` | Loads [WebLLM](https://github.com/mlc-ai/web-llm) only if `navigator.gpu` exists, and only when you click "enrich" — never automatically. Runs a small instruction model entirely client-side. Loaded from `esm.run` (jsdelivr's dedicated ESM endpoint — the one WebLLM's own docs use), not esm.sh, which was throwing `createRequire is not defined` in-browser due to a broken CJS-interop shim. |
 | `js/extract.js` | Real text extraction from `.docx` (a hand-rolled ZIP central-directory reader + native `DecompressionStream('deflate-raw')` + `DOMParser` on `word/document.xml` — no dependency at all) and `.pdf` (via pdf.js, lazily loaded, worker version-pinned to whatever the main bundle actually resolved to). This is what a candidate's CV keywords are mined from. |
 | `js/research.js` | Research Vault: projects, typed artifacts (`hypothesis`, `critique`, `experiment`, `result`, …), parent/child provenance, export to a `project.jobber` JSON bundle, import back in. |
+| `js/agent.js` | The cross-namespace opportunity matcher: does anyone you've already discovered in one namespace need what you offer, or offer what you search for, in some *other* namespace — a class of match a single namespace's own matching structurally can't see. |
 | `js/state.js` | The shared state object, namespace config, and small pure helpers. Everything else imports from here; it imports nothing app-specific itself. Also where `state.render` / `state.handlers` live — see the "Module architecture" section below. |
 | `js/ui-kit.js` | Generic, app-agnostic UI primitives (modal dialog, toast). No app-module imports. |
-| `js/identity-ui.js` | The identity rail, the topbar, and create/rename/rotate/retire flows. |
-| `js/profiles.js` | Profile storage and the three profile editors (generic, Employment's candidate/recruiter split, Business/Independant's supply/demand split). |
-| `js/conversations.js` | Blocking, meeting proposals, document requests, persisted identity-keyed chat with an offline outbox, and the attachment offer/accept handshake. |
-| `js/discovery-ui.js` | Search Live, the matching cascade, and the results/chat UI for every non-Research namespace. |
+| `js/identity-ui.js` | The identity rail, the topbar, and create/rename/rotate/retire flows, including the one-active-identity-per-role cap. |
+| `js/profiles.js` | Profile storage and the profile editors (generic, Employment's candidate/recruiter split, Business's supply/demand split, Outdoor's organizer/participant split). |
+| `js/conversations.js` | Blocking, meeting proposals, document requests, persisted identity-keyed chat with an offline outbox, and the attachment offer/accept handshake. Also where *my own* side of every credibility-recording hook lives (see `js/credibility.js`). |
+| `js/discovery-ui.js` | Search Live, the matching cascade, and the results/chat UI for every non-Research namespace. Renders both Match and Credibility on every card. |
 | `js/research-ui.js` | The whole Research namespace: chain/mode project creation, the join request/accept flow, artifacts and their graph, progress/activity, and closure. |
-| `js/message-router.js` | The single function that decides what an incoming, already-validated protocol message does — routes to conversations.js / research-ui.js. |
-| `js/render.js` | Ties the rail, topbar, and the two workspace kinds together — the one place that imports from identity-ui.js, discovery-ui.js, and research-ui.js all at once. |
+| `js/message-router.js` | The single function that decides what an incoming, already-validated protocol message does — routes to conversations.js / research-ui.js, and records the *incoming* side of every credibility event. |
+| `js/trust-dag.js` | A content-addressed, grow-only event DAG and a weighted-median aggregator, ported near-verbatim from AIWA_chain's generic `event-dag.js`/`weighted-median.js`. No app logic — just the primitive. |
+| `js/credibility.js` | The Credibility feature: builds and scores one local event-DAG per (namespace, peer) from real interaction events, with no account/payment involved — see the "Credibility" section above. |
+| `js/desktop-ui.js` | The Bureau: the home screen, every identity as a tile, tool/link tiles grouped by `NAMESPACE_GROUPS`, and identity creation's mode-first picker. |
+| `js/near-ui.js` | Near's workspace: opt-in location, the radius slider, and filtering/sorting everyone already discovered elsewhere by real distance. |
+| `js/agent-ui.js` | Renders what `agent.js`'s cross-namespace opportunity matching finds. |
+| `js/messages-ui.js` | The centralized inbox: every pending request and ongoing conversation across every mode, in one place. |
+| `js/backup.js` | Full-account export/import (identities, profiles, blocklist, Research) as one JSON file — see "Full backup / restore" above. |
+| `js/render.js` | Ties the rail, topbar, and every workspace kind together — the one place that imports from identity-ui.js, discovery-ui.js, research-ui.js, near-ui.js, agent-ui.js, messages-ui.js, and desktop-ui.js all at once. |
 | `js/app.js` | The entry point: boot sequence, service worker registration, the WebGPU flag, and wiring `state.render` / `state.handlers` before calling `boot()`. About 100 lines — everything else moved out into the files above once the single-file version got large enough that I was making insertion mistakes editing it (duplicated braces, mis-anchored edits) purely from its size. |
 | `scripts/generate-icons.mjs` | Hand-encodes real PNGs (IHDR/IDAT/IEND, CRC32, zlib via `node:zlib`) — no canvas dependency. |
 | `test/*.test.js` | Real assertions via Node's built-in `node:test` runner — no test framework dependency. |
