@@ -55,10 +55,9 @@ async function buildDiscoveryPayload(ns, id, profile) {
         payload.seniorityMax = profile.seniorityMax;
         payload.postingText = profile.jobPostingText; // job ads are public, unlike CVs
       }
-    } else if (ns === 'business' || ns === 'independant' || ns === 'annonce' || ns === 'drive') {
+    } else if (ns === 'business') {
       if (isSupply) {
         payload.rate = profile.rate;
-        if (ns === 'annonce' && profile.photoDataUrl) payload.photoDataUrl = profile.photoDataUrl; // already resized to a small thumbnail
       } else {
         payload.budgetMin = profile.budgetMin;
         payload.budgetMax = profile.budgetMax;
@@ -245,7 +244,7 @@ export async function renderClassicWorkspace(ns) {
     if (isSupplySide && profile.earliestYear != null) {
       hardConstraints.myEarliestYear = profile.earliestYear;
     }
-  } else if (ns === 'business' || ns === 'independant' || ns === 'annonce' || ns === 'drive') {
+  } else if (ns === 'business') {
     softConstraints.country = profile.country;
     softConstraints.city = profile.city;
     if (!isSupplySide && (profile.budgetMin != null || profile.budgetMax != null)) {
@@ -290,12 +289,11 @@ export async function renderClassicWorkspace(ns) {
         ${!isSupplySide ? `<span class="chip">${p.earliestYear ? 'earliest year ' + p.earliestYear : 'no dates detected'}</span><span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>` : ''}
       `;
     }
-    if (ns === 'business' || ns === 'independant' || ns === 'annonce' || ns === 'drive') {
-      const priceWord = ns === 'annonce' ? 'price' : 'rate';
+    if (ns === 'business') {
       return `
         <span class="chip">${[p.city, p.country].filter(Boolean).join(', ') || 'no location declared'}</span>
         ${isSupplySide && p.postingText ? `<span class="chip">budget ${p.budgetMin ?? '…'}–${p.budgetMax ?? '…'}</span>` : ''}
-        ${!isSupplySide ? `<span class="chip">${p.rate != null ? priceWord + ' ' + p.rate : 'no ' + priceWord + ' declared'}</span><span class="chip">${p.availableNow ? (ns === 'annonce' ? 'Still available' : 'Available now') : 'Availability unknown'}</span>` : ''}
+        ${!isSupplySide ? `<span class="chip">${p.rate != null ? 'rate ' + p.rate : 'no rate declared'}</span><span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>` : ''}
       `;
     }
     if (ns === 'outdoor') {
