@@ -67,7 +67,10 @@ export async function renderDesktop() {
       <span class="desktop-tile-label">New identity</span>
     </button>`;
 
-  const toolSections = groupsOf(TOOL_NAMESPACES).map((g) => `
+  // NAMESPACE_GROUPS is Match/Insight/Ecosystem order; the Bureau reads the
+  // opposite way — the portfolio's other apps and the cross-cutting tools
+  // first, your own identities last — hence the reverse().
+  const toolSections = groupsOf(TOOL_NAMESPACES).reverse().map((g) => `
     <div class="desktop-section">
       <div class="desktop-section-label">${g.label}</div>
       <div class="desktop-grid">
@@ -77,11 +80,11 @@ export async function renderDesktop() {
 
   return `
     <div class="desktop">
+      ${toolSections}
       <div class="desktop-section">
         <div class="desktop-section-label">Your identities</div>
         <div class="desktop-grid">${identityTiles.join('')}${newTile}</div>
       </div>
-      ${toolSections}
     </div>`;
 }
 
