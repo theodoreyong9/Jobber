@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'wallet'];
+export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet'];
 
 // Purely a display grouping for the Bureau (desktop-ui.js) — every other
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
@@ -21,7 +21,7 @@ export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'resea
 // portfolio.
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating'] },
-  { label: 'Insight', namespaces: ['research', 'near', 'agent'] },
+  { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
   { label: 'Ecosystem', namespaces: ['creator', 'wallet'] },
 ];
 
@@ -47,6 +47,8 @@ export const NS_CONFIG = {
     hint: 'Aggregates everyone you\'ve already discovered in other modes who\'s within your radius — opt-in location sharing, off by default, and it doesn\'t discover new people on its own.' },
   agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent', icon: '🤖',
     hint: 'Cross-references what you offer and search for (across every namespace) against what everyone you\'ve already discovered offers and searches for — surfacing matches a single namespace\'s own matching would never see. Every finding says whether it needed AI-enriched keywords or was pure CPU.' },
+  messages: { label: 'Messages', color: '#4DD0E1', kind: 'messages', icon: '💬',
+    hint: 'Every conversation and pending request (chat, meeting, document, file) across every mode, in one place — no identity of its own, it just reads what your other identities already have.' },
 
   // "external" namespaces aren't part of Jobber's own matching at all —
   // the tile just opens another app in this same portfolio in a new tab.
