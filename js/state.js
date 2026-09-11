@@ -13,11 +13,11 @@ import * as db from './db.js';
 
 export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'discover', 'contribute', 'wallet', 'tribute'];
 
-// Purely a display grouping for the mode-icon bar (identity-ui.js) — every
-// other consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still
-// just wants the flat list, so this doesn't replace it. Three clusters:
-// the actual P2P matching namespaces, the cross-cutting tools that read
-// what those already discovered, and the links out to the rest of this
+// Purely a display grouping for the Bureau (desktop-ui.js) — every other
+// consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
+// wants the flat list, so this doesn't replace it. Three clusters: the
+// actual P2P matching namespaces, the cross-cutting tools that read what
+// those already discovered, and the links out to the rest of this
 // portfolio.
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating'] },
@@ -30,50 +30,50 @@ export const NAMESPACE_GROUPS = [
 // other's *profile*, in both directions — a real match needs both sides
 // to be interested, not just one.
 export const NS_CONFIG = {
-  employment: { label: 'Employment', color: '#F1552C', kind: 'twoSided',
+  employment: { label: 'Employment', color: '#F1552C', kind: 'twoSided', icon: '💼',
     roles: [{ key: 'candidate', label: 'Candidate' }, { key: 'recruiter', label: 'Recruiter' }],
     hint: 'Candidates are matched against recruiters, and recruiters against candidates — never against their own kind.' },
-  business: { label: 'Business', color: '#59C9B8', kind: 'twoSided',
+  business: { label: 'Business', color: '#59C9B8', kind: 'twoSided', icon: '🤝',
     roles: [{ key: 'offer', label: 'Offer' }, { key: 'client', label: 'Client' }],
     hint: 'Offers are matched with clients — never offer-to-offer — and a declared rate is checked against each client\'s budget range.' },
-  independant: { label: 'Independent', color: '#E8B84B', kind: 'twoSided',
+  independant: { label: 'Independent', color: '#E8B84B', kind: 'twoSided', icon: '🛠️',
     roles: [{ key: 'provider', label: 'Service' }, { key: 'user', label: 'Utilisateur' }],
     hint: 'Service providers are matched with the users who need them, with a declared rate checked against each user\'s budget range.' },
-  annonce: { label: 'Annonce', color: '#E07A5F', kind: 'twoSided',
+  annonce: { label: 'Annonce', color: '#E07A5F', kind: 'twoSided', icon: '🏷️',
     roles: [{ key: 'seller', label: 'Seller' }, { key: 'buyer', label: 'Buyer' }],
     hint: 'Sellers are matched with buyers looking for exactly that — a declared price is checked against each buyer\'s budget range.' },
-  drive: { label: 'Drive', color: '#5AA9E6', kind: 'twoSided',
+  drive: { label: 'Drive', color: '#5AA9E6', kind: 'twoSided', icon: '🚗',
     roles: [{ key: 'driver', label: 'Driver' }, { key: 'passenger', label: 'Passenger' }],
     hint: 'Drivers are matched with passengers looking for that route — a declared price per seat is checked against each passenger\'s budget range.' },
-  outdoor: { label: 'Outdoor', color: '#4C9A6B', kind: 'twoSided',
+  outdoor: { label: 'Outdoor', color: '#4C9A6B', kind: 'twoSided', icon: '🏕️',
     roles: [{ key: 'organizer', label: 'Organizer' }, { key: 'participant', label: 'Participant' }],
     hint: 'Organizers post an out-of-home activity — any theme, freely chosen — with a contact method and a participant limit; participants are matched by shared interest, not a price range.' },
-  dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal',
+  dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal', icon: '💗',
     hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
-  research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research',
+  research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research', icon: '🧠',
     hint: 'Agent-to-agent collaboration. Hypothesis and critique are symmetric roles.' },
-  near: { label: 'Near', color: '#6FBF73', kind: 'near',
+  near: { label: 'Near', color: '#6FBF73', kind: 'near', icon: '📍',
     hint: 'Aggregates everyone you\'ve already discovered in other modes who\'s within your radius — opt-in location sharing, off by default, and it doesn\'t discover new people on its own.' },
-  agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent',
+  agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent', icon: '🤖',
     hint: 'Cross-references what you offer and search for (across every namespace) against what everyone you\'ve already discovered offers and searches for — surfacing matches a single namespace\'s own matching would never see. Every finding says whether it needed AI-enriched keywords or was pure CPU.' },
 
   // "external" namespaces aren't part of Jobber's own matching at all —
-  // the icon just opens another app in this same portfolio in a new tab.
-  // No identity, no profile, nothing to render here; identity-ui.js skips
+  // the tile just opens another app in this same portfolio in a new tab.
+  // No identity, no profile, nothing to render here; desktop-ui.js skips
   // setActiveNamespace entirely for this kind and opens `url` instead.
-  creator: { label: 'Creator', color: '#F0A830', kind: 'external',
+  creator: { label: 'Creator', color: '#F0A830', kind: 'external', icon: '🎨',
     url: 'https://yourmine-dapp.web.app',
     hint: 'Opens YourMine — publish JavaScript apps and interface themes, permissionlessly.' },
-  discover: { label: 'Discover', color: '#4EA8A0', kind: 'external',
+  discover: { label: 'Discover', color: '#4EA8A0', kind: 'external', icon: '🧭',
     url: 'https://theodoreyong9.github.io/Smartank/',
     hint: 'Opens Smartank — describe an intent, get real Hugging Face models ranked with evidence.' },
-  contribute: { label: 'Contribute', color: '#9B7FD4', kind: 'external',
+  contribute: { label: 'Contribute', color: '#9B7FD4', kind: 'external', icon: '🖋️',
     url: 'https://theodoreyong9.github.io/ARVT/',
     hint: 'Opens ARVT — a living corpus on relational value, extended by visitor contributions.' },
-  wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external',
+  wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external', icon: '👛',
     url: 'https://theodoreyong9.github.io/AIWA_chain/',
     hint: 'Opens AIWA — local, geographically-independent value accrual.' },
-  tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external',
+  tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
     url: 'https://theodoreyong9.github.io/SGD/',
     hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
 };
@@ -145,6 +145,13 @@ export function pickActiveNamespace({ lastActiveValue, identitiesByNs }) {
 export const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery entries expire
 
 export const state = {
+  // 'desktop' shows the Bureau (every identity you've created, across every
+  // namespace, as one tile each) — that's what you land on. 'workspace'
+  // shows the active namespace's actual topbar+workspace, entered by
+  // tapping a tile. Kept separate from activeNamespace itself so switching
+  // back to the Bureau doesn't forget which namespace/identity you were
+  // last working in — see desktop-ui.js.
+  view: 'desktop',
   activeNamespace: 'employment',
   activeIdentityId: {},   // namespace -> identityId
   identitiesByNs: {},     // namespace -> [identity]
