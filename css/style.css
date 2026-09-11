@@ -34,31 +34,42 @@ a{color:var(--agent);}
 .app{ display:flex; flex-direction:column; height:100vh; }
 
 /* ---------- MODE BAR (replaces the old identity-list sidebar) ---------- */
-.modebar{ display:flex; align-items:flex-start; gap:14px; padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex:0 0 auto; }
-.brand-mini{ font-family:var(--font-head); font-weight:700; font-size:14px; display:flex; align-items:center; gap:6px; flex:0 0 auto; padding-top:6px; }
+.modebar{ display:flex; align-items:center; gap:14px; padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border); flex:0 0 auto; }
+.brand-mini{ font-family:var(--font-head); font-weight:700; font-size:14px; display:flex; align-items:center; gap:6px; flex:0 0 auto; }
 .brand-mini .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
-/* Each group is its own row (label + icons), stacked — not one flat
-   scrolling strip. This is what actually makes "grouped" visible without
-   scrolling, on any screen width: a vertical divider between icons in a
-   single row doesn't help once the first group alone is wider than the
-   screen. */
-.mode-icons{ display:flex; flex-direction:column; gap:8px; min-width:0; flex:1 1 auto; }
-/* Label sits above its icons, not beside them — a side-by-side label ate
-   into the same cramped width the icons themselves needed, which is what
-   made the widest group (7 icons) wrap mid-row in the first place. */
-.mode-group{ display:flex; flex-direction:column; align-items:flex-start; gap:3px; min-width:0; }
-.mode-group-label{ font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); }
-.mode-group-icons{ display:flex; gap:4px; flex-wrap:wrap; min-width:0; }
-.mode-icon{
-  position:relative; display:flex; flex-direction:column; align-items:center; gap:2px;
-  background:none; border:1px solid transparent; border-radius:var(--radius-s);
-  padding:5px 10px; color:var(--low); flex:0 0 auto; min-width:56px;
+
+/* A single always-visible "current mode" button opening a dropdown with
+   every mode's icon *and* name, grouped under a caption — not a
+   permanently-visible row/grid of icons. Same <details>/<summary>
+   disclosure pattern as the ⚙ storage/backup panel below. */
+.mode-switcher{ position:relative; }
+.mode-switcher summary{ list-style:none; cursor:pointer; }
+.mode-switcher summary::-webkit-details-marker{ display:none; }
+.mode-switcher-current{
+  display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:20px;
+  border:1px solid var(--border); background:var(--panel-raised); color:var(--hi);
+  font-size:13px; font-weight:500;
 }
-.mode-icon:hover{ background:var(--panel-raised); color:var(--mid); }
-.mode-icon.active{ background:var(--panel-raised); border-color:var(--border); color:var(--hi); }
-.mode-icon-glyph{ font-size:17px; line-height:1; }
-.mode-icon-label{ font-size:9px; white-space:nowrap; }
-.mode-icon-dot{ position:absolute; top:4px; right:8px; width:6px; height:6px; border-radius:50%; }
+.mode-switcher-current:hover{ border-color:var(--mid); }
+.mode-switcher-chevron{ color:var(--low); font-size:10px; margin-left:2px; display:inline-block; }
+.mode-switcher[open] .mode-switcher-chevron{ transform:rotate(180deg); }
+.mode-switcher-panel{
+  position:absolute; top:calc(100% + 6px); left:0; z-index:30; width:240px; max-height:70vh; overflow-y:auto;
+  background:var(--panel-raised); border:1px solid var(--border); border-radius:var(--radius-m);
+  padding:10px; box-shadow:0 8px 28px rgba(0,0,0,.45);
+}
+.mode-switcher-group{ margin-bottom:10px; }
+.mode-switcher-group:last-child{ margin-bottom:0; }
+.mode-switcher-group-label{ font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); padding:0 8px 4px; }
+.mode-switcher-item{
+  position:relative; width:100%; display:flex; align-items:center; gap:10px;
+  padding:8px; border-radius:6px; background:none; border:none; color:var(--mid); font-size:13px; text-align:left;
+}
+.mode-switcher-item:hover{ background:var(--panel); color:var(--hi); }
+.mode-switcher-item.active{ background:var(--panel); color:var(--hi); }
+.mode-switcher-item-glyph{ font-size:16px; line-height:1; flex:0 0 auto; }
+.mode-switcher-item-label{ flex:1; }
+.mode-icon-dot{ width:6px; height:6px; border-radius:50%; flex:0 0 auto; }
 .mode-icon-dot.live{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
 .mode-icon-dot.empty{ background:var(--border); }
 
@@ -232,11 +243,8 @@ dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
 
 @media (max-width:860px){
   .app{ height:100vh; }
-  .modebar{ padding:6px 10px; flex-direction:column; align-items:stretch; gap:6px; }
-  .brand-mini{ padding-top:0; }
-  .mode-icon{ min-width:38px; padding:5px 4px; }
-  .mode-icon-label{ display:none; } /* icon-only on narrow screens, title="" still gives the name on long-press/hover */
-  .mode-group-label{ font-size:8.5px; }
+  .modebar{ padding:6px 10px; }
+  .mode-switcher-panel{ left:auto; right:0; width:min(240px, calc(100vw - 32px)); }
   .rgrid{ grid-template-columns:1fr; }
   .topbar{ flex-wrap:wrap; }
   .settings-panel{ right:auto; left:0; }
