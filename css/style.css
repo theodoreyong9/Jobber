@@ -67,6 +67,7 @@ a{color:var(--agent);}
 .desktop-section-label{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:10px; }
 .desktop-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:10px; }
 .desktop-tile{
+  position:relative;
   display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;
   background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-m);
   padding:14px 8px; color:var(--hi); border-top:2px solid var(--tile-color, var(--border));
@@ -77,6 +78,11 @@ a{color:var(--agent);}
 .desktop-tile-sub{ font-size:10px; color:var(--low); }
 .desktop-tile-new{ border-style:dashed; color:var(--low); }
 .desktop-tile-new .desktop-tile-glyph{ color:var(--mid); }
+.desktop-tile-badge{
+  position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px;
+  border-radius:20px; background:var(--accent); color:#fff; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px var(--bg);
+}
 .mode-picker-group{ margin-bottom:14px; }
 .mode-picker-group:last-child{ margin-bottom:0; }
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
