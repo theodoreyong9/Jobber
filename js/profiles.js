@@ -1,8 +1,8 @@
-// profiles.js — profile storage and the three editor flows: the generic
-// one (Business/Independant/Dating share it... actually Business/
-// Independant get their own asymmetric editor below), Employment's
-// candidate/recruiter split, and the Business/Independant supply/demand
-// split. See each function's own comment for the mechanic it encodes.
+// profiles.js — profile storage and the editor flows: the generic one
+// (Dating, plus anything else with no special fields), Employment's
+// candidate/recruiter split, Outdoor's organizer/participant split, and
+// Business's own asymmetric supply/demand split. See each function's own
+// comment for the mechanic it encodes.
 
 import * as db from './db.js';
 import * as identity from './identity.js';
@@ -21,9 +21,9 @@ export async function getProfile(identityId) {
     country: '', city: '',
     coverLetterText: '', cvFileName: '', cvExtractedText: '', earliestYear: null,
     jobPostingText: '', seniorityMin: null, seniorityMax: null,
-    // Business / Independant / Annonce specific:
+    // Business-specific (see editSupplyDemandProfileFlow):
     rate: null, budgetMin: null, budgetMax: null,
-    professionalEmail: '', linkedinUrl: '', photoDataUrl: '',
+    professionalEmail: '', photoDataUrl: '',
     // Outdoor-specific (see editOutdoorProfileFlow) — an organizer's
     // contact method is shown directly on their card (not gated behind a
     // request/consent flow like Employment's cover letter): the whole
@@ -293,48 +293,20 @@ export function editOutdoorProfileFlow(id) {
   });
 }
 
-// Business / Independant profile editor — same asymmetric mechanic as
-// Employment (a single declared value on the supply side, checked against
-// a range declared on the demand side) but with a rate/budget instead of a
+// Business profile editor — same asymmetric mechanic as Employment (a
+// single declared value on the supply side, checked against a range
+// declared on the demand side) but with a rate/budget instead of a
 // seniority year, and the attachment is optional and additive rather than
 // the sole keyword source: the description text always gets tokenized,
 // and a file — if provided — adds to it rather than replacing it.
-// Downscales an image client-side to a small JPEG thumbnail (max 200px on
-// the longest side) so it's light enough to include directly in a
-// discovery broadcast — no separate "request to download the photo" round
-// trip needed, the thumbnail just travels with the listing.
-function resizeImageToDataUrl(file, maxDim = 200, quality = 0.6) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
-        else if (height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => reject(new Error('Could not read that image'));
-      img.src = reader.result;
-    };
-    reader.onerror = () => reject(new Error('Could not read that file'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export function editSupplyDemandProfileFlow(ns, id) {
   const cfg = NS_CONFIG[ns];
-  const isSupply = id.role === cfg.roles[0].key; // offer / provider / seller
-  const isAnnonce = ns === 'annonce';
+  const isSupply = id.role === cfg.roles[0].key; // offer / client
   getProfile(id.identityId).then((profile) => {
     const common = `
       ${nameFieldHtml(id)}
-      <label>${isSupply ? (isAnnonce ? 'What you\'re selling' : 'What you offer — category') : 'What you need — category'}</label>
-      <input type="text" id="cat" value="${profile.category || ''}" placeholder="${isAnnonce ? 'e.g. Mountain bike' : 'e.g. Web development'}">
+      <label>${isSupply ? 'What you offer — category' : 'What you need — category'}</label>
+      <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Web development">
       <label>Country</label>
       <input type="text" id="country" value="${profile.country || ''}" placeholder="e.g. Switzerland">
       <label>City</label>
@@ -342,32 +314,20 @@ export function editSupplyDemandProfileFlow(ns, id) {
     `;
 
     const supplyFields = `
-      <label>${isAnnonce ? 'Your price (numeric — checked against declared budgets)' : 'Your rate (numeric — checked against declared budgets)'}</label>
-      <input type="text" id="rate" value="${profile.rate ?? ''}" placeholder="${isAnnonce ? 'e.g. 350' : 'e.g. 650'}">
-      ${ns === 'business' ? `
-        <label>Professional email (required)</label>
-        <input type="email" id="proEmail" value="${profile.professionalEmail || ''}" placeholder="you@company.com" required>
-      ` : ''}
-      ${ns === 'independant' ? `
-        <label>LinkedIn profile URL (required, self-declared — Jobber has no way to independently verify it)</label>
-        <input type="url" id="linkedin" value="${profile.linkedinUrl || ''}" placeholder="https://www.linkedin.com/in/…" required>
-      ` : ''}
+      <label>Your rate (numeric — checked against declared budgets)</label>
+      <input type="text" id="rate" value="${profile.rate ?? ''}" placeholder="e.g. 650">
+      <label>Professional email (required)</label>
+      <input type="email" id="proEmail" value="${profile.professionalEmail || ''}" placeholder="you@company.com" required>
       <label>Description — this is what gets matched</label>
-      <textarea id="desc" placeholder="${isAnnonce ? 'Condition, age, why you\'re selling…' : 'Describe your expertise or service'}">${profile.sourceText || ''}</textarea>
-      ${isAnnonce ? `
-        <label>Photo (optional — shown as a thumbnail directly in your listing, resized locally before sending)</label>
-        <input type="file" id="photo" accept="image/*">
-        <div id="photoStatus" style="font-size:11.5px;color:var(--low);margin-top:4px">${profile.photoDataUrl ? 'Current photo attached' : 'No photo attached'}</div>
-      ` : `
-        <label>Optional: attach a portfolio/CV (.docx or .pdf) to add more keywords — it enriches the description above, it doesn't replace it</label>
-        <input type="file" id="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-        <div id="fileStatus" style="font-size:11.5px;color:var(--low);margin-top:4px">${profile.cvFileName ? `Attached: ${profile.cvFileName}` : 'No file attached'}</div>
-      `}
-      <label><input type="checkbox" id="avail" ${profile.availableNow ? 'checked' : ''}> ${isAnnonce ? 'Still available' : 'Available now'}</label>
+      <textarea id="desc" placeholder="Describe your expertise or service">${profile.sourceText || ''}</textarea>
+      <label>Optional: attach a portfolio/CV (.docx or .pdf) to add more keywords — it enriches the description above, it doesn't replace it</label>
+      <input type="file" id="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+      <div id="fileStatus" style="font-size:11.5px;color:var(--low);margin-top:4px">${profile.cvFileName ? `Attached: ${profile.cvFileName}` : 'No file attached'}</div>
+      <label><input type="checkbox" id="avail" ${profile.availableNow ? 'checked' : ''}> Available now</label>
     `;
 
     const demandFields = `
-      <label>Budget range (numeric — checked against declared ${isAnnonce ? 'prices' : 'rates'})</label>
+      <label>Budget range (numeric — checked against declared rates)</label>
       <div style="display:flex;gap:8px">
         <input type="text" id="budgetMin" value="${profile.budgetMin ?? ''}" placeholder="Min" style="flex:1">
         <input type="text" id="budgetMax" value="${profile.budgetMax ?? ''}" placeholder="Max" style="flex:1">
@@ -388,39 +348,26 @@ export function editSupplyDemandProfileFlow(ns, id) {
         if (isSupply) {
           const availableNow = dlg.querySelector('#avail').checked;
           const rate = dlg.querySelector('#rate').value.trim();
-          const professionalEmail = ns === 'business' ? dlg.querySelector('#proEmail').value.trim() : profile.professionalEmail;
-          const linkedinUrl = ns === 'independant' ? dlg.querySelector('#linkedin').value.trim() : profile.linkedinUrl;
+          const professionalEmail = dlg.querySelector('#proEmail').value.trim();
 
-          let { cvFileName, cvExtractedText, photoDataUrl } = profile;
-          if (isAnnonce) {
-            const photoFile = dlg.querySelector('#photo').files[0];
-            if (photoFile) {
-              try {
-                photoDataUrl = await resizeImageToDataUrl(photoFile);
-              } catch (e) {
-                toast('Could not process that photo: ' + e.message);
-                return;
-              }
-            }
-          } else {
-            const file = dlg.querySelector('#file').files[0];
-            if (file) {
-              toast('Extracting text from ' + file.name + '…');
-              try {
-                cvExtractedText = await extract.extractText(file);
-                cvFileName = file.name;
-                toast(`Extracted text from ${file.name}`);
-              } catch (e) {
-                toast('Could not read that file: ' + e.message);
-                return;
-              }
+          let { cvFileName, cvExtractedText } = profile;
+          const file = dlg.querySelector('#file').files[0];
+          if (file) {
+            toast('Extracting text from ' + file.name + '…');
+            try {
+              cvExtractedText = await extract.extractText(file);
+              cvFileName = file.name;
+              toast(`Extracted text from ${file.name}`);
+            } catch (e) {
+              toast('Could not read that file: ' + e.message);
+              return;
             }
           }
           const tokens = matching.tokenize([desc, cvExtractedText].filter(Boolean).join(' '), category);
           await db.put('profiles', {
             ...profile, category, country, city, sourceText: desc, tokens,
             cvFileName, cvExtractedText, rate: rate ? parseFloat(rate) : null, availableNow,
-            professionalEmail, linkedinUrl, photoDataUrl,
+            professionalEmail,
             updatedAt: Date.now(),
           });
           await autoSearchOnSave(ns, tokens);
@@ -468,6 +415,6 @@ export async function enrichProfileWithAI(ns, id, onProgress = () => {}) {
 export function openProfileEditor(ns, id) {
   if (ns === 'employment') editEmploymentProfileFlow(id);
   else if (ns === 'outdoor') editOutdoorProfileFlow(id);
-  else if (ns === 'business' || ns === 'independant' || ns === 'annonce' || ns === 'drive') editSupplyDemandProfileFlow(ns, id);
+  else if (ns === 'business') editSupplyDemandProfileFlow(ns, id);
   else editProfileFlow(ns, id);
 }
