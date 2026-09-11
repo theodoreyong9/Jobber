@@ -27,7 +27,7 @@ const MODE_ICONS = {
   agent: '🤖',
   creator: '🎨',
   wallet: '👛',
-  tribute: '🕸️',
+  tribute: '🌐',
 };
 
 function modeIconHtml(ns) {
@@ -49,12 +49,19 @@ function modeIconHtml(ns) {
 
 export function renderModeIcons() {
   const nav = document.getElementById('modeIcons');
-  // Grouped into visually separated clusters (NAMESPACE_GROUPS) instead of
-  // one flat row — thirteen icons side by side with no structure was the
-  // actual problem, not any one icon's own styling.
+  // Grouped into visually separated clusters (NAMESPACE_GROUPS), each on
+  // its own row with a caption — not a single flat row. A vertical
+  // divider between groups doesn't read as "grouped" on a phone screen
+  // narrow enough that the first group alone (7 icons) already fills the
+  // width: you'd have to scroll past the whole group before ever seeing
+  // where it ends. Wrapping into rows makes every group visible without
+  // scrolling regardless of screen width.
   nav.innerHTML = NAMESPACE_GROUPS.map((group) => `
-    <span class="mode-group">${group.namespaces.map(modeIconHtml).join('')}</span>
-  `).join('<span class="mode-group-divider"></span>');
+    <span class="mode-group">
+      <span class="mode-group-label">${group.label}</span>
+      <span class="mode-group-icons">${group.namespaces.map(modeIconHtml).join('')}</span>
+    </span>
+  `).join('');
 
   nav.querySelectorAll('.mode-icon').forEach((btn) => {
     btn.addEventListener('click', () => {
