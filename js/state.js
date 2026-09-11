@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet'];
+export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute'];
 
 // Purely a display grouping for the Bureau (desktop-ui.js) — every other
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
@@ -22,7 +22,7 @@ export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'resea
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating'] },
   { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
-  { label: 'Ecosystem', namespaces: ['creator', 'wallet'] },
+  { label: 'Ecosystem', namespaces: ['creator', 'wallet', 'tribute'] },
 ];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
@@ -60,6 +60,9 @@ export const NS_CONFIG = {
   wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external', icon: '👛',
     url: 'https://theodoreyong9.github.io/AIWA_chain/',
     hint: 'Opens AIWA — local, geographically-independent value accrual.' },
+  tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
+    url: 'https://theodoreyong9.github.io/SGD/',
+    hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
 };
 
 export function roleLabel(ns, roleKey) {
