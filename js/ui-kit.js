@@ -1,7 +1,7 @@
 // ui-kit.js — generic, app-agnostic UI primitives. No imports from any
 // other app module, so nothing can create a cycle through this file.
 
-export function openModal(title, bodyHtml, { submitLabel = 'Save', onOpen, onSubmit } = {}) {
+export function openModal(title, bodyHtml, { submitLabel = 'Save', onOpen, onSubmit, noSubmit = false } = {}) {
   const dlg = document.createElement('dialog');
   dlg.className = 'modal';
   dlg.innerHTML = `
@@ -10,7 +10,7 @@ export function openModal(title, bodyHtml, { submitLabel = 'Save', onOpen, onSub
       <div class="modal-body">${bodyHtml}</div>
       <div class="modal-actions">
         <button type="button" value="cancel" class="btn ghost" id="__modalCancel">Cancel</button>
-        <button type="submit" value="ok" class="btn primary">${submitLabel}</button>
+        ${noSubmit ? '' : `<button type="submit" value="ok" class="btn primary">${submitLabel}</button>`}
       </div>
     </form>`;
   document.body.appendChild(dlg);
