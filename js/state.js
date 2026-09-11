@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'discover', 'contribute', 'wallet', 'tribute'];
+export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating', 'research', 'near', 'agent', 'creator', 'wallet'];
 
 // Purely a display grouping for the Bureau (desktop-ui.js) — every other
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
@@ -22,7 +22,7 @@ export const NAMESPACES = ['employment', 'business', 'independant', 'annonce', '
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'independant', 'annonce', 'drive', 'outdoor', 'dating'] },
   { label: 'Insight', namespaces: ['research', 'near', 'agent'] },
-  { label: 'Ecosystem', namespaces: ['creator', 'discover', 'contribute', 'wallet', 'tribute'] },
+  { label: 'Ecosystem', namespaces: ['creator', 'wallet'] },
 ];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
@@ -64,18 +64,9 @@ export const NS_CONFIG = {
   creator: { label: 'Creator', color: '#F0A830', kind: 'external', icon: '🎨',
     url: 'https://yourmine-dapp.web.app',
     hint: 'Opens YourMine — publish JavaScript apps and interface themes, permissionlessly.' },
-  discover: { label: 'Discover', color: '#4EA8A0', kind: 'external', icon: '🧭',
-    url: 'https://theodoreyong9.github.io/Smartank/',
-    hint: 'Opens Smartank — describe an intent, get real Hugging Face models ranked with evidence.' },
-  contribute: { label: 'Contribute', color: '#9B7FD4', kind: 'external', icon: '🖋️',
-    url: 'https://theodoreyong9.github.io/ARVT/',
-    hint: 'Opens ARVT — a living corpus on relational value, extended by visitor contributions.' },
   wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external', icon: '👛',
     url: 'https://theodoreyong9.github.io/AIWA_chain/',
     hint: 'Opens AIWA — local, geographically-independent value accrual.' },
-  tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
-    url: 'https://theodoreyong9.github.io/SGD/',
-    hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
 };
 
 export function roleLabel(ns, roleKey) {
