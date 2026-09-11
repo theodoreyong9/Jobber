@@ -15,12 +15,23 @@
 <body>
 
 <div class="app">
-  <header class="modebar">
-    <div class="brand-mini" title="Back to the Bureau"><span class="dot"></span>Jobber</div>
-    <div class="statusbar">
-      <span><b id="peerCount">0</b> peers connected · WebRTC</span>
-      <span id="webgpuFlag"></span>
-      <span class="flag" id="swFlag"></span>
+  <div class="main">
+    <header class="topbar">
+      <div class="who" id="topbarWho"></div>
+      <div class="controls" id="topbarControls"></div>
+    </header>
+
+    <section class="workspace" id="workspace"></section>
+  </div>
+
+  <footer class="modebar">
+    <div class="modebar-side">
+      <span class="stat" title="WebRTC peer connections across every live search"><b id="peerCount">0</b> peers</span>
+      <span class="stat" id="webgpuFlag"></span>
+    </div>
+    <button type="button" class="brand-mini" title="Bureau"><span class="dot"></span>Jobber</button>
+    <div class="modebar-side modebar-side-right">
+      <span class="stat" id="swFlag"></span>
       <details class="settings-details">
         <summary title="Storage, network status, and backup">⚙</summary>
         <div class="settings-panel">
@@ -36,16 +47,7 @@
         </div>
       </details>
     </div>
-  </header>
-
-  <div class="main">
-    <header class="topbar">
-      <div class="who" id="topbarWho"></div>
-      <div class="controls" id="topbarControls"></div>
-    </header>
-
-    <section class="workspace" id="workspace"></section>
-  </div>
+  </footer>
 </div>
 
 <script type="module" src="js/app.js"></script>
