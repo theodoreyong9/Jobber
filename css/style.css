@@ -243,8 +243,16 @@ h2.section-title{ font-family:var(--font-head); font-size:15px; font-weight:600;
 .chat-input .btn{ padding:6px 9px; }
 .chat-input input{ flex:1; background:var(--panel-raised); border:1px solid var(--border); border-radius:6px; padding:7px 10px; color:var(--hi); }
 
-/* dialog / modal */
-dialog.modal{ border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); color:var(--hi); padding:0; width:min(480px,92vw); }
+/* dialog / modal — explicitly centered rather than relying on the browser's
+   own default <dialog> centering, which doesn't reliably hold once content
+   (like the mode picker's tile grid) gets tall enough to matter. Capped at
+   85% of the viewport height with its own scroll so a tall picker scrolls
+   internally instead of pushing the dialog around or off-screen. */
+dialog.modal{
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); margin:0;
+  max-height:85vh; overflow-y:auto;
+  border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); color:var(--hi); padding:0; width:min(480px,92vw);
+}
 dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
 .modal-form{ padding:18px 20px; }
 .modal-form h3{ font-family:var(--font-head); font-size:15px; margin-bottom:12px; }
