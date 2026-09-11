@@ -17,17 +17,7 @@
 <div class="app">
   <header class="modebar">
     <div class="brand-mini" title="Back to the Bureau"><span class="dot"></span>Jobber</div>
-  </header>
-
-  <div class="main">
-    <header class="topbar">
-      <div class="who" id="topbarWho"></div>
-      <div class="controls" id="topbarControls"></div>
-    </header>
-
-    <section class="workspace" id="workspace"></section>
-
-    <footer class="statusbar">
+    <div class="statusbar">
       <span><b id="peerCount">0</b> peers connected · WebRTC</span>
       <span id="webgpuFlag"></span>
       <span class="flag" id="swFlag"></span>
@@ -45,7 +35,16 @@
           </div>
         </div>
       </details>
-    </footer>
+    </div>
+  </header>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="who" id="topbarWho"></div>
+      <div class="controls" id="topbarControls"></div>
+    </header>
+
+    <section class="workspace" id="workspace"></section>
   </div>
 </div>
 
