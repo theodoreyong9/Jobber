@@ -49,14 +49,18 @@ export function createIdentityFlow(ns) {
 export async function renderTopbar() {
   const who = document.getElementById('topbarWho');
   const controls = document.getElementById('topbarControls');
+  const bar = document.querySelector('.topbar');
 
-  // The Bureau (desktop-ui.js) has its own screen — nothing to show here
-  // until a tile's actually been tapped into.
+  // The Bureau (desktop-ui.js) has its own screen and needs no title bar at
+  // all — nothing to show until a tile's actually been tapped into, and an
+  // empty bar would just be dead space above it.
   if (state.view !== 'workspace' || !state.activeNamespace) {
-    who.innerHTML = `<div class="name">Bureau</div>`;
+    bar.hidden = true;
+    who.innerHTML = '';
     controls.innerHTML = '';
     return;
   }
+  bar.hidden = false;
 
   const ns = state.activeNamespace;
   const cfg = NS_CONFIG[ns];
