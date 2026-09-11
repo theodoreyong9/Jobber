@@ -75,6 +75,11 @@ export async function renderTopbar() {
     controls.innerHTML = '';
     return;
   }
+  if (cfg.kind === 'messages') {
+    who.innerHTML = `<div class="name">Messages</div><div class="sub" style="color:var(--low);font-size:11.5px">Every conversation and pending request across every mode — no identity of its own needed here.</div>`;
+    controls.innerHTML = '';
+    return;
+  }
 
   const list = state.identitiesByNs[ns].filter((i) => i.active);
   const id = list.find((i) => i.identityId === state.activeIdentityId[ns]);
