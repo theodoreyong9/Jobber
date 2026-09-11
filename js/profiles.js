@@ -45,6 +45,16 @@ async function saveNameIfChanged(id, dlg) {
   if (newName && newName !== id.displayName) await identity.renameIdentity(id.identityId, newName);
 }
 
+// There's no "Start searching" button (see identity-ui.js) — saving a
+// profile that has something to search on goes live automatically the
+// first time, and just rebroadcasts the fresh keywords to whoever's
+// already connected every time after that.
+async function autoSearchOnSave(ns, tokens) {
+  if (!tokens.length) return;
+  if (state.searchLive[ns]) await state.handlers.rebroadcastDiscovery(ns);
+  else await state.handlers.toggleSearchLive(ns);
+}
+
 export function editProfileFlow(ns, id) {
   const cfg = NS_CONFIG[ns];
   const roleTag = id.role ? roleLabel(ns, id.role) : null;
@@ -96,9 +106,10 @@ export function editProfileFlow(ns, id) {
           tokens, aiTokens: profile.aiTokens || [], lookingForText, searchTokens,
           updatedAt: Date.now(),
         });
+        await autoSearchOnSave(ns, tokens);
         toast('Profile saved locally');
         state.render.workspace();
-        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
+        state.render.topbar();
       },
     });
   });
@@ -178,6 +189,7 @@ export function editEmploymentProfileFlow(id) {
             cvFileName, cvExtractedText, tokens, earliestYear,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave('employment', tokens);
         } else {
           const jobPostingText = dlg.querySelector('#posting').value;
           const seniorityMin = dlg.querySelector('#senMin').value.trim();
@@ -189,10 +201,11 @@ export function editEmploymentProfileFlow(id) {
             seniorityMax: seniorityMax ? parseInt(seniorityMax, 10) : null,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave('employment', tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
-        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
+        state.render.topbar();
       },
     });
   });
@@ -262,6 +275,7 @@ export function editOutdoorProfileFlow(id) {
             participantLimit: limit ? parseInt(limit, 10) : null,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave('outdoor', tokens);
         } else {
           const sourceText = dlg.querySelector('#interests').value;
           const tokens = matching.tokenize(sourceText, category);
@@ -269,6 +283,7 @@ export function editOutdoorProfileFlow(id) {
             ...profile, category, country, city, sourceText, availableNow, tokens,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave('outdoor', tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
@@ -408,6 +423,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
             professionalEmail, linkedinUrl, photoDataUrl,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave(ns, tokens);
         } else {
           const budgetMin = dlg.querySelector('#budgetMin').value.trim();
           const budgetMax = dlg.querySelector('#budgetMax').value.trim();
@@ -418,10 +434,11 @@ export function editSupplyDemandProfileFlow(ns, id) {
             budgetMax: budgetMax ? parseFloat(budgetMax) : null,
             updatedAt: Date.now(),
           });
+          await autoSearchOnSave(ns, tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
-        state.render.topbar(); // refresh the CPU/AI keyword chips and the Search button's enabled state
+        state.render.topbar();
       },
     });
   });
