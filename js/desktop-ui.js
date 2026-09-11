@@ -40,16 +40,25 @@ export function goToDesktop() {
 // into a workspace (there's no separate back button in the topbar).
 document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 
+// `badge` is either a notification count (number) or a status tag like
+// "cooking" (string) — visually distinct (a number is a red count pill,
+// a label is an amber tag) since they mean different things.
 function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
   const cfg = NS_CONFIG[ns];
+  const isLabel = typeof badge === 'string';
+  const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   return `
     <button type="button" class="desktop-tile" style="--tile-color:${cfg.color}" ${dataAttrs}>
-      ${badge ? `<span class="desktop-tile-badge">${badge > 9 ? '9+' : badge}</span>` : ''}
+      ${badge ? `<span class="desktop-tile-badge${isLabel ? ' desktop-tile-badge-label' : ''}">${badgeText}</span>` : ''}
       <span class="desktop-tile-glyph">${cfg.icon}</span>
       <span class="desktop-tile-label">${label}</span>
       ${sub ? `<span class="desktop-tile-sub">${sub}</span>` : ''}
     </button>`;
 }
+
+// Still being built out — flagged on the Bureau so it's clear these
+// aren't finished features yet.
+const COOKING = ['creator', 'wallet', 'agent'];
 
 export async function renderDesktop() {
   const identityTiles = [];
@@ -82,7 +91,7 @@ export async function renderDesktop() {
         ${g.namespaces.map((ns) => tileHtml(ns, {
           label: NS_CONFIG[ns].label,
           dataAttrs: `data-act="tool" data-ns="${ns}"`,
-          badge: ns === 'messages' ? pendingCount : 0,
+          badge: ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0),
         })).join('')}
       </div>
     </div>`).join('');

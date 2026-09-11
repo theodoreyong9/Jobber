@@ -83,6 +83,14 @@ a{color:var(--agent);}
   border-radius:20px; background:var(--accent); color:#fff; font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px var(--bg);
 }
+/* A status tag (e.g. "cooking") rather than a notification count — wider,
+   amber instead of the count badge's alert red, top edge instead of a
+   corner bubble so it doesn't read as "N unread". */
+.desktop-tile-badge-label{
+  top:-7px; right:auto; left:50%; transform:translateX(-50%); height:auto; min-width:0;
+  padding:2px 7px; border-radius:20px; background:var(--warn); color:#1A1400;
+  font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+}
 .mode-picker-group{ margin-bottom:14px; }
 .mode-picker-group:last-child{ margin-bottom:0; }
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
