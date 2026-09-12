@@ -65,7 +65,10 @@ export async function renderDesktop() {
   for (const ns of CREATABLE) {
     const cfg = NS_CONFIG[ns];
     for (const id of (state.identitiesByNs[ns] || []).filter((i) => i.active)) {
-      const isLive = id.identityId === state.activeIdentityId[ns] && !!state.searchLive[ns];
+      // Every identity in a namespace can be live independently now — no
+      // longer tied to whichever one happens to be the currently *viewed*
+      // identity (state.activeIdentityId is a separate, UI-only concern).
+      const isLive = !!state.searchLive[ns]?.has(id.identityId);
       identityTiles.push(tileHtml(ns, {
         label: id.displayName,
         sub: cfg.label + (isLive ? ' · live' : ''),
