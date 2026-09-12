@@ -102,6 +102,11 @@ export async function renderTopbar() {
     controls.innerHTML = '';
     return;
   }
+  if (cfg.kind === 'info') {
+    who.innerHTML = `<div class="name">Pricing</div><div class="sub" style="color:var(--low);font-size:11.5px">What Jobber costs, and why — no identity needed here.</div>`;
+    controls.innerHTML = '';
+    return;
+  }
 
   const list = state.identitiesByNs[ns].filter((i) => i.active);
   const id = list.find((i) => i.identityId === state.activeIdentityId[ns]);
