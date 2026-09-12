@@ -90,11 +90,14 @@ function bentoToolTile(ns, pendingCount) {
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   const sub = layout.sub ? layout.sub(pendingCount) : '';
+  // The small icon-chip is redundant once the tile already carries its own
+  // emoji large in the background (see .bento-bg-icon) — kept only for
+  // .plain (Pricing), the one tile that deliberately has no background
+  // emoji at all, so it isn't left with no icon whatsoever.
   return `
     <button type="button" class="bento-tile${layout.plain ? ' plain' : ''}" style="--tile-color:${cfg.color}; grid-area:${layout.area};" data-act="tool" data-ns="${ns}">
-      ${layout.plain ? '' : `<span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>`}
+      ${layout.plain ? `<span class="bento-icon-chip">${cfg.icon}</span>` : `<span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>`}
       ${badge ? `<span class="${isLabel ? 'bento-badge-cooking' : 'bento-badge-count'}">${badgeText}</span>` : ''}
-      <span class="bento-icon-chip${layout.size === 'lg' ? ' lg' : ''}">${cfg.icon}</span>
       <span class="bento-label${layout.size === 'lg' ? ' lg' : ''}">${cfg.label}</span>
       ${sub ? `<span class="bento-sub">${sub}</span>` : ''}
     </button>`;
