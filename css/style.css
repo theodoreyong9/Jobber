@@ -125,24 +125,17 @@ a{color:var(--agent);}
     color-mix(in srgb, var(--panel) 46%, transparent);
   transition:transform .12s ease, filter .12s ease;
 }
-.bento-tile.plain{ background:color-mix(in srgb, var(--panel) 46%, transparent); }
 .bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 
 /* The tile's own emoji, oversized and faded, bleeding off the corner
    instead of the old plain circle blob — "the Bureau's icons as a styled
-   background", not a generic shape. Pricing (.plain) skips it, same
-   reasoning as skipping the color wash: only one of its five tiers is
-   real yet, see COOKING in desktop-ui.js. */
+   background", not a generic shape. */
 .bento-bg-icon{
   position:absolute; z-index:1; pointer-events:none; line-height:1; right:-8px; bottom:-16px;
   font-size:60px; opacity:.24; transform:rotate(-10deg); filter:saturate(130%);
 }
 .bento-bg-icon.lg{ font-size:104px; right:-14px; bottom:-26px; }
 
-.bento-icon-chip{
-  width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;
-  background:rgba(13,17,20,.36); font-size:15px; margin-bottom:auto; position:relative; z-index:2;
-}
 .bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
 .bento-label.lg{ font-size:15px; margin-top:10px; }
 .bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
