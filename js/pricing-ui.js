@@ -15,8 +15,8 @@ import { PRODUCTS, hasProduct } from './products.js';
 // the day one does exist — `disabled` on all of them for now. The status
 // pill is what actually distinguishes "already yours" (Free) from "not
 // yet buyable" (the other four) — see products.js's header for why Free
-// shows attached without you doing anything. `price` is indicative only
-// (see the disclaimer below it) — never presented as a locked-in number.
+// shows attached without you doing anything. `price` is indicative only,
+// hence the "~" — never presented as a locked-in number.
 function productHtml({ id, name, icon, color, price, body }, attached) {
   const priceLabel = price == null ? '' : `<span class="product-price">~$${price}<span class="product-price-unit">/mo</span></span>`;
   return `
@@ -39,14 +39,6 @@ export async function renderPricingWorkspace() {
     <div class="panel" style="max-width:640px;margin:20px auto">
       <h2 class="section-title" style="margin-bottom:6px">Pricing</h2>
       <p class="section-sub">What Jobber costs, and why.</p>
-
-      <p style="font-size:12.5px;color:var(--low);line-height:1.5;margin-top:14px">
-        Free is free — no backend to pay for. The other four cost something real to run (relay,
-        chain fees, cloud compute), so prices below are indicative, not final, and not yet
-        buyable. "Attached" just means this browser's own record says so, not a verified purchase
-        — the real check, once each one ships, will live wherever its cost actually lands (the
-        relay peer, the chain, the cloud service), never here.
-      </p>
 
       <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
         ${products.join('')}
