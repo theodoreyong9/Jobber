@@ -502,6 +502,49 @@ where the existing chat UI (offline-queueing, attachments, resync, all of
 it) already works — centralizing here is about *finding* a conversation,
 not rendering it a second time.
 
+### Every identity in a namespace can be live at once, not just one
+
+Used to be architectural: `searchLive` was one boolean per namespace, so
+only whichever identity happened to be "active" could ever be searching —
+switching identities didn't stop the old one, it just left its Stop button
+showing on whoever you switched to next, and the Bureau could only ever
+mark one tile per namespace as live regardless of how many identities you
+actually had running. Both were real, reported bugs, not just cosmetic:
+the underlying state genuinely couldn't tell two identities apart.
+
+`searchLive[ns]` is now a `Set` of identityIds, and everything that used
+to assume "the" identity in a namespace — chat log, pending chats/
+meetings/documents/attachment-offers, open chat, loaded conversations —
+is bucketed by identityId too. `activeIdentityId[ns]` still exists, but
+now means only "which one am I currently *viewing*", entirely decoupled
+from which ones are actually live.
+
+Making this real (not just a data-shape change) needed a look at what
+Trystero actually does under the hood: it mints exactly one `selfId` per
+browser tab, shared by every room that tab joins, and joining the same
+room id twice returns the same room object rather than a second
+connection. So the room itself still stays one join per namespace (which
+is also required for a different reason — the room id can't be sharded
+per identity, or two strangers couldn't find each other without already
+knowing each other's identityId). Multiple live identities in the same
+namespace share that one connection, each broadcasting its own
+`discovery` message under its own `sender`. The one thing this rules out
+for good: **two of your own identities in the same browser tab can never
+become real WebRTC peers of each other** — they're structurally "the same
+peer" to Trystero. That's still handled by the local-match preview
+described above, unchanged.
+
+Sharing one connection across identities means a peer who's discovered
+two of your identities needs a way to say which one a cold-start message
+(a chat request, a meeting proposal, a document request, a file offer) is
+actually for — `sender` on that message is *their* identity, not yours.
+`protocol.js` carries a `targetIdentityId` field for exactly this
+(`state.js`'s `resolveLiveIdentity` resolves it on the receiving end, with
+a reasonable fallback for a message that predates the field), stamped by
+every outgoing send in `conversations.js` as "whichever of the recipient's
+identities I mean" — the same value whether it's a first contact or a
+response to one already in flight.
+
 ## What's been hardened since the last pass
 
 - **Offline messages auto-resend.** A message written while the recipient
@@ -619,8 +662,8 @@ code runs.
 |---|---|
 | `js/db.js` | IndexedDB wrapper: identities, profiles, cache, conversations, blocklist, research projects/artifacts, and credibility events. Nothing here is a server call. |
 | `js/identity.js` | Generates a real ECDSA P-256 keypair per identity via WebCrypto. The identity id is a SHA-256 hash of the public key. Rotation generates a fresh keypair and marks the old one retired; retirement is local-only (there's no global authority to enforce it network-wide — the UI says so). |
-| `js/protocol.js` | The actual wire format (`v`, `type`, `namespace`, `sender`, `messageId`, `timestamp`, `payload`) and validation used by every message before it's trusted. |
-| `js/p2p.js` | Real WebRTC data channels via [Trystero](https://github.com/dmotz/trystero)'s `nostr` strategy (a pinned list of public Nostr relays over plain WebSocket, used only as a rendezvous layer so two browsers can find each other's connection info — no app data passes through them; switched from the `torrent` strategy, which was inconsistently reachable from plain browser JS). Loads `@trystero-p2p/nostr` from `esm.run` **lazily**, so if the CDN or export shape ever breaks, only P2P is disabled — the rest of the app (identity, profiles, Research vault) keeps working. |
+| `js/protocol.js` | The actual wire format (`v`, `type`, `namespace`, `sender`, `messageId`, `timestamp`, `payload`, optional `correlationId`/`targetIdentityId`) and validation used by every message before it's trusted. |
+| `js/p2p.js` | Real WebRTC data channels via [Trystero](https://github.com/dmotz/trystero)'s `nostr` strategy (a pinned list of public Nostr relays over plain WebSocket, used only as a rendezvous layer so two browsers can find each other's connection info — no app data passes through them; switched from the `torrent` strategy, which was inconsistently reachable from plain browser JS). Loads `@trystero-p2p/nostr` from `esm.run` **lazily**, so if the CDN or export shape ever breaks, only P2P is disabled — the rest of the app (identity, profiles, Research vault) keeps working. One room join per namespace, shared by every identity that's live there (see "Every identity in a namespace can be live at once" above) — Trystero mints one `selfId` per browser tab, so that's a hard constraint, not a choice. |
 | `js/geo.js` | Wraps the real `navigator.geolocation` permission prompt in a Promise, plus the haversine great-circle distance formula Near filters by. |
 | `js/discovery.js` | The real cascade: namespace/protocol match → hard filters → soft ranking → budget cap, before anything expensive runs. |
 | `js/matching.js` | Deterministic local scoring: tokenize → synonym-normalize → Jaccard overlap → penalty for missing required terms. Versioned (`MATCHING_ENGINE_VERSION`), same formula regardless of whether AI enrichment is on. |
@@ -628,7 +671,7 @@ code runs.
 | `js/extract.js` | Real text extraction from `.docx` (a hand-rolled ZIP central-directory reader + native `DecompressionStream('deflate-raw')` + `DOMParser` on `word/document.xml` — no dependency at all) and `.pdf` (via pdf.js, lazily loaded, worker version-pinned to whatever the main bundle actually resolved to). This is what a candidate's CV keywords are mined from. |
 | `js/research.js` | Research Vault: projects, typed artifacts (`hypothesis`, `critique`, `experiment`, `result`, …), parent/child provenance, export to a `project.jobber` JSON bundle, import back in. |
 | `js/agent.js` | The cross-namespace opportunity matcher: does anyone you've already discovered in one namespace need what you offer, or offer what you search for, in some *other* namespace — a class of match a single namespace's own matching structurally can't see. |
-| `js/state.js` | The shared state object, namespace config, and small pure helpers. Everything else imports from here; it imports nothing app-specific itself. Also where `state.render` / `state.handlers` live — see the "Module architecture" section below. |
+| `js/state.js` | The shared state object, namespace config, and small pure helpers — including `ensureIdentityState`/`migrateIdentityState`/`resolveLiveIdentity`, which make multiple identities per namespace behave correctly (see above). Everything else imports from here; it imports nothing app-specific itself. Also where `state.render` / `state.handlers` live — see the "Module architecture" section below. |
 | `js/ui-kit.js` | Generic, app-agnostic UI primitives (modal dialog, toast). No app-module imports. |
 | `js/identity-ui.js` | The identity rail, the topbar, and create/rename/rotate/retire flows, including the one-active-identity-per-role cap. |
 | `js/profiles.js` | Profile storage and the profile editors (generic, Employment's candidate/recruiter split, Business's supply/demand split, Outdoor's organizer/participant split). |
