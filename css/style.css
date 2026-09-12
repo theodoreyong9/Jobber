@@ -92,13 +92,26 @@ a{color:var(--agent);}
   font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
 }
 
-/* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, each with a
-   color-tinted decorative shape instead of sitting flat on --panel. The
-   Bureau manages its own internal scroll (the identity grid only, once it
-   overflows) instead of the whole workspace scrolling, so .workspace's
-   usual padding/scroll is turned off for it — see render.js. ---------- */
+/* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, glass panes
+   floating over a fixed, colorful ambient wash instead of sitting flat on
+   --panel. The wash lives on .bureau itself (not .bento-identities, which
+   is the part that actually scrolls) so it stays put behind the tiles as
+   the identity grid scrolls past it — real backdrop-filter glass needs
+   something colorful underneath to blur, which is what this provides.
+   The Bureau manages its own internal scroll (the identity grid only,
+   once it overflows) instead of the whole workspace scrolling, so
+   .workspace's usual padding/scroll is turned off for it — see
+   render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow:hidden; display:flex; }
-.bureau{ flex:1; min-height:0; display:flex; flex-direction:column; width:100%; }
+.bureau{
+  flex:1; min-height:0; display:flex; flex-direction:column; width:100%; position:relative;
+  background:
+    radial-gradient(ellipse 55% 38% at 12% 8%, color-mix(in srgb, #F1552C 40%, transparent), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 92% 12%, color-mix(in srgb, #5B6EE8 38%, transparent), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 15% 92%, color-mix(in srgb, #D46FB3 32%, transparent), transparent 70%),
+    radial-gradient(ellipse 50% 42% at 96% 88%, color-mix(in srgb, #2FBF71 30%, transparent), transparent 70%),
+    var(--bg);
+}
 .bento-tools{ flex:0 0 auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:100px; }
 .bento-identities{
   flex:1; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:84px;
@@ -107,19 +120,27 @@ a{color:var(--agent);}
 
 .bento-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
-  align-items:flex-start; text-align:left; padding:10px; border:none; cursor:pointer; font-family:inherit;
-  color:var(--hi); box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+  align-items:flex-start; text-align:left; padding:10px; cursor:pointer; font-family:inherit;
+  color:var(--hi); border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(0,0,0,.25);
+  backdrop-filter:blur(20px) saturate(165%); -webkit-backdrop-filter:blur(20px) saturate(165%);
   background:
-    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 26%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 4%, transparent) 60%),
-    var(--panel);
+    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 30%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 6%, transparent) 65%),
+    color-mix(in srgb, var(--panel) 46%, transparent);
 }
-.bento-tile::before{
-  content:''; position:absolute; width:150%; height:150%; top:-65%; right:-55%; border-radius:50%; pointer-events:none;
-  background:color-mix(in srgb, var(--tile-color, var(--border)) 16%, transparent);
+.bento-tile.plain{ background:color-mix(in srgb, var(--panel) 46%, transparent); }
+.bento-tile:active{ filter:brightness(1.2); }
+
+/* The tile's own emoji, oversized and faded, bleeding off the corner
+   instead of the old plain circle blob — "the Bureau's icons as a styled
+   background", not a generic shape. Pricing (.plain) skips it, same
+   reasoning as skipping the color wash: only one of its five tiers is
+   real yet, see COOKING in desktop-ui.js. */
+.bento-bg-icon{
+  position:absolute; z-index:1; pointer-events:none; line-height:1; right:-8px; bottom:-16px;
+  font-size:60px; opacity:.24; transform:rotate(-10deg); filter:saturate(130%);
 }
-.bento-tile.plain{ background:var(--panel); }
-.bento-tile.plain::before{ content:none; }
-.bento-tile:active{ filter:brightness(1.15); }
+.bento-bg-icon.lg{ font-size:104px; right:-14px; bottom:-26px; }
 
 .bento-icon-chip{
   width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;
@@ -141,19 +162,24 @@ a{color:var(--agent);}
 }
 
 .bento-id-tile{
-  position:relative; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
-  padding:8px; border:none; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
-  box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
-  background:linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 22%, transparent), transparent 65%), var(--panel);
+  position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
+  padding:8px; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 0 1px rgba(0,0,0,.25);
+  backdrop-filter:blur(20px) saturate(165%); -webkit-backdrop-filter:blur(20px) saturate(165%);
+  background:linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 26%, transparent), transparent 65%), color-mix(in srgb, var(--panel) 46%, transparent);
 }
-.bento-id-tile:active{ filter:brightness(1.15); }
-.bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); }
-.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; }
-.bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; }
+.bento-id-tile:active{ filter:brightness(1.2); }
+.bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
+.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; position:relative; z-index:2; }
+.bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; position:relative; z-index:2; }
 
 .bento-id-empty, .bento-id-new{
-  display:flex; align-items:center; justify-content:center; background:var(--bg);
-  box-shadow:inset 0 0 0 1px var(--border-soft); color:var(--low); border:none; font-family:inherit;
+  display:flex; align-items:center; justify-content:center; color:var(--low); font-family:inherit;
+  border:1px solid rgba(255,255,255,.06);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+  backdrop-filter:blur(20px) saturate(140%); -webkit-backdrop-filter:blur(20px) saturate(140%);
+  background:color-mix(in srgb, var(--bg) 55%, transparent);
 }
 .bento-id-new{ cursor:pointer; font-size:18px; }
 .bento-id-new:hover{ color:var(--mid); }
@@ -164,7 +190,9 @@ a{color:var(--agent);}
    nothing without the target it's climbing toward. */
 .bento-id-score{
   display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:4px;
-  padding:8px; background:var(--panel); box-shadow:inset 0 0 0 1px var(--border-soft);
+  padding:8px; border:1px solid rgba(255,255,255,.06); box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+  backdrop-filter:blur(20px) saturate(140%); -webkit-backdrop-filter:blur(20px) saturate(140%);
+  background:color-mix(in srgb, var(--panel) 46%, transparent);
 }
 .bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:15px; color:var(--hi); }
 .bento-score-slash{ font-weight:600; font-size:10.5px; color:var(--low); }
