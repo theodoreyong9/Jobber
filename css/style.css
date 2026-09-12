@@ -146,7 +146,6 @@ a{color:var(--agent);}
   width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;
   background:rgba(13,17,20,.36); font-size:15px; margin-bottom:auto; position:relative; z-index:2;
 }
-.bento-icon-chip.lg{ width:34px; height:34px; border-radius:10px; font-size:19px; }
 .bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
 .bento-label.lg{ font-size:15px; margin-top:10px; }
 .bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
