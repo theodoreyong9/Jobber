@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreFromTally, EVENT } from '../js/credibility.js';
+import { scoreFromTally, EVENT, identityCapFor, nextPalier, BASE_IDENTITY_CAP, IDENTITY_PALIER_STEP, IDENTITY_PALIERS } from '../js/credibility.js';
 
 // scoreFromTally is the pure half of credibility.js — everything that
 // actually touches IndexedDB (recordEvent, computeCredibility,
@@ -68,4 +68,25 @@ test('scoreFromTally: never scores negative even with a firstSeenTs in the futur
   const now = Date.now();
   const { score } = scoreFromTally(tally({ firstSeenTs: now + 86_400_000 }), now);
   assert.ok(score >= 0);
+});
+
+// identityCapFor / nextPalier — the pure math behind the Bureau's identity
+// slot cap (see desktop-ui.js) and identity-ui.js's createIdentityFlow
+// gate. computeGlobalCredibility itself touches IndexedDB (via db.js), so
+// like recordEvent/computeCredibility it's exercised in the browser
+// instead — these two are pure functions of a score, so they belong here.
+
+test('identityCapFor: below every palier, the cap is just the base', () => {
+  assert.equal(identityCapFor(0), BASE_IDENTITY_CAP);
+  assert.equal(identityCapFor(IDENTITY_PALIERS[0] - 1), BASE_IDENTITY_CAP);
+});
+
+test('identityCapFor: reaching a palier unlocks exactly one more step, not a jump to unlimited', () => {
+  assert.equal(identityCapFor(IDENTITY_PALIERS[0]), BASE_IDENTITY_CAP + IDENTITY_PALIER_STEP);
+  assert.equal(identityCapFor(100), BASE_IDENTITY_CAP + IDENTITY_PALIERS.length * IDENTITY_PALIER_STEP);
+});
+
+test('nextPalier: reports the next threshold still ahead, and null once every known one is cleared', () => {
+  assert.equal(nextPalier(0), IDENTITY_PALIERS[0]);
+  assert.equal(nextPalier(IDENTITY_PALIERS[IDENTITY_PALIERS.length - 1]), null);
 });
