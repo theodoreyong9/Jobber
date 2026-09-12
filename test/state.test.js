@@ -172,7 +172,6 @@ test('migrateIdentityState carries an identity\'s in-memory state to a new id on
   state.chatLog['_test_ns_b'].get('OLD').set('PEER1', [{ from: 'me', text: 'hi', ts: 1 }]);
   state.pendingMeetings['_test_ns_b'].get('OLD').set('PEER1', { status: 'accepted', when: 'tomorrow' });
   state.openChatWith['_test_ns_b'].set('OLD', 'PEER1');
-  state.searchLive['_test_ns_b'].add('OLD');
 
   migrateIdentityState('_test_ns_b', 'OLD', 'NEW');
 
@@ -180,8 +179,14 @@ test('migrateIdentityState carries an identity\'s in-memory state to a new id on
   assert.equal(state.chatLog['_test_ns_b'].get('NEW').get('PEER1')[0].text, 'hi');
   assert.equal(state.pendingMeetings['_test_ns_b'].get('NEW').get('PEER1').status, 'accepted');
   assert.equal(state.openChatWith['_test_ns_b'].get('NEW'), 'PEER1');
-  assert.equal(state.searchLive['_test_ns_b'].has('OLD'), false);
-  assert.equal(state.searchLive['_test_ns_b'].has('NEW'), true);
+});
+
+test('migrateIdentityState leaves searchLive alone — the caller owns that transition, since it is a live p2p.js room registration, not just data', () => {
+  resetNsState('_test_ns_b2');
+  state.searchLive['_test_ns_b2'].add('OLD');
+  migrateIdentityState('_test_ns_b2', 'OLD', 'NEW');
+  assert.equal(state.searchLive['_test_ns_b2'].has('OLD'), true);
+  assert.equal(state.searchLive['_test_ns_b2'].has('NEW'), false);
 });
 
 test('migrateIdentityState is safe on an identity that was never live or ensured', () => {
@@ -189,5 +194,4 @@ test('migrateIdentityState is safe on an identity that was never live or ensured
   migrateIdentityState('_test_ns_c', 'NEVER_SEEN', 'NEW2');
   assert.ok(state.chatLog['_test_ns_c'].get('NEW2') instanceof Map);
   assert.equal(state.openChatWith['_test_ns_c'].get('NEW2'), null);
-  assert.equal(state.searchLive['_test_ns_c'].has('NEW2'), false);
 });

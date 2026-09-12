@@ -203,12 +203,33 @@ export function ensureIdentityState(ns, identityId) {
   if (!state.loadedConversations[ns].has(identityId)) state.loadedConversations[ns].set(identityId, new Set());
 }
 
+// Every incoming P2P message that's about a specific relationship (as
+// opposed to a `discovery` broadcast, which isn't addressed to anyone in
+// particular) carries `targetIdentityId` — which of *my* identities the
+// sender means. This resolves that to one of my actually-live identities,
+// falling back to whichever one I'm currently viewing, then to whichever
+// is live at all, for a message from a peer who predates this field or a
+// dropped edge case — never a hard failure, just the most reasonable guess.
+export function resolveLiveIdentity(ns, targetIdentityId) {
+  const live = state.searchLive[ns];
+  if (!(live instanceof Set)) return null; // research's searchLive is a plain bool — not this model at all
+  if (targetIdentityId && live.has(targetIdentityId)) return targetIdentityId;
+  if (state.activeIdentityId[ns] && live.has(state.activeIdentityId[ns])) return state.activeIdentityId[ns];
+  return live.size ? live.values().next().value : null;
+}
+
 // Rotation replaces an identity's keypair but is meant to feel continuous,
 // not like starting over — the same reasoning credibility.js's own
 // handleRotation already applies to *observed* history. This carries the
 // *acting* side's in-memory state (open chats, pending requests, unsent
 // chat log) from the retired id to the fresh one instead of quietly
 // dropping it.
+//
+// Deliberately does NOT touch searchLive: going live isn't just a data
+// flag here, it's also a live p2p.js room registration keyed by identityId
+// — the caller (identity-ui.js's rotateFlow) stops the old registration and
+// starts a fresh one under the new id itself, since only it knows whether
+// the identity being rotated was actually live in the first place.
 export function migrateIdentityState(ns, oldIdentityId, newIdentityId) {
   ensureIdentityState(ns, newIdentityId);
   for (const store of [state.pendingChats, state.chatLog, state.pendingMeetings, state.pendingDocs, state.pendingAttachmentOffers, state.loadedConversations]) {
@@ -218,5 +239,4 @@ export function migrateIdentityState(ns, oldIdentityId, newIdentityId) {
   const openWith = state.openChatWith[ns].get(oldIdentityId);
   state.openChatWith[ns].set(newIdentityId, openWith ?? null);
   state.openChatWith[ns].delete(oldIdentityId);
-  if (state.searchLive[ns].delete(oldIdentityId)) state.searchLive[ns].add(newIdentityId);
 }
