@@ -65,58 +65,97 @@ async function loadTrystero() {
   return loadPromise;
 }
 
-export async function joinNamespaceRoom(namespace, handlers = {}) {
-  if (rooms.has(namespace)) return rooms.get(namespace);
+// One real Trystero room per namespace, full stop — the room id has to stay
+// identity-agnostic (`jobber-${namespace}`, never sharded per identity), or
+// two strangers in the same namespace couldn't find each other without
+// already knowing each other's identityId in advance. More than one of my
+// own identities can be "live" in that namespace at once (see state.js's
+// searchLive), and they all ride this one connection — Trystero mints
+// exactly one `selfId` per browser tab, shared by every room it joins, so
+// there is no way to give two of my identities two independent WebRTC
+// connections from the same tab even if we wanted to.
+//
+// `onMessage`/`onBlob`/`onPeerLeave` are wired exactly once per room, from
+// whichever identity happens to be first to go live: they're about the wire
+// itself (an incoming message, a peer disconnecting) and message-router.js
+// decides which of my identities it's actually for using the message's own
+// `targetIdentityId`/`sender`, not by which identity's closure happens to
+// be listening. `onPeerJoin` is the one genuinely per-identity callback —
+// each live identity announces itself separately — so it's tracked per
+// identityId and fanned out below, including a manual replay for peers who
+// were already in the room before this identity went live.
+export async function joinNamespaceRoom(namespace, identityId, handlers = {}) {
+  let entry = rooms.get(namespace);
+  if (!entry) {
+    const joinRoom = await loadTrystero();
+    const room = joinRoom({ appId: APP_ID, relayUrls: NOSTR_RELAY_URLS }, `jobber-${namespace}`);
+    const msgAction = room.makeAction('jobber-msg');
+    const blobAction = room.makeAction('jobber-blob');
+    const peers = new Set();
+    const identityJoinHandlers = new Map(); // identityId -> onPeerJoin(peerId)
 
-  const joinRoom = await loadTrystero();
-  const room = joinRoom({ appId: APP_ID, relayUrls: NOSTR_RELAY_URLS }, `jobber-${namespace}`);
-  const msgAction = room.makeAction('jobber-msg');
-  const blobAction = room.makeAction('jobber-blob');
+    room.onPeerJoin = (peerId) => {
+      peers.add(peerId);
+      for (const onPeerJoin of identityJoinHandlers.values()) onPeerJoin?.(peerId);
+    };
 
-  const peers = new Set();
+    room.onPeerLeave = (peerId) => {
+      peers.delete(peerId);
+      handlers.onPeerLeave && handlers.onPeerLeave(peerId);
+    };
 
-  room.onPeerJoin = (peerId) => {
-    peers.add(peerId);
-    handlers.onPeerJoin && handlers.onPeerJoin(peerId);
-  };
+    msgAction.onMessage = (data, meta) => {
+      const v = validateMessage(data);
+      if (!v.ok) {
+        console.warn('[jobber/p2p] dropped invalid message from', meta.peerId, '-', v.reason);
+        return;
+      }
+      handlers.onMessage && handlers.onMessage(data, meta.peerId);
+    };
 
-  room.onPeerLeave = (peerId) => {
-    peers.delete(peerId);
-    handlers.onPeerLeave && handlers.onPeerLeave(peerId);
-  };
+    blobAction.onMessage = (data, meta) => {
+      handlers.onBlob && handlers.onBlob(data, meta.peerId, meta.metadata || {});
+    };
 
-  msgAction.onMessage = (data, meta) => {
-    const v = validateMessage(data);
-    if (!v.ok) {
-      console.warn('[jobber/p2p] dropped invalid message from', meta.peerId, '-', v.reason);
-      return;
-    }
-    handlers.onMessage && handlers.onMessage(data, meta.peerId);
-  };
+    entry = {
+      namespace,
+      peers,
+      identityJoinHandlers,
+      send(type, senderId, payload, targetPeerId, correlationId, targetIdentityId) {
+        const extra = {};
+        if (correlationId) extra.correlationId = correlationId;
+        if (targetIdentityId) extra.targetIdentityId = targetIdentityId;
+        const msg = createMessage(type, namespace, senderId, payload, extra);
+        msgAction.send(msg, { target: targetPeerId });
+        return msg;
+      },
+      sendBlob(blob, targetPeerId, metadata) {
+        return blobAction.send(blob, { target: targetPeerId, metadata });
+      },
+      leave() {
+        room.leave();
+        rooms.delete(namespace);
+      },
+    };
+    rooms.set(namespace, entry);
+  }
 
-  blobAction.onMessage = (data, meta) => {
-    handlers.onBlob && handlers.onBlob(data, meta.peerId, meta.metadata || {});
-  };
-
-  const entry = {
-    namespace,
-    peers,
-    send(type, senderId, payload, targetPeerId, correlationId) {
-      const msg = createMessage(type, namespace, senderId, payload, correlationId ? { correlationId } : {});
-      msgAction.send(msg, { target: targetPeerId });
-      return msg;
-    },
-    sendBlob(blob, targetPeerId, metadata) {
-      return blobAction.send(blob, { target: targetPeerId, metadata });
-    },
-    leave() {
-      room.leave();
-      rooms.delete(namespace);
-    },
-  };
-
-  rooms.set(namespace, entry);
+  entry.identityJoinHandlers.set(identityId, handlers.onPeerJoin);
+  // Peers who connected before this particular identity went live never
+  // fire a fresh Trystero onPeerJoin for it (I'm not a new WebRTC peer,
+  // just a second identity riding the connection that's already open) —
+  // replay it manually so they still learn about this identity.
+  for (const peerId of entry.peers) handlers.onPeerJoin?.(peerId);
   return entry;
+}
+
+// Drops one identity's presence from the room; the room itself is only
+// actually left once the *last* live identity in this namespace leaves.
+export function leaveIdentityFromRoom(namespace, identityId) {
+  const entry = rooms.get(namespace);
+  if (!entry) return;
+  entry.identityJoinHandlers.delete(identityId);
+  if (entry.identityJoinHandlers.size === 0) entry.leave();
 }
 
 export function leaveNamespaceRoom(namespace) {
