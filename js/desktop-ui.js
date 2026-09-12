@@ -92,6 +92,7 @@ function bentoToolTile(ns, pendingCount) {
   const sub = layout.sub ? layout.sub(pendingCount) : '';
   return `
     <button type="button" class="bento-tile${layout.plain ? ' plain' : ''}" style="--tile-color:${cfg.color}; grid-area:${layout.area};" data-act="tool" data-ns="${ns}">
+      ${layout.plain ? '' : `<span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>`}
       ${badge ? `<span class="${isLabel ? 'bento-badge-cooking' : 'bento-badge-count'}">${badgeText}</span>` : ''}
       <span class="bento-icon-chip${layout.size === 'lg' ? ' lg' : ''}">${cfg.icon}</span>
       <span class="bento-label${layout.size === 'lg' ? ' lg' : ''}">${cfg.label}</span>
@@ -103,6 +104,7 @@ function bentoIdTile(ns, id, isLive) {
   const cfg = NS_CONFIG[ns];
   return `
     <button type="button" class="bento-id-tile" style="--tile-color:${cfg.color}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
+      <span class="bento-bg-icon" aria-hidden="true">${cfg.icon}</span>
       ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
       <span class="bento-id-name">${id.displayName}</span>
       <span class="bento-id-sub">${cfg.label}</span>
