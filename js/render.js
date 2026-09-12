@@ -25,10 +25,10 @@ export async function renderWorkspace() {
   // from a retired identity falls back here too rather than a dead end.
   if (state.view !== 'workspace' || !state.activeNamespace) {
     state.view = 'desktop';
-    // The Bureau manages its own internal scroll region (the identity grid
-    // only, once it overflows) instead of the whole workspace scrolling —
-    // needs the padding/overflow .workspace normally applies turned off,
-    // see .workspace-bureau in style.css.
+    // The Bureau still scrolls the normal .workspace way (one whole page,
+    // vertical only) — this class just turns off .workspace's usual
+    // side/top padding so the tiles sit truly edge-to-edge, see
+    // .workspace-bureau in style.css.
     ws.classList.add('workspace-bureau');
     ws.innerHTML = await renderDesktop();
     bindDesktopEvents();
