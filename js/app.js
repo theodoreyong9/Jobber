@@ -16,7 +16,7 @@ import * as identity from './identity.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
 import * as backup from './backup.js';
-import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace, ensureIdentityState } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
 import { setSearchLive } from './discovery-ui.js';
@@ -106,6 +106,7 @@ function registerBackupButtons() {
           const activeId = pickActiveIdentityId(state.identitiesByNs[ns]);
           if (activeId) state.activeIdentityId[ns] = activeId;
         }
+        for (const id of state.identitiesByNs[ns]) ensureIdentityState(ns, id.identityId);
       }
       state.researchProjects = await research.listProjects();
       const errorNote = results.errors.length ? ` (${results.errors.length} failed — see console)` : '';
@@ -125,22 +126,28 @@ async function boot() {
   for (const ns of NAMESPACES) {
     state.identitiesByNs[ns] = await identity.listIdentities(ns);
     state.discovered[ns] = new Map();
+    // Research isn't part of the multi-identity-live model below (it has
+    // no roles, and connects via its own setResearchConnected/researchConnect
+    // flow) — research-ui.js still treats this as a plain boolean.
+    state.searchLive[ns] = ns === 'research' ? false : new Set();
     state.pendingChats[ns] = new Map();
+    state.openChatWith[ns] = new Map();
     state.chatLog[ns] = new Map();
     state.pendingMeetings[ns] = new Map();
     state.pendingDocs[ns] = new Map();
     state.pendingAttachmentOffers[ns] = new Map();
     state.identityToPeer[ns] = new Map();
     state.peerToIdentity[ns] = new Map();
-    state.loadedConversations[ns] = new Set();
+    state.loadedConversations[ns] = new Map();
     state.blocked[ns] = new Set((await db.getAll('blocklist')).filter((b) => b.compoundId.startsWith(ns + ':')).map((b) => b.blockedIdentityId));
+    for (const id of state.identitiesByNs[ns]) ensureIdentityState(ns, id.identityId);
   }
   state.researchProjects = await research.listProjects();
 
   // Passive expiry: while any namespace is searching live, periodically
   // re-render so stale (TTL-expired) discovery entries drop out of results.
   setInterval(() => {
-    if (Object.values(state.searchLive).some(Boolean)) renderWorkspace();
+    if (Object.values(state.searchLive).some((live) => (live instanceof Set ? live.size > 0 : !!live))) renderWorkspace();
   }, 30_000);
 
   // Which namespace to land on. "Nothing active anywhere" always wins,
@@ -172,8 +179,12 @@ async function boot() {
   // resume it with.
   for (const ns of NAMESPACES) {
     if (ns === 'research') continue;
-    const pref = await db.get('cache', `searchLive:${ns}`);
-    if (pref?.value && state.activeIdentityId[ns]) setSearchLive(ns, true);
+    // Every identity in this ns resumes independently — not just "the"
+    // active one — since more than one can be live here at once.
+    for (const id of state.identitiesByNs[ns]) {
+      const pref = await db.get('cache', `searchLive:${ns}:${id.identityId}`);
+      if (pref?.value) setSearchLive(ns, id.identityId, true);
+    }
   }
   const researchPref = await db.get('cache', 'researchConnect');
   if (researchPref?.value && state.activeIdentityId.research) {
