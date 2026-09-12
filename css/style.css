@@ -96,6 +96,8 @@ a{color:var(--agent);}
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
 
 .role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
+.tier-badge{ font-size:9.5px; border-radius:20px; padding:0 6px; font-weight:500; }
+.tier-badge-free{ color:var(--ok); border:1px solid rgba(111,191,115,.4); }
 .online-dot{ width:6px; height:6px; border-radius:50%; background:var(--border); display:inline-block; }
 .online-dot.on{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
 
