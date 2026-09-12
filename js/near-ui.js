@@ -40,7 +40,7 @@ function collectNearbyPeers() {
 export async function renderNearWorkspace() {
   await hydrateNearPrefs();
   const nearby = collectNearbyPeers();
-  const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && NS_CONFIG[ns].kind !== 'messages' && state.searchLive[ns]);
+  const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && NS_CONFIG[ns].kind !== 'messages' && state.searchLive[ns]?.size > 0);
 
   const listHtml = !isGeolocationAvailable()
     ? `<div class="empty-state">Geolocation isn't available in this browser.</div>`
@@ -126,8 +126,10 @@ export function bindNearEvents() {
 async function rebroadcastToActiveNamespaces() {
   for (const ns of NAMESPACES) {
     if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent' || NS_CONFIG[ns].kind === 'messages') continue;
-    if (state.searchLive[ns] && state.handlers.rebroadcastDiscovery) {
-      await state.handlers.rebroadcastDiscovery(ns);
+    if (!state.handlers.rebroadcastDiscovery) continue;
+    if (!(state.searchLive[ns] instanceof Set)) continue; // Research's searchLive is a plain bool — not part of this model
+    for (const identityId of state.searchLive[ns]) {
+      await state.handlers.rebroadcastDiscovery(ns, identityId);
     }
   }
 }
