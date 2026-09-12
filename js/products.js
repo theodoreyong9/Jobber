@@ -56,25 +56,17 @@ import * as identity from './identity.js';
 // presenting it as a locked-in price.
 export const PRODUCTS = [
   { id: 'free', name: 'Free (Connected)', shipped: true, icon: '🌐', color: '#2FBF71', price: null,
-    body: `Jobber has no backend and no server to pay for — discovery, matching, chat, meeting
-           proposals, and document/file exchange all happen directly between browsers over real
-           WebRTC. There's no relay in the middle doing work on your behalf, so there's nothing to
-           charge for on that path. Attached automatically the moment you create your first
-           identity — every identity you use in this browser gets it for free, always.` },
+    body: `Discovery, chat, meetings, and files travel directly between browsers over WebRTC — free
+           forever, for every identity in this browser.` },
   { id: 'gossip', name: 'Gossip', shipped: false, icon: '📡', color: '#4DD0E1', price: 1,
-    body: `P2P persistence — peers relay and hold messages for you while you're offline, instead of
-           both sides needing to be online at once the way it works today.` },
+    body: `Peers relay and hold your messages while you're offline.` },
   { id: 'aiwa', name: 'AIWA', shipped: false, icon: '⛓️', color: '#5B6EE8', price: 2,
-    body: `DAG persistence — the same event-DAG primitives already behind Credibility (see
-           <a href="https://theodoreyong9.github.io/AIWA_chain/" target="_blank" rel="noopener">AIWA</a>),
-           extended into a durable, chain-anchored layer for data that needs to outlive any one
-           browser tab.` },
+    body: `Chain-anchored persistence, so your data outlives one browser tab — same primitives as
+           Credibility, see <a href="https://theodoreyong9.github.io/AIWA_chain/" target="_blank" rel="noopener">AIWA</a>.` },
   { id: 'boosterAi', name: 'Booster AI', shipped: false, icon: '🧠', color: '#9B8AFB', price: 3,
-    body: `A larger, cloud-hosted model for profile enrichment, for when the free local model
-           (which runs entirely on your own device) isn't enough.` },
+    body: `A bigger, cloud-hosted model for profile enrichment, when the free local one isn't enough.` },
   { id: 'agentBooster', name: 'Agent Booster', shipped: false, icon: '🤖', color: '#F0A830', price: 4,
-    body: `A deeper, more thorough pass of Agent's cross-namespace matching — and eventually, Agent
-           acting on opportunities on your behalf instead of only surfacing them.` },
+    body: `Deeper cross-namespace matching — eventually Agent acting for you, not just surfacing.` },
 ];
 
 // Recomputed from the identity records every time rather than cached —
