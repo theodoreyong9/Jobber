@@ -369,7 +369,7 @@ export async function renderClassicWorkspace(ns) {
           <div class="top">
             ${p.photoDataUrl ? `<img class="avatar-photo" src="${p.photoDataUrl}" alt="">` : `<span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>`}
             <div class="info">
-              <div class="name">${p.sender.slice(0, 10)}…${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}</div>
+              <div class="name">${p.displayName || `${p.sender.slice(0, 10)}…`}${theirRoleLabel ? ` <span class="role-badge">${theirRoleLabel}</span>` : ''}</div>
               <div class="role">${p.category || 'No category declared'}</div>
               <div class="meta">${metaChips(p)}</div>
             </div>
