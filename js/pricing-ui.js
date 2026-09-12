@@ -39,6 +39,15 @@ export async function renderPricingWorkspace() {
         to buy them, the moment each one ships.
       </p>
 
+      <p style="font-size:12.5px;color:var(--low);line-height:1.5;margin-top:10px">
+        "Attached" below is just this browser's own local record, not a verified purchase —
+        Jobber has no account or server to check one against. That's harmless for Free. For the
+        other four, once they're real, the actual check won't live on this page at all: it'll sit
+        wherever the cost actually lands — the peer relaying for you, the chain being anchored to,
+        or the cloud service running the model — the same way nothing here can be trusted to prove
+        anything to anyone but this browser itself.
+      </p>
+
       <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
         ${products.join('')}
       </div>
