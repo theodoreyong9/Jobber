@@ -196,8 +196,23 @@ a{color:var(--agent);}
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
 
 .role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
-.tier-badge{ font-size:9.5px; border-radius:20px; padding:0 6px; font-weight:500; }
-.tier-badge-free{ color:var(--ok); border:1px solid rgba(111,191,115,.4); }
+
+/* Pricing's products (see products.js) — a real button per product
+   instead of a text row with a small pill next to it, since a product is
+   a distinct, individually-relevant thing, not a line item. `disabled`
+   throughout (no purchase flow exists yet, and Free needs no action) —
+   only the status pill differs, "Attached" vs "Soon". */
+.product-btn{
+  display:block; width:100%; text-align:left; font-family:inherit; cursor:default;
+  border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); padding:12px 14px;
+}
+.product-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.product-name{ font-size:12.5px; color:var(--hi); font-weight:600; }
+.product-status{ font-size:9.5px; font-weight:500; border-radius:20px; padding:2px 8px; white-space:nowrap; }
+.product-status.attached{ color:var(--ok); background:rgba(111,191,115,.12); border:1px solid rgba(111,191,115,.4); }
+.product-status.soon{ color:var(--low); border:1px solid var(--border); }
+.product-body{ font-size:12.5px; color:var(--mid); line-height:1.5; margin-top:6px; }
+
 .online-dot{ width:6px; height:6px; border-radius:50%; background:var(--border); display:inline-block; }
 .online-dot.on{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
 
