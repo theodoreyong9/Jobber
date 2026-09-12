@@ -18,9 +18,10 @@ import { countPendingNotifications } from './messages-ui.js';
 // its own (see near-ui.js), Agent cross-references your *other* identities
 // instead of needing one of its own (see agent-ui.js), Messages likewise
 // just reads what your other identities already have (see messages-ui.js),
-// and "external" namespaces are just launchers — none of these belong in
-// "which mode is this identity for".
-const NO_IDENTITY_KINDS = ['near', 'agent', 'messages', 'external'];
+// "external" namespaces are just launchers, and "info" namespaces are a
+// static page about Jobber itself — none of these belong in "which mode
+// is this identity for".
+const NO_IDENTITY_KINDS = ['near', 'agent', 'messages', 'external', 'info'];
 const CREATABLE = NAMESPACES.filter((ns) => !NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 const TOOL_NAMESPACES = NAMESPACES.filter((ns) => NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 
