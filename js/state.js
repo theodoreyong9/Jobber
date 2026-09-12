@@ -55,12 +55,12 @@ export const NS_CONFIG = {
   // the tile just opens another app in this same portfolio in a new tab.
   // No identity, no profile, nothing to render here; desktop-ui.js skips
   // setActiveNamespace entirely for this kind and opens `url` instead.
-  creator: { label: 'Creator', color: '#F0A830', kind: 'external', icon: '🎨',
+  creator: { label: 'YourMine', color: '#F0A830', kind: 'external', icon: '🎨',
     url: 'https://yourmine-dapp.web.app',
-    hint: 'Opens YourMine — publish JavaScript apps and interface themes, permissionlessly.' },
-  wallet: { label: 'Wallet', color: '#5B6EE8', kind: 'external', icon: '👛',
+    hint: 'Publish JavaScript apps and interface themes, permissionlessly.' },
+  wallet: { label: 'AIWA', color: '#5B6EE8', kind: 'external', icon: '👛',
     url: 'https://theodoreyong9.github.io/AIWA_chain/',
-    hint: 'Opens AIWA — local, geographically-independent value accrual.' },
+    hint: 'Local, geographically-independent value accrual.' },
   tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
     url: 'https://theodoreyong9.github.io/SGD/',
     hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
