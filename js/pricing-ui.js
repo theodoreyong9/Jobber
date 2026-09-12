@@ -8,10 +8,24 @@
 // paragraph on what it actually costs (or doesn't) and why. Keeping Free
 // in this same list, instead of as separate intro prose above it, is
 // deliberate: it's a tier like the other four, not a preamble to them.
-function tierHtml(name, badgeClass, badgeLabel, body) {
+//
+// The other four are real *products* in the sense that matters here: once
+// they ship, buying one attaches it to whichever identity you're on —
+// never to an account, since Jobber doesn't have one. A product an
+// identity holds is meant to travel with every other identity you're
+// using in this same browser too (this local IndexedDB instance already
+// *is* "you" — there's no separate account to link them through), can
+// stack with other products, but never duplicate itself on one identity.
+// None of that is wired up yet since there's nothing to actually buy —
+// for now they're just real, disabled buttons instead of a plain "Soon"
+// label, so the affordance is already the right shape once they do ship.
+function tierHtml(name, badgeClass, badgeLabel, body, { asButton = false } = {}) {
+  const badge = asButton
+    ? `<button type="button" class="btn small" disabled style="margin-left:6px">${badgeLabel}</button>`
+    : `<span class="${badgeClass}" style="margin-left:6px">${badgeLabel}</span>`;
   return `
     <div>
-      <div style="font-size:12.5px;color:var(--hi)"><b>${name}</b> <span class="${badgeClass}" style="margin-left:6px">${badgeLabel}</span></div>
+      <div style="font-size:12.5px;color:var(--hi)"><b>${name}</b>${badge}</div>
       <p style="font-size:12.5px;color:var(--mid);line-height:1.5;margin-top:4px">${body}</p>
     </div>`;
 }
@@ -26,18 +40,18 @@ export async function renderPricingWorkspace() {
        stays free.`),
     tierHtml('Gossip', 'role-badge', 'Soon',
       `P2P persistence — peers relay and hold messages for you while you're offline, instead of
-       both sides needing to be online at once the way it works today.`),
+       both sides needing to be online at once the way it works today.`, { asButton: true }),
     tierHtml('AIWA', 'role-badge', 'Soon',
       `DAG persistence — the same event-DAG primitives already behind Credibility (see
        <a href="https://theodoreyong9.github.io/AIWA_chain/" target="_blank" rel="noopener">AIWA</a>),
        extended into a durable, chain-anchored layer for data that needs to outlive any one
-       browser tab.`),
+       browser tab.`, { asButton: true }),
     tierHtml('Booster AI', 'role-badge', 'Soon',
       `A larger, cloud-hosted model for profile enrichment, for when the free local model
-       (which runs entirely on your own device) isn't enough.`),
+       (which runs entirely on your own device) isn't enough.`, { asButton: true }),
     tierHtml('Agent Booster', 'role-badge', 'Soon',
       `A deeper, more thorough pass of Agent's cross-namespace matching — and eventually, Agent
-       acting on opportunities on your behalf instead of only surfacing them.`),
+       acting on opportunities on your behalf instead of only surfacing them.`, { asButton: true }),
   ].join('');
 
   return `
