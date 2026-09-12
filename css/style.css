@@ -197,21 +197,42 @@ a{color:var(--agent);}
 
 .role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
 
-/* Pricing's products (see products.js) — a real button per product
-   instead of a text row with a small pill next to it, since a product is
-   a distinct, individually-relevant thing, not a line item. `disabled`
-   throughout (no purchase flow exists yet, and Free needs no action) —
-   only the status pill differs, "Attached" vs "Soon". */
+/* Pricing's products (see products.js) — the same glass-tile language as
+   the Bureau's bento tiles (color-tinted, blurred, the product's own
+   emoji oversized in the background) instead of a plain bordered box,
+   so a product reads as a distinct, tangible thing in the app rather
+   than a line item in a list. `disabled` throughout (no purchase flow
+   exists yet, and Free needs no action) — only the status pill and the
+   indicative price actually differ between them. */
 .product-btn{
-  display:block; width:100%; text-align:left; font-family:inherit; cursor:default;
-  border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); padding:12px 14px;
+  position:relative; overflow:hidden; display:block; width:100%; text-align:left;
+  font-family:inherit; cursor:default; border-radius:var(--radius-m); padding:14px 16px;
+  color:var(--hi); border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(0,0,0,.25);
+  backdrop-filter:blur(20px) saturate(165%); -webkit-backdrop-filter:blur(20px) saturate(165%);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 24%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 5%, transparent) 65%),
+    color-mix(in srgb, var(--panel) 55%, transparent);
 }
-.product-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.product-name{ font-size:12.5px; color:var(--hi); font-weight:600; }
-.product-status{ font-size:9.5px; font-weight:500; border-radius:20px; padding:2px 8px; white-space:nowrap; }
+.product-bg-icon{
+  position:absolute; z-index:0; pointer-events:none; line-height:1; right:-10px; bottom:-22px;
+  font-size:88px; opacity:.16; transform:rotate(-10deg); filter:saturate(130%);
+}
+.product-head{ position:relative; z-index:1; display:flex; align-items:center; gap:8px; }
+.product-icon-chip{
+  width:24px; height:24px; border-radius:7px; display:flex; align-items:center; justify-content:center;
+  background:rgba(13,17,20,.36); font-size:13px; flex:0 0 auto;
+}
+.product-name{ font-size:13px; color:var(--hi); font-weight:600; flex:1; min-width:0; }
+.product-status{ font-size:9.5px; font-weight:500; border-radius:20px; padding:2px 8px; white-space:nowrap; flex:0 0 auto; }
 .product-status.attached{ color:var(--ok); background:rgba(111,191,115,.12); border:1px solid rgba(111,191,115,.4); }
-.product-status.soon{ color:var(--low); border:1px solid var(--border); }
-.product-body{ font-size:12.5px; color:var(--mid); line-height:1.5; margin-top:6px; }
+.product-status.soon{ color:var(--low); background:rgba(13,17,20,.36); border:1px solid var(--border); }
+.product-body{ position:relative; z-index:1; font-size:12.5px; color:var(--mid); line-height:1.5; margin-top:8px; max-width:88%; }
+.product-price{
+  position:relative; z-index:1; display:inline-flex; align-items:baseline; gap:2px; margin-top:10px;
+  font-family:var(--font-head); font-weight:700; font-size:15px; color:var(--hi);
+}
+.product-price-unit{ font-family:inherit; font-weight:500; font-size:10.5px; color:var(--low); }
 
 .online-dot{ width:6px; height:6px; border-radius:50%; background:var(--border); display:inline-block; }
 .online-dot.on{ background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.18); }
