@@ -94,17 +94,16 @@ a{color:var(--agent);}
 
 /* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, glass panes
    floating over a fixed, colorful ambient wash instead of sitting flat on
-   --panel. The wash lives on .bureau itself (not .bento-identities, which
-   is the part that actually scrolls) so it stays put behind the tiles as
-   the identity grid scrolls past it — real backdrop-filter glass needs
-   something colorful underneath to blur, which is what this provides.
-   The Bureau manages its own internal scroll (the identity grid only,
-   once it overflows) instead of the whole workspace scrolling, so
-   .workspace's usual padding/scroll is turned off for it — see
-   render.js. ---------- */
-.workspace.workspace-bureau{ padding:0; overflow:hidden; display:flex; }
+   --panel. The wash lives on .bureau (not on either grid below) so it
+   stays put as the page scrolls past it — real backdrop-filter glass
+   needs something colorful underneath to blur, which is what this
+   provides. Scrolling itself is just .workspace's own normal vertical
+   scroll (see the base .workspace rule) — one whole page, not a scrollbox
+   per section — .workspace-bureau only turns off its usual side/top
+   padding so the tiles can sit truly edge-to-edge; see render.js. ---------- */
+.workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{
-  flex:1; min-height:0; display:flex; flex-direction:column; width:100%; position:relative;
+  width:100%; position:relative;
   background:
     radial-gradient(ellipse 55% 38% at 12% 8%, color-mix(in srgb, #F1552C 40%, transparent), transparent 70%),
     radial-gradient(ellipse 50% 40% at 92% 12%, color-mix(in srgb, #5B6EE8 38%, transparent), transparent 70%),
@@ -115,22 +114,14 @@ a{color:var(--agent);}
 /* Columns are a fixed 97.5px (the width they already render at on a
    390px-wide screen — the reference this whole layout was designed
    against) rather than a fluid `1fr`, so tile size stays constant instead
-   of stretching/squishing with the viewport. A narrower screen can no
-   longer fit all 4 columns, so each row scrolls horizontally on its own
-   instead — overflow-y stays closed off (tools' row count is fixed, it
-   never needs vertical scroll; identities' vertical scroll is the
-   existing, separate "many identities" overflow below). Left-aligned
-   (the grid default), not centered: centering an overflowing grid pushes
-   part of its content to a negative offset, which a plain LTR scroll
-   container can never actually scroll to — it'd just be permanently
-   clipped and unreachable on a narrow screen. */
-.bento-tools{
-  flex:0 0 auto; display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:100px;
-  overflow-x:auto; overflow-y:hidden;
-}
+   of stretching/squishing with the viewport. Neither grid scrolls on its
+   own — .workspace-bureau's overflow-x:hidden above just clips anything
+   narrower screens can't fit, rather than growing a second, per-section
+   scrollbar; the page's one vertical scroll is all that's needed once
+   there's more content (more identities) than fits. */
+.bento-tools{ display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:100px; }
 .bento-identities{
-  flex:1; min-height:0; display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:84px;
-  overflow-x:auto; overflow-y:auto;
+  display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:84px;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
 
