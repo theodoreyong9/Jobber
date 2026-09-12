@@ -158,3 +158,50 @@ export async function computeCredibility(ns, subject) {
   const tally = dag.materialize(tallyReducer, { firstSeenTs: null, counts: {} });
   return scoreFromTally(tally);
 }
+
+// This browser's own aggregate track record — not "how much everyone
+// trusts me" (there's no backend to ask that, and never will be), but
+// "how much real, hard-to-fake P2P history has this browser itself
+// recorded so far", folding every credibility event it has ever written
+// — across every namespace and every counterpart — into one tally and
+// scoring it with the exact same formula a single subject's history
+// would get (see scoreFromTally). Every one of those events already only
+// exists because of a genuine two-way interaction this browser itself
+// took part in, so rolling them all up is a legitimate account-level
+// signal, not a new kind of measurement. Used to gate the total number of
+// identities you're allowed to create — see identityCapFor below and
+// desktop-ui.js.
+export async function computeGlobalCredibility() {
+  const rows = await db.getAll('credibility_events');
+  const tally = rows.reduce(tallyReducer, { firstSeenTs: null, counts: {} });
+  return scoreFromTally(tally);
+}
+
+// Free identities are the sybil risk this whole file exists to blunt (see
+// the header) — so the total you can hold isn't unlimited either. Starts
+// at BASE_IDENTITY_CAP; each threshold in IDENTITY_PALIERS your global
+// score (above) clears unlocks IDENTITY_PALIER_STEP more. Same-tab
+// identities can never fake this against each other: Trystero gives one
+// browser tab exactly one real P2P peer id shared by every room, so two
+// of your own identities can never become genuine peers and rack up
+// interaction events against one another (see p2p.js) — every event
+// behind this score is a real interaction with someone else.
+//
+// Just one palier for now, deliberately: a first, roughly-guessed number
+// rather than a tuned one — expect IDENTITY_PALIERS to grow (or this
+// threshold to move) once there's real usage to calibrate it against.
+export const BASE_IDENTITY_CAP = 10;
+export const IDENTITY_PALIER_STEP = 10;
+export const IDENTITY_PALIERS = [50];
+
+export function identityCapFor(globalScore) {
+  const cleared = IDENTITY_PALIERS.filter((p) => globalScore >= p).length;
+  return BASE_IDENTITY_CAP + cleared * IDENTITY_PALIER_STEP;
+}
+
+// The next palier still ahead of this score, or null once every known one
+// is cleared — desktop-ui.js shows "score/palier" only while there's one
+// left to reach; nothing left to advertise once they're all cleared.
+export function nextPalier(globalScore) {
+  return IDENTITY_PALIERS.find((p) => globalScore < p) ?? null;
+}
