@@ -49,10 +49,10 @@ async function saveNameIfChanged(id, dlg) {
 // profile that has something to search on goes live automatically the
 // first time, and just rebroadcasts the fresh keywords to whoever's
 // already connected every time after that.
-async function autoSearchOnSave(ns, tokens) {
+async function autoSearchOnSave(ns, id, tokens) {
   if (!tokens.length) return;
-  if (state.searchLive[ns]) await state.handlers.rebroadcastDiscovery(ns);
-  else await state.handlers.toggleSearchLive(ns);
+  if (state.searchLive[ns]?.has(id.identityId)) await state.handlers.rebroadcastDiscovery(ns, id.identityId);
+  else await state.handlers.toggleSearchLive(ns, id.identityId);
 }
 
 export function editProfileFlow(ns, id) {
@@ -106,7 +106,7 @@ export function editProfileFlow(ns, id) {
           tokens, aiTokens: profile.aiTokens || [], lookingForText, searchTokens,
           updatedAt: Date.now(),
         });
-        await autoSearchOnSave(ns, tokens);
+        await autoSearchOnSave(ns, id, tokens);
         toast('Profile saved locally');
         state.render.workspace();
         state.render.topbar();
@@ -189,7 +189,7 @@ export function editEmploymentProfileFlow(id) {
             cvFileName, cvExtractedText, tokens, earliestYear,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave('employment', tokens);
+          await autoSearchOnSave('employment', id, tokens);
         } else {
           const jobPostingText = dlg.querySelector('#posting').value;
           const seniorityMin = dlg.querySelector('#senMin').value.trim();
@@ -201,7 +201,7 @@ export function editEmploymentProfileFlow(id) {
             seniorityMax: seniorityMax ? parseInt(seniorityMax, 10) : null,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave('employment', tokens);
+          await autoSearchOnSave('employment', id, tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
@@ -275,7 +275,7 @@ export function editOutdoorProfileFlow(id) {
             participantLimit: limit ? parseInt(limit, 10) : null,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave('outdoor', tokens);
+          await autoSearchOnSave('outdoor', id, tokens);
         } else {
           const sourceText = dlg.querySelector('#interests').value;
           const tokens = matching.tokenize(sourceText, category);
@@ -283,7 +283,7 @@ export function editOutdoorProfileFlow(id) {
             ...profile, category, country, city, sourceText, availableNow, tokens,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave('outdoor', tokens);
+          await autoSearchOnSave('outdoor', id, tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
@@ -370,7 +370,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
             professionalEmail,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave(ns, tokens);
+          await autoSearchOnSave(ns, id, tokens);
         } else {
           const budgetMin = dlg.querySelector('#budgetMin').value.trim();
           const budgetMax = dlg.querySelector('#budgetMax').value.trim();
@@ -381,7 +381,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
             budgetMax: budgetMax ? parseFloat(budgetMax) : null,
             updatedAt: Date.now(),
           });
-          await autoSearchOnSave(ns, tokens);
+          await autoSearchOnSave(ns, id, tokens);
         }
         toast('Profile saved locally');
         state.render.workspace();
