@@ -58,6 +58,13 @@ test('validateMessage accepts a message with no correlationId at all', () => {
   assert.equal(validateMessage(msg).ok, true);
 });
 
+test('validateMessage accepts a string targetIdentityId and rejects a non-string one', () => {
+  const withTarget = createMessage('chat_request', 'ns', 'id', {}, { targetIdentityId: 'CAND1' });
+  assert.equal(validateMessage(withTarget).ok, true);
+  const badTarget = { ...withTarget, targetIdentityId: 42 };
+  assert.equal(validateMessage(badTarget).ok, false);
+});
+
 test('validateMessage rejects non-objects', () => {
   assert.equal(validateMessage(null).ok, false);
   assert.equal(validateMessage('hello').ok, false);

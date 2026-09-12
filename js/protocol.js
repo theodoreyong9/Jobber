@@ -9,6 +9,15 @@
 // treated as answering "the request I currently have pending with X",
 // which silently misattributes a response if a stale one arrives late or
 // a new request superseded an old one.
+//
+// `targetIdentityId` is the other optional recognized field: once more than
+// one of *my own* identities can be live in the same namespace at once (see
+// state.js), they all ride the same P2P room/connection — a peer who has
+// discovered two of my identities needs a way to say which one a cold-start
+// message (chat_request, meeting_proposal, document_request,
+// attachment_offer) is actually for, since `sender` on that message is
+// *their* identity, not mine. Absent on every other message type, where
+// there's already an established, unambiguous conversation to key off of.
 
 export const PROTOCOL_VERSION = '0.4';
 
@@ -70,6 +79,9 @@ export function validateMessage(msg) {
   if (typeof msg.timestamp !== 'number') return { ok: false, reason: 'missing timestamp' };
   if (msg.correlationId !== undefined && typeof msg.correlationId !== 'string') {
     return { ok: false, reason: 'correlationId must be a string when present' };
+  }
+  if (msg.targetIdentityId !== undefined && typeof msg.targetIdentityId !== 'string') {
+    return { ok: false, reason: 'targetIdentityId must be a string when present' };
   }
 
   let size = 0;
