@@ -161,6 +161,10 @@ export async function renderDesktop() {
 
   return `
     <div class="bureau">
+      <div class="bureau-wave" aria-hidden="true">
+        <div class="bureau-wave-layer back"></div>
+        <div class="bureau-wave-layer front"></div>
+      </div>
       <div class="bento-tools">${tools}</div>
       <div class="bento-identities">${identityTiles.join('')}${newTiles}${scoreTile}${fillers}</div>
     </div>`;
