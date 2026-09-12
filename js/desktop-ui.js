@@ -70,12 +70,10 @@ const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 // small) rather than something that falls out of a generic rule, so this
 // is authored directly instead of derived from NAMESPACE_GROUPS. Grid
 // lines are `row-start / col-start / row-end / col-end` on a 4-column
-// grid. `sub` is optional short live-ish context text; `plain` (Pricing)
-// deliberately skips the color wash/decorative shape every other tile
-// gets, since only one of its five tiers is real yet — see COOKING above.
+// grid. `sub` is optional short live-ish context text.
 const TOOL_LAYOUT = {
   messages: { area: '1 / 1 / 3 / 3', size: 'lg', sub: (n) => (n > 0 ? `${n} waiting for a reply` : 'All caught up') },
-  pricing: { area: '1 / 3 / 2 / 4', size: 'sm', plain: true },
+  pricing: { area: '1 / 3 / 2 / 4', size: 'sm' },
   creator: { area: '1 / 4 / 2 / 5', size: 'sm' },
   wallet: { area: '2 / 3 / 3 / 4', size: 'sm' },
   tribute: { area: '2 / 4 / 3 / 5', size: 'sm' },
@@ -90,13 +88,9 @@ function bentoToolTile(ns, pendingCount) {
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   const sub = layout.sub ? layout.sub(pendingCount) : '';
-  // The small icon-chip is redundant once the tile already carries its own
-  // emoji large in the background (see .bento-bg-icon) — kept only for
-  // .plain (Pricing), the one tile that deliberately has no background
-  // emoji at all, so it isn't left with no icon whatsoever.
   return `
-    <button type="button" class="bento-tile${layout.plain ? ' plain' : ''}" style="--tile-color:${cfg.color}; grid-area:${layout.area};" data-act="tool" data-ns="${ns}">
-      ${layout.plain ? `<span class="bento-icon-chip">${cfg.icon}</span>` : `<span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>`}
+    <button type="button" class="bento-tile" style="--tile-color:${cfg.color}; grid-area:${layout.area};" data-act="tool" data-ns="${ns}">
+      <span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>
       ${badge ? `<span class="${isLabel ? 'bento-badge-cooking' : 'bento-badge-count'}">${badgeText}</span>` : ''}
       <span class="bento-label${layout.size === 'lg' ? ' lg' : ''}">${cfg.label}</span>
       ${sub ? `<span class="bento-sub">${sub}</span>` : ''}
