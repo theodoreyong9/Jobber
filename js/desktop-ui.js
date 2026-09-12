@@ -13,6 +13,7 @@ import { state, NAMESPACES, NS_CONFIG, NAMESPACE_GROUPS, setActiveNamespace } fr
 import { createIdentityFlow } from './identity-ui.js';
 import { openModal } from './ui-kit.js';
 import { countPendingNotifications } from './messages-ui.js';
+import * as credibility from './credibility.js';
 
 // Namespaces an identity actually gets created in. Near has no identity of
 // its own (see near-ui.js), Agent cross-references your *other* identities
@@ -108,6 +109,20 @@ function bentoIdTile(ns, id, isLive) {
     </button>`;
 }
 
+// The tile that follows your identity slots once there's still a palier
+// worth reaching — see credibility.js. Shown as "score/palier" rather
+// than just the raw score, since the number alone means nothing without
+// the target it's climbing toward.
+function bentoScoreTile(score, palier) {
+  const pct = Math.min(100, Math.round((score / palier) * 100));
+  return `
+    <div class="bento-id-score" title="Global credibility — every real chat, meeting, or file exchange counts. Reach ${palier} to unlock ${credibility.IDENTITY_PALIER_STEP} more identity slots.">
+      <span class="bento-score-frac">${score}<span class="bento-score-slash">/${palier}</span></span>
+      <span class="bento-score-label">Credibility</span>
+      <span class="bento-score-bar"><span class="bento-score-fill" style="width:${pct}%"></span></span>
+    </div>`;
+}
+
 export async function renderDesktop() {
   const identityTiles = [];
   for (const ns of CREATABLE) {
@@ -119,13 +134,26 @@ export async function renderDesktop() {
       identityTiles.push(bentoIdTile(ns, id, isLive));
     }
   }
-  const newTile = `<button type="button" class="bento-id-empty bento-id-new" data-act="new" title="New identity">+</button>`;
+
+  // Real identities never get hidden by the cap below — it only gates
+  // *creating* more (see identity-ui.js's createIdentityFlow, the one
+  // place that's actually enforced). Here it only decides how many more
+  // "+" slots to offer: every one of them does the exact same thing
+  // (pickModeThenCreateIdentity) — they're interchangeable, not tied to a
+  // particular mode — so remaining capacity just becomes that many
+  // identical "+" tiles instead of one.
+  const { score } = await credibility.computeGlobalCredibility();
+  const cap = credibility.identityCapFor(score);
+  const palier = credibility.nextPalier(score);
+  const plusSlots = Math.max(0, cap - identityTiles.length);
+  const newTiles = Array.from({ length: plusSlots }, () => '<button type="button" class="bento-id-empty bento-id-new" data-act="new" title="New identity">+</button>').join('');
+  const scoreTile = palier != null ? bentoScoreTile(score, palier) : '';
 
   // Pad empty slots so the grid never looks like a half-finished row, and
   // reads as "room for more" rather than sparse when there are few or no
   // identities yet — a floor of 12 (3 rows), or just enough to complete
   // the current row once there are already more than that.
-  const usedSlots = identityTiles.length + 1; // +1 for the "new identity" tile itself
+  const usedSlots = identityTiles.length + plusSlots + (scoreTile ? 1 : 0);
   const targetSlots = Math.max(12, Math.ceil(usedSlots / 4) * 4);
   const fillers = Array.from({ length: targetSlots - usedSlots }, () => '<div class="bento-id-empty"></div>').join('');
 
@@ -135,7 +163,7 @@ export async function renderDesktop() {
   return `
     <div class="bureau">
       <div class="bento-tools">${tools}</div>
-      <div class="bento-identities">${identityTiles.join('')}${newTile}${fillers}</div>
+      <div class="bento-identities">${identityTiles.join('')}${newTiles}${scoreTile}${fillers}</div>
     </div>`;
 }
 
@@ -161,7 +189,7 @@ export function bindDesktopEvents() {
       state.render.all();
     });
   });
-  ws.querySelector('[data-act="new"]')?.addEventListener('click', pickModeThenCreateIdentity);
+  ws.querySelectorAll('[data-act="new"]').forEach((btn) => btn.addEventListener('click', pickModeThenCreateIdentity));
 }
 
 function pickModeThenCreateIdentity() {
