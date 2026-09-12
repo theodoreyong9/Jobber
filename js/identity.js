@@ -38,6 +38,7 @@ export async function createIdentity(namespace, displayName, role = null) {
     rotatedTo: null,
     publicKeyRaw: [...new Uint8Array(rawPublic)], // structured-clone-safe array
     keyPair, // CryptoKey objects — IndexedDB can store these directly
+    products: [], // see products.js — kept on the identity record itself (not a separate browser-wide key) so it round-trips through export/importIdentityRecord below
   };
   await put('identities', record);
   return record;
@@ -62,6 +63,17 @@ export async function renameIdentity(identityId, newName) {
   return id;
 }
 
+// See products.js — the only writer of this field. Kept here rather than
+// in products.js itself since every other identity mutation already goes
+// through this get-mutate-put pattern in this file.
+export async function setProducts(identityId, products) {
+  const id = await get('identities', identityId);
+  if (!id) throw new Error('Identity not found');
+  id.products = products;
+  await put('identities', id);
+  return id;
+}
+
 // Rotation: generate a fresh identity in the same namespace, keep the name,
 // mark the old one retired and point it at the new one. Peers who know the
 // old id can be told via an `identity_retired` protocol message (see p2p.js).
@@ -69,6 +81,8 @@ export async function rotateIdentity(identityId) {
   const old = await get('identities', identityId);
   if (!old) throw new Error('Identity not found');
   const fresh = await createIdentity(old.namespace, old.displayName, old.role);
+  fresh.products = old.products || []; // carries forward the same way credibility.js's handleRotation carries observed history — rotating shouldn't cost you products you already hold
+  await put('identities', fresh);
   old.active = false;
   old.retiredAt = Date.now();
   old.rotatedTo = fresh.identityId;
@@ -146,6 +160,7 @@ export async function exportIdentityRecord(identityId) {
     displayName: id.displayName, createdAt: id.createdAt, active: id.active,
     retiredAt: id.retiredAt, rotatedTo: id.rotatedTo,
     publicKeyRaw: id.publicKeyRaw, privateKeyJwk, publicKeyJwk,
+    products: id.products || [], // see products.js — travels with the identity so restoring this backup elsewhere doesn't silently lose it
   };
 }
 
@@ -168,6 +183,7 @@ export async function importIdentityRecord(record) {
     displayName: record.displayName, createdAt: record.createdAt, active: record.active,
     retiredAt: record.retiredAt, rotatedTo: record.rotatedTo,
     publicKeyRaw: record.publicKeyRaw, keyPair: { privateKey, publicKey },
+    products: record.products || [], // see products.js — propagateAcrossIdentities() (called after a backup import) is what actually merges this into every other identity in this browser
   };
   await put('identities', fullRecord);
   return fullRecord;
