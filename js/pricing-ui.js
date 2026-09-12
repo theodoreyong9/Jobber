@@ -1,58 +1,31 @@
-// pricing-ui.js — a static page about what Jobber costs, and why. No
-// identity, no profile, no P2P: it doesn't read any live state at all,
-// unlike near/agent/messages which at least read what other identities
-// discovered. Kept as its own module anyway, matching the rest of the
-// app's one-file-per-feature-area convention.
+// pricing-ui.js — a page about what Jobber costs, and why. No identity
+// picker, no P2P: it reads products.js's attach system (see there for
+// what "attached" actually means with no account to scope it to), but
+// nothing else — unlike near/agent/messages which at least read what
+// other identities discovered.
 
-// Every tier gets the same card shape — name, a status badge, and one
-// paragraph on what it actually costs (or doesn't) and why. Keeping Free
-// in this same list, instead of as separate intro prose above it, is
-// deliberate: it's a tier like the other four, not a preamble to them.
-//
-// The other four are real *products* in the sense that matters here: once
-// they ship, buying one attaches it to whichever identity you're on —
-// never to an account, since Jobber doesn't have one. A product an
-// identity holds is meant to travel with every other identity you're
-// using in this same browser too (this local IndexedDB instance already
-// *is* "you" — there's no separate account to link them through), can
-// stack with other products, but never duplicate itself on one identity.
-// None of that is wired up yet since there's nothing to actually buy —
-// for now they're just real, disabled buttons instead of a plain "Soon"
-// label, so the affordance is already the right shape once they do ship.
-function tierHtml(name, badgeClass, badgeLabel, body, { asButton = false } = {}) {
-  const badge = asButton
-    ? `<button type="button" class="btn small" disabled style="margin-left:6px">${badgeLabel}</button>`
-    : `<span class="${badgeClass}" style="margin-left:6px">${badgeLabel}</span>`;
+import { PRODUCTS, hasProduct } from './products.js';
+
+// Each product is a real button — not a purchase flow yet (none of the
+// four unshipped ones have one, and Free needs no action from you at
+// all), but the right affordance for the day one does exist. `disabled`
+// on all of them for now; the status pill is what actually distinguishes
+// "already yours" (Free) from "not yet buyable" (the other four) — see
+// products.js's header for why Free shows attached without you doing
+// anything.
+function productHtml({ id, name, body }, attached) {
   return `
-    <div>
-      <div style="font-size:12.5px;color:var(--hi)"><b>${name}</b>${badge}</div>
-      <p style="font-size:12.5px;color:var(--mid);line-height:1.5;margin-top:4px">${body}</p>
-    </div>`;
+    <button type="button" class="product-btn" disabled>
+      <div class="product-head">
+        <span class="product-name">${name}</span>
+        <span class="product-status ${attached ? 'attached' : 'soon'}">${attached ? 'Attached' : 'Soon'}</span>
+      </div>
+      <p class="product-body">${body}</p>
+    </button>`;
 }
 
 export async function renderPricingWorkspace() {
-  const tiers = [
-    tierHtml('Free (Connected)', 'tier-badge tier-badge-free', 'Free',
-      `Jobber has no backend and no server to pay for — discovery, matching, chat, meeting
-       proposals, and document/file exchange all happen directly between browsers over real
-       WebRTC. There's no relay in the middle doing work on your behalf, so there's nothing to
-       charge for on that path. As long as you're online and reachable, every feature here
-       stays free.`),
-    tierHtml('Gossip', 'role-badge', 'Soon',
-      `P2P persistence — peers relay and hold messages for you while you're offline, instead of
-       both sides needing to be online at once the way it works today.`, { asButton: true }),
-    tierHtml('AIWA', 'role-badge', 'Soon',
-      `DAG persistence — the same event-DAG primitives already behind Credibility (see
-       <a href="https://theodoreyong9.github.io/AIWA_chain/" target="_blank" rel="noopener">AIWA</a>),
-       extended into a durable, chain-anchored layer for data that needs to outlive any one
-       browser tab.`, { asButton: true }),
-    tierHtml('Booster AI', 'role-badge', 'Soon',
-      `A larger, cloud-hosted model for profile enrichment, for when the free local model
-       (which runs entirely on your own device) isn't enough.`, { asButton: true }),
-    tierHtml('Agent Booster', 'role-badge', 'Soon',
-      `A deeper, more thorough pass of Agent's cross-namespace matching — and eventually, Agent
-       acting on opportunities on your behalf instead of only surfacing them.`, { asButton: true }),
-  ].join('');
+  const products = await Promise.all(PRODUCTS.map(async (p) => productHtml(p, await hasProduct(p.id))));
 
   return `
     <div class="panel" style="max-width:640px;margin:20px auto">
@@ -60,14 +33,14 @@ export async function renderPricingWorkspace() {
       <p class="section-sub">What Jobber costs, and why.</p>
 
       <p style="font-size:12.5px;color:var(--low);line-height:1.5;margin-top:14px">
-        Only the first tier below exists today. The other four cost something real to run —
-        relay infrastructure, chain fees, or cloud compute — unlike the free P2P path, where two
-        browsers just talk directly. This page will be updated with real pricing the moment each
-        one ships.
+        Only Free is real today. The other four cost something real to run — relay
+        infrastructure, chain fees, or cloud compute — unlike the free P2P path, where two
+        browsers just talk directly. This page will be updated with real pricing, and a real way
+        to buy them, the moment each one ships.
       </p>
 
-      <div style="margin-top:14px;display:flex;flex-direction:column;gap:14px">
-        ${tiers}
+      <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+        ${products.join('')}
       </div>
     </div>
   `;
