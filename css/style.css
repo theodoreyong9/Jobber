@@ -93,24 +93,13 @@ a{color:var(--agent);}
 }
 
 /* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, glass panes
-   floating over a fixed, colorful ambient wash instead of sitting flat on
-   --panel. The wash lives on .bureau (not on either grid below) so it
-   stays put as the page scrolls past it — real backdrop-filter glass
-   needs something colorful underneath to blur, which is what this
-   provides. Scrolling itself is just .workspace's own normal vertical
-   scroll (see the base .workspace rule) — one whole page, not a scrollbox
-   per section — .workspace-bureau only turns off its usual side/top
-   padding so the tiles can sit truly edge-to-edge; see render.js. ---------- */
+   over the page's plain --bg. Scrolling itself is just .workspace's own
+   normal vertical scroll (see the base .workspace rule) — one whole page,
+   not a scrollbox per section — .workspace-bureau only turns off its
+   usual side/top padding so the tiles can sit truly edge-to-edge; see
+   render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
-.bureau{
-  width:100%; position:relative;
-  background:
-    radial-gradient(ellipse 55% 38% at 12% 8%, color-mix(in srgb, #F1552C 40%, transparent), transparent 70%),
-    radial-gradient(ellipse 50% 40% at 92% 12%, color-mix(in srgb, #5B6EE8 38%, transparent), transparent 70%),
-    radial-gradient(ellipse 55% 45% at 15% 92%, color-mix(in srgb, #D46FB3 32%, transparent), transparent 70%),
-    radial-gradient(ellipse 50% 42% at 96% 88%, color-mix(in srgb, #2FBF71 30%, transparent), transparent 70%),
-    var(--bg);
-}
+.bureau{ width:100%; position:relative; }
 /* Columns are a fixed 97.5px (the width they already render at on a
    390px-wide screen — the reference this whole layout was designed
    against) rather than a fluid `1fr`, so tile size stays constant instead
