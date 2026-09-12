@@ -41,20 +41,11 @@ export async function renderPricingWorkspace() {
       <p class="section-sub">What Jobber costs, and why.</p>
 
       <p style="font-size:12.5px;color:var(--low);line-height:1.5;margin-top:14px">
-        Only Free is real today. The other four cost something real to run — relay
-        infrastructure, chain fees, or cloud compute — unlike the free P2P path, where two
-        browsers just talk directly. The prices below are indicative — a rough sense of scale,
-        not a locked-in number — and this page will be updated with the real ones, and a real way
-        to buy them, the moment each product ships.
-      </p>
-
-      <p style="font-size:12.5px;color:var(--low);line-height:1.5;margin-top:10px">
-        "Attached" below is just this browser's own local record, not a verified purchase —
-        Jobber has no account or server to check one against. That's harmless for Free. For the
-        other four, once they're real, the actual check won't live on this page at all: it'll sit
-        wherever the cost actually lands — the peer relaying for you, the chain being anchored to,
-        or the cloud service running the model — the same way nothing here can be trusted to prove
-        anything to anyone but this browser itself.
+        Free is free — no backend to pay for. The other four cost something real to run (relay,
+        chain fees, cloud compute), so prices below are indicative, not final, and not yet
+        buyable. "Attached" just means this browser's own record says so, not a verified purchase
+        — the real check, once each one ships, will live wherever its cost actually lands (the
+        relay peer, the chain, the cloud service), never here.
       </p>
 
       <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
