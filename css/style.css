@@ -158,6 +158,20 @@ a{color:var(--agent);}
 .bento-id-new{ cursor:pointer; font-size:18px; }
 .bento-id-new:hover{ color:var(--mid); }
 
+/* The tile that follows your identity slots while there's still a palier
+   left to reach (see credibility.js's IDENTITY_PALIERS) — a fraction plus
+   a thin fill bar rather than a bare number, since "42" alone says
+   nothing without the target it's climbing toward. */
+.bento-id-score{
+  display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:4px;
+  padding:8px; background:var(--panel); box-shadow:inset 0 0 0 1px var(--border-soft);
+}
+.bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:15px; color:var(--hi); }
+.bento-score-slash{ font-weight:600; font-size:10.5px; color:var(--low); }
+.bento-score-label{ font-size:8.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--low); }
+.bento-score-bar{ width:100%; height:3px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
+.bento-score-fill{ display:block; height:100%; background:var(--ok); }
+
 .mode-picker-group{ margin-bottom:14px; }
 .mode-picker-group:last-child{ margin-bottom:0; }
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
