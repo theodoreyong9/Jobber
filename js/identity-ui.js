@@ -20,7 +20,7 @@
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
-import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId } from './state.js';
+import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId, ensureIdentityState, migrateIdentityState } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
 
@@ -58,6 +58,7 @@ export function createIdentityFlow(ns) {
       const role = cfg.roles ? dlg.querySelector('#role').value : null;
       const rec = await identity.createIdentity(ns, name, role);
       state.identitiesByNs[ns] = await identity.listIdentities(ns);
+      ensureIdentityState(ns, rec.identityId);
       setActiveNamespace(ns);
       state.activeIdentityId[ns] = rec.identityId;
       state.view = 'workspace'; // land straight in it — a no-op if we were already there (the topbar's own + button)
@@ -167,14 +168,14 @@ export async function renderTopbar() {
 // editProfileFlow etc.) — the only manual action left here is stopping it.
 async function renderSearchAndEnrichControls(ns, id, cfg, controls) {
   const profile = await getProfile(id.identityId);
-  const isLive = !!state.searchLive[ns];
+  const isLive = !!state.searchLive[ns]?.has(id.identityId);
 
   controls.innerHTML = `
     ${isLive ? `<button class="btn small ghost" id="stopSearch" title="Stop searching">■ Stop</button>` : ''}
     <button class="btn ${profile.aiTokens.length ? 'success' : ''}" id="enrichAI">${profile.aiTokens.length ? `Enriched — ${profile.aiTokens.length}` : 'Enrich with local AI'}</button>
   `;
 
-  controls.querySelector('#stopSearch')?.addEventListener('click', () => state.handlers.toggleSearchLive(ns));
+  controls.querySelector('#stopSearch')?.addEventListener('click', () => state.handlers.toggleSearchLive(ns, id.identityId));
 
   const enrichBtn = controls.querySelector('#enrichAI');
   enrichBtn.addEventListener('click', () => {
@@ -220,7 +221,7 @@ async function renderSearchAndEnrichControls(ns, id, cfg, controls) {
         stopBtn.remove();
         if (extra === null) { enrichBtn.textContent = original; return; } // handled case, already toasted
         toast(`Added ${extra.length} AI-derived keywords.`);
-        if (state.searchLive[ns]) await state.handlers.rebroadcastDiscovery(ns); // update anyone already connected, not just future joiners
+        if (state.searchLive[ns]?.has(id.identityId)) await state.handlers.rebroadcastDiscovery(ns, id.identityId); // update anyone already connected, not just future joiners
         state.render.workspace();
         state.render.topbar();
       } catch (err) {
@@ -253,11 +254,21 @@ function rotateFlow(id) {
   openModal('Rotate identity', `<p style="font-size:12.5px;color:var(--mid)">A fresh keypair will be generated with the same name. The old id (#${id.identityId}) will be marked retired, and connected peers on this namespace will receive an <code>identity_retired</code> message.</p>`, {
     submitLabel: 'Rotate',
     onSubmit: async () => {
+      const wasLive = !!state.searchLive[id.namespace]?.has(id.identityId);
       const fresh = await identity.rotateIdentity(id.identityId);
       const room = p2p.getRoom(id.namespace);
       if (room) room.send('identity_retired', fresh.identityId, { retiredId: id.identityId, rotatedTo: fresh.identityId });
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
+      // Carries open chats/pending requests/chat log to the fresh id — see
+      // state.js's migrateIdentityState for why searchLive isn't part of
+      // that move: it's a live p2p.js room registration, not just data, so
+      // it's transitioned explicitly below instead.
+      migrateIdentityState(id.namespace, id.identityId, fresh.identityId);
       state.activeIdentityId[id.namespace] = fresh.identityId;
+      if (wasLive) {
+        await state.handlers.toggleSearchLive(id.namespace, id.identityId); // drop the retired id's room registration
+        await state.handlers.toggleSearchLive(id.namespace, fresh.identityId); // and pick it back up under the fresh one
+      }
       toast(`Rotated to #${fresh.identityId}`);
       state.render.all();
     },
@@ -268,6 +279,12 @@ function retireFlow(id) {
   openModal('Retire identity', `<p style="font-size:12.5px;color:var(--mid)">This marks #${id.identityId} inactive. It stays visible in your history. This is local only — it can't force other peers to forget a previously seen id.</p>`, {
     submitLabel: 'Retire',
     onSubmit: async () => {
+      // Otherwise a retired identity keeps its p2p.js room registration —
+      // still announcing itself and receiving messages under an id that no
+      // longer shows up anywhere in the UI to manage it.
+      if (state.searchLive[id.namespace]?.has(id.identityId)) {
+        await state.handlers.toggleSearchLive(id.namespace, id.identityId);
+      }
       await identity.retireIdentity(id.identityId);
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
       state.activeIdentityId[id.namespace] = pickActiveIdentityId(state.identitiesByNs[id.namespace]);
