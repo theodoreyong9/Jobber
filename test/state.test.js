@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickActiveIdentityId, roleLabel, complementaryRole, initials, relativeTime, NS_CONFIG, pickActiveNamespace, canInitiateChat } from '../js/state.js';
+import { pickActiveIdentityId, roleLabel, complementaryRole, initials, relativeTime, NS_CONFIG, pickActiveNamespace, canInitiateChat, state, ensureIdentityState, migrateIdentityState } from '../js/state.js';
+
+function resetNsState(ns) {
+  state.pendingChats[ns] = new Map();
+  state.openChatWith[ns] = new Map();
+  state.chatLog[ns] = new Map();
+  state.pendingMeetings[ns] = new Map();
+  state.pendingDocs[ns] = new Map();
+  state.pendingAttachmentOffers[ns] = new Map();
+  state.loadedConversations[ns] = new Map();
+  state.searchLive[ns] = new Set();
+}
 
 test('pickActiveIdentityId returns the active identity, never a retired one', () => {
   const list = [
@@ -137,4 +148,46 @@ test('canInitiateChat: only the demand-side role can start a conversation in two
 test('canInitiateChat: reciprocal and research namespaces are never gated', () => {
   assert.equal(canInitiateChat('dating', 'anything'), true);
   assert.equal(canInitiateChat('research', 'anything'), true);
+});
+
+/* ---- ensureIdentityState / migrateIdentityState: multi-identity-live buckets ---- */
+
+test('ensureIdentityState lazily creates every per-identity bucket, and is idempotent', () => {
+  resetNsState('_test_ns_a');
+  ensureIdentityState('_test_ns_a', 'ID1');
+  state.pendingChats['_test_ns_a'].get('ID1').set('PEER1', { status: 'incoming' });
+  ensureIdentityState('_test_ns_a', 'ID1'); // must not reset an existing bucket
+  assert.equal(state.pendingChats['_test_ns_a'].get('ID1').get('PEER1').status, 'incoming');
+  assert.equal(state.openChatWith['_test_ns_a'].get('ID1'), null);
+  assert.ok(state.chatLog['_test_ns_a'].get('ID1') instanceof Map);
+  assert.ok(state.pendingMeetings['_test_ns_a'].get('ID1') instanceof Map);
+  assert.ok(state.pendingDocs['_test_ns_a'].get('ID1') instanceof Map);
+  assert.ok(state.pendingAttachmentOffers['_test_ns_a'].get('ID1') instanceof Map);
+  assert.ok(state.loadedConversations['_test_ns_a'].get('ID1') instanceof Set);
+});
+
+test('migrateIdentityState carries an identity\'s in-memory state to a new id on rotation, instead of resetting it', () => {
+  resetNsState('_test_ns_b');
+  ensureIdentityState('_test_ns_b', 'OLD');
+  state.chatLog['_test_ns_b'].get('OLD').set('PEER1', [{ from: 'me', text: 'hi', ts: 1 }]);
+  state.pendingMeetings['_test_ns_b'].get('OLD').set('PEER1', { status: 'accepted', when: 'tomorrow' });
+  state.openChatWith['_test_ns_b'].set('OLD', 'PEER1');
+  state.searchLive['_test_ns_b'].add('OLD');
+
+  migrateIdentityState('_test_ns_b', 'OLD', 'NEW');
+
+  assert.equal(state.chatLog['_test_ns_b'].has('OLD'), false);
+  assert.equal(state.chatLog['_test_ns_b'].get('NEW').get('PEER1')[0].text, 'hi');
+  assert.equal(state.pendingMeetings['_test_ns_b'].get('NEW').get('PEER1').status, 'accepted');
+  assert.equal(state.openChatWith['_test_ns_b'].get('NEW'), 'PEER1');
+  assert.equal(state.searchLive['_test_ns_b'].has('OLD'), false);
+  assert.equal(state.searchLive['_test_ns_b'].has('NEW'), true);
+});
+
+test('migrateIdentityState is safe on an identity that was never live or ensured', () => {
+  resetNsState('_test_ns_c');
+  migrateIdentityState('_test_ns_c', 'NEVER_SEEN', 'NEW2');
+  assert.ok(state.chatLog['_test_ns_c'].get('NEW2') instanceof Map);
+  assert.equal(state.openChatWith['_test_ns_c'].get('NEW2'), null);
+  assert.equal(state.searchLive['_test_ns_c'].has('NEW2'), false);
 });

@@ -131,6 +131,17 @@ export function pickActiveNamespace({ lastActiveValue, identitiesByNs }) {
 
 export const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery entries expire
 
+// Collections below are split by what they're actually about, not
+// uniformly "per namespace": `discovered`, `identityToPeer`, and
+// `peerToIdentity` describe the wire itself (which remote peers exist,
+// and their live peerId) — one shared physical P2P connection per
+// namespace, true regardless of how many of *my* identities are live on
+// it, so these stay namespace-scoped. `blocked` is a namespace-wide
+// decision by design (blocking someone is "I don't want to hear from
+// them", not "this one persona of mine doesn't"). Everything else here
+// is genuinely about *my* side of a specific relationship with someone,
+// so once more than one of my identities can be live in the same
+// namespace at once, each needs its own bucket — see `ensureIdentityState`.
 export const state = {
   // 'desktop' shows the Bureau (every identity you've created, across every
   // namespace, as one tile each) — that's what you land on. 'workspace'
@@ -140,20 +151,20 @@ export const state = {
   // last working in — see desktop-ui.js.
   view: 'desktop',
   activeNamespace: 'employment',
-  activeIdentityId: {},   // namespace -> identityId
+  activeIdentityId: {},   // namespace -> identityId — which one I'm *viewing*, independent of which are live
   identitiesByNs: {},     // namespace -> [identity]
-  searchLive: {},         // namespace -> bool
+  searchLive: {},         // namespace -> Set(identityId) — which of my identities are live right now
   discovered: {},          // namespace -> Map(peerId -> meta)
-  pendingChats: {},         // namespace -> Map(theirIdentityId -> {status})
-  openChatWith: {},         // namespace -> theirIdentityId | null
-  chatLog: {},              // namespace -> Map(theirIdentityId -> [{from,text,ts,kind}]) — hydrated from IndexedDB, see persistMessage/loadConversation
-  pendingMeetings: {},      // namespace -> Map(theirIdentityId -> {status, when, note})
-  pendingDocs: {},          // namespace -> Map(theirIdentityId -> {status, doc, text?})
-  pendingAttachmentOffers: {}, // namespace -> Map(offerId -> {status, name, size, type, theirIdentityId, file?})
+  pendingChats: {},         // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status}))
+  openChatWith: {},         // namespace -> Map(myIdentityId -> theirIdentityId | null)
+  chatLog: {},              // namespace -> Map(myIdentityId -> Map(theirIdentityId -> [{from,text,ts,kind}])) — hydrated from IndexedDB, see persistMessage/loadConversation
+  pendingMeetings: {},      // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, when, note}))
+  pendingDocs: {},          // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, doc, text?}))
+  pendingAttachmentOffers: {}, // namespace -> Map(myIdentityId -> Map(offerId -> {status, name, size, type, theirIdentityId, file?}))
   blocked: {},              // namespace -> Set(identityId)
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
-  loadedConversations: {},  // namespace -> Set(theirIdentityId) already hydrated from IndexedDB
+  loadedConversations: {},  // namespace -> Map(myIdentityId -> Set(theirIdentityId)) already hydrated from IndexedDB
   researchProjects: [],
   activeProjectId: null,
   pendingJoinRequests: new Map(), // projectId -> [{identityId, displayName, skillMd, peerId}]
@@ -175,4 +186,37 @@ export const state = {
 export function setActiveNamespace(ns) {
   state.activeNamespace = ns;
   db.put('cache', { key: 'lastActiveNamespace', value: ns });
+}
+
+// Every collection that's genuinely "my side of a relationship" (see the
+// comment above `state`) is bucketed per identity — lazily initialized here
+// rather than at every read site, the same way app.js already lazily
+// initializes the namespace-level Maps on boot. Called once per identity on
+// boot, and again whenever a new identity is created afterward.
+export function ensureIdentityState(ns, identityId) {
+  if (!state.pendingChats[ns].has(identityId)) state.pendingChats[ns].set(identityId, new Map());
+  if (!state.openChatWith[ns].has(identityId)) state.openChatWith[ns].set(identityId, null);
+  if (!state.chatLog[ns].has(identityId)) state.chatLog[ns].set(identityId, new Map());
+  if (!state.pendingMeetings[ns].has(identityId)) state.pendingMeetings[ns].set(identityId, new Map());
+  if (!state.pendingDocs[ns].has(identityId)) state.pendingDocs[ns].set(identityId, new Map());
+  if (!state.pendingAttachmentOffers[ns].has(identityId)) state.pendingAttachmentOffers[ns].set(identityId, new Map());
+  if (!state.loadedConversations[ns].has(identityId)) state.loadedConversations[ns].set(identityId, new Set());
+}
+
+// Rotation replaces an identity's keypair but is meant to feel continuous,
+// not like starting over — the same reasoning credibility.js's own
+// handleRotation already applies to *observed* history. This carries the
+// *acting* side's in-memory state (open chats, pending requests, unsent
+// chat log) from the retired id to the fresh one instead of quietly
+// dropping it.
+export function migrateIdentityState(ns, oldIdentityId, newIdentityId) {
+  ensureIdentityState(ns, newIdentityId);
+  for (const store of [state.pendingChats, state.chatLog, state.pendingMeetings, state.pendingDocs, state.pendingAttachmentOffers, state.loadedConversations]) {
+    if (store[ns].has(oldIdentityId)) store[ns].set(newIdentityId, store[ns].get(oldIdentityId));
+    store[ns].delete(oldIdentityId);
+  }
+  const openWith = state.openChatWith[ns].get(oldIdentityId);
+  state.openChatWith[ns].set(newIdentityId, openWith ?? null);
+  state.openChatWith[ns].delete(oldIdentityId);
+  if (state.searchLive[ns].delete(oldIdentityId)) state.searchLive[ns].add(newIdentityId);
 }
