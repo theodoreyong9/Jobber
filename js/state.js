@@ -129,9 +129,17 @@ export function pickActiveIdentityId(list) {
 // empty is worse than the neutral welcome screen (this was a real shipped
 // bug: creating then deleting your only identity left the stale
 // preference in place, so the welcome screen never came back).
+// Summed across every namespace, not per-namespace — the Bureau's identity
+// grid (desktop-ui.js) already shows every identity you've ever created as
+// one flat pool regardless of mode, and the global-credibility identity cap
+// (see credibility.js) gates that same flat pool, so this is the one count
+// both need.
+export function totalActiveIdentities(identitiesByNs) {
+  return NAMESPACES.reduce((n, ns) => n + (identitiesByNs[ns]?.filter((i) => i.active).length || 0), 0);
+}
+
 export function pickActiveNamespace({ lastActiveValue, identitiesByNs }) {
-  const totalActive = NAMESPACES.reduce((n, ns) => n + (identitiesByNs[ns]?.filter((i) => i.active).length || 0), 0);
-  if (totalActive === 0) return null;
+  if (totalActiveIdentities(identitiesByNs) === 0) return null;
   if (lastActiveValue && NAMESPACES.includes(lastActiveValue)) return lastActiveValue;
   return NAMESPACES.find((ns) => identitiesByNs[ns]?.some((i) => i.active)) || NAMESPACES[0];
 }
