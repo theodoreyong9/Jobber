@@ -21,6 +21,7 @@
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
 import * as credibility from './credibility.js';
+import { attachProduct } from './products.js';
 import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId, ensureIdentityState, migrateIdentityState, totalActiveIdentities } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
@@ -72,6 +73,7 @@ export async function createIdentityFlow(ns) {
       const name = dlg.querySelector('#dn').value.trim() || 'Unnamed';
       const role = cfg.roles ? dlg.querySelector('#role').value : null;
       const rec = await identity.createIdentity(ns, name, role);
+      await attachProduct('free'); // no-op after the first identity ever created — see products.js
       state.identitiesByNs[ns] = await identity.listIdentities(ns);
       ensureIdentityState(ns, rec.identityId);
       setActiveNamespace(ns);
