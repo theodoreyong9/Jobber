@@ -14,6 +14,7 @@ import { renderResearchWorkspace, bindResearchEvents } from './research-ui.js';
 import { renderNearWorkspace, bindNearEvents } from './near-ui.js';
 import { renderAgentWorkspace } from './agent-ui.js';
 import { renderMessagesWorkspace, bindMessagesEvents } from './messages-ui.js';
+import { renderPricingWorkspace } from './pricing-ui.js';
 import { renderDesktop, bindDesktopEvents } from './desktop-ui.js';
 
 export async function renderWorkspace() {
@@ -45,6 +46,8 @@ export async function renderWorkspace() {
   } else if (NS_CONFIG[ns].kind === 'messages') {
     ws.innerHTML = await renderMessagesWorkspace();
     bindMessagesEvents();
+  } else if (NS_CONFIG[ns].kind === 'info') {
+    ws.innerHTML = await renderPricingWorkspace();
   } else {
     ws.innerHTML = await renderClassicWorkspace(ns);
     bindClassicEvents(ns);
