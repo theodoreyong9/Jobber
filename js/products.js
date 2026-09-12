@@ -26,6 +26,27 @@
 // ever create an identity. The other four aren't purchasable yet (see
 // pricing-ui.js) — attachProduct exists and works for them too, there's
 // just no checkout flow wired up to call it.
+//
+// SECURITY NOTE for whoever wires up that checkout flow later: everything
+// in this file lives in the user's own browser, so hasProduct()/the
+// `products` array can never be trusted by anyone but this browser
+// itself — the user can always call attachProduct() from devtools (or a
+// worker, or any other code running on their own machine) and grant
+// themselves a product for free. That's not a bug here, and it isn't
+// fixable here: no code running entirely on someone's own device can ever
+// prove anything to a party that doesn't already trust that device.
+// It's fine for Free (nothing to steal). It matters for the other four
+// because each one spends a real resource that belongs to someone else —
+// Gossip spends a relay peer's bandwidth, AIWA spends a chain-anchoring
+// fee, Booster AI/Agent Booster spend cloud compute — so the actual
+// checkout enforcement has to live wherever that resource is spent, not
+// here: the relay peer verifies a payment receipt before agreeing to
+// relay for you, the chain only accepts an anchor with a real transaction
+// behind it, the cloud endpoint validates a real auth token server-side
+// before running the model. `hasProduct()` stays exactly what it is
+// today — a local UI signal for "should this browser show itself as
+// unlocked" — never the thing a peer, a chain, or a cloud service relies
+// on to decide whether to do the work.
 
 import * as identity from './identity.js';
 
