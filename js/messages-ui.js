@@ -25,8 +25,15 @@ function chatCapableNamespaces() {
   return NAMESPACES.filter((ns) => NS_CONFIG[ns].kind === 'twoSided' || NS_CONFIG[ns].kind === 'reciprocal');
 }
 
-function myActiveIdentity(ns) {
-  return state.identitiesByNs[ns]?.find((i) => i.identityId === state.activeIdentityId[ns]) || null;
+function findIdentity(ns, identityId) {
+  return state.identitiesByNs[ns]?.find((i) => i.identityId === identityId) || null;
+}
+
+// Every active identity in a namespace can have its own pending requests
+// and conversations now, independent of which one happens to be "active"
+// (viewed) or live — so this loops all of them, not just one.
+function myIdentitiesOf(ns) {
+  return (state.identitiesByNs[ns] || []).filter((i) => i.active);
 }
 
 // Synchronous and cheap (no IndexedDB reads) — safe to call from the
@@ -34,18 +41,20 @@ function myActiveIdentity(ns) {
 export function gatherPending() {
   const items = [];
   for (const ns of chatCapableNamespaces()) {
-    if (!state.activeIdentityId[ns]) continue;
-    for (const [theirId, c] of state.pendingChats[ns] || []) {
-      if (c.status === 'incoming') items.push({ ns, theirId, type: 'chat', label: 'wants to start a conversation' });
-    }
-    for (const [theirId, m] of state.pendingMeetings[ns] || []) {
-      if (m.status === 'incoming') items.push({ ns, theirId, type: 'meeting', label: `proposed a meeting: ${m.when}${m.note ? ' — ' + m.note : ''}` });
-    }
-    for (const [theirId, d] of state.pendingDocs[ns] || []) {
-      if (d.status === 'incoming') items.push({ ns, theirId, type: 'document', doc: d.doc, label: `requested your ${d.doc.replace('_', ' ')}` });
-    }
-    for (const [offerId, a] of state.pendingAttachmentOffers[ns] || []) {
-      if (a.status === 'incoming') items.push({ ns, theirId: a.theirIdentityId, offerId, type: 'attachment', label: `wants to send you a file: ${a.name}` });
+    for (const my of myIdentitiesOf(ns)) {
+      const myId = my.identityId;
+      for (const [theirId, c] of state.pendingChats[ns]?.get(myId) || []) {
+        if (c.status === 'incoming') items.push({ ns, myId, theirId, type: 'chat', label: 'wants to start a conversation' });
+      }
+      for (const [theirId, m] of state.pendingMeetings[ns]?.get(myId) || []) {
+        if (m.status === 'incoming') items.push({ ns, myId, theirId, type: 'meeting', label: `proposed a meeting: ${m.when}${m.note ? ' — ' + m.note : ''}` });
+      }
+      for (const [theirId, d] of state.pendingDocs[ns]?.get(myId) || []) {
+        if (d.status === 'incoming') items.push({ ns, myId, theirId, type: 'document', doc: d.doc, label: `requested your ${d.doc.replace('_', ' ')}` });
+      }
+      for (const [offerId, a] of state.pendingAttachmentOffers[ns]?.get(myId) || []) {
+        if (a.status === 'incoming') items.push({ ns, myId, theirId: a.theirIdentityId, offerId, type: 'attachment', label: `wants to send you a file: ${a.name}` });
+      }
     }
   }
   return items;
@@ -58,10 +67,18 @@ export function countPendingNotifications() {
 async function gatherConversations() {
   const all = [];
   for (const ns of chatCapableNamespaces()) {
-    if (!state.activeIdentityId[ns]) continue;
-    for (const c of await listConversations(ns)) all.push({ ...c, ns });
+    for (const my of myIdentitiesOf(ns)) {
+      for (const c of await listConversations(ns, my.identityId)) all.push({ ...c, ns, myId: my.identityId });
+    }
   }
   return all.sort((a, b) => b.ts - a.ts);
+}
+
+// "as <name>" only actually adds information once there's more than one
+// identity it could be — most namespaces still have exactly one, where
+// it'd just be noise repeating what the mode badge already says.
+function asIdentitySuffix(ns, myId) {
+  return myIdentitiesOf(ns).length > 1 ? ` (as ${findIdentity(ns, myId)?.displayName || myId.slice(0, 8)})` : '';
 }
 
 function pendingRowHtml(p) {
@@ -69,12 +86,12 @@ function pendingRowHtml(p) {
   return `
     <div class="agree-row">
       <span class="k2">
-        <span class="role-badge" style="margin-right:6px">${NS_CONFIG[p.ns].label}</span>
+        <span class="role-badge" style="margin-right:6px">${NS_CONFIG[p.ns].label}${asIdentitySuffix(p.ns, p.myId)}</span>
         ${p.theirId.slice(0, 10)}… ${p.label}
       </span>
       <span style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn small primary msg-accept" data-ns="${p.ns}" data-their="${p.theirId}" data-type="${p.type}" data-doc="${p.doc || ''}" data-offer="${p.offerId || ''}">${acceptLabel}</button>
-        <button class="btn small ghost msg-decline" data-ns="${p.ns}" data-their="${p.theirId}" data-type="${p.type}" data-offer="${p.offerId || ''}">Decline</button>
+        <button class="btn small primary msg-accept" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-doc="${p.doc || ''}" data-offer="${p.offerId || ''}">${acceptLabel}</button>
+        <button class="btn small ghost msg-decline" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-offer="${p.offerId || ''}">Decline</button>
       </span>
     </div>`;
 }
@@ -86,10 +103,10 @@ function conversationRowHtml(c) {
     <div class="agree-row">
       <span class="k2">
         <span class="online-dot ${online ? 'on' : ''}" style="margin-right:6px"></span>
-        <span class="role-badge" style="margin-right:6px">${NS_CONFIG[c.ns].label}</span>
+        <span class="role-badge" style="margin-right:6px">${NS_CONFIG[c.ns].label}${asIdentitySuffix(c.ns, c.myId)}</span>
         ${c.counterpart.slice(0, 10)}… — ${preview}
       </span>
-      <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-their="${c.counterpart}">Open</button>
+      <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-my="${c.myId}" data-their="${c.counterpart}">Open</button>
     </div>`;
 }
 
@@ -119,13 +136,15 @@ export function bindMessagesEvents() {
 
   ws.querySelectorAll('.msg-accept').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const { ns, their, type, doc, offer } = btn.dataset;
-      const id = myActiveIdentity(ns);
+      const { ns, my, their, type, doc, offer } = btn.dataset;
+      const id = findIdentity(ns, my);
       if (type === 'chat') {
         respondChat(ns, id, their, true);
         // Accepting is clearly meant to lead into the conversation, not
-        // just clear the notification — jump straight into it.
+        // just clear the notification — jump straight into it, viewing it
+        // as whichever of my identities actually received the request.
         setActiveNamespace(ns);
+        state.activeIdentityId[ns] = my;
         state.view = 'workspace';
         state.render.all();
       } else if (type === 'meeting') {
@@ -140,23 +159,23 @@ export function bindMessagesEvents() {
 
   ws.querySelectorAll('.msg-decline').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const { ns, their, type, offer } = btn.dataset;
-      const id = myActiveIdentity(ns);
+      const { ns, my, their, type, offer } = btn.dataset;
+      const id = findIdentity(ns, my);
       if (type === 'chat') respondChat(ns, id, their, false);
       else if (type === 'meeting') respondMeeting(ns, id, their, false);
-      else if (type === 'document') declineDocument(ns, their);
+      else if (type === 'document') declineDocument(ns, my, their);
       else if (type === 'attachment') respondAttachmentOffer(ns, id, offer, false);
     });
   });
 
   ws.querySelectorAll('.conv-jump').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const ns = btn.dataset.ns;
-      const their = btn.dataset.their;
+      const { ns, my, their } = btn.dataset;
       setActiveNamespace(ns);
-      state.openChatWith[ns] = their;
+      state.activeIdentityId[ns] = my;
+      state.openChatWith[ns].set(my, their);
       state.view = 'workspace';
-      loadConversation(ns, their).then(() => state.render.all());
+      loadConversation(ns, my, their).then(() => state.render.all());
     });
   });
 }
