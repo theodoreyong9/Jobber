@@ -85,28 +85,39 @@ async function buildDiscoveryPayload(ns, id, profile) {
 // joiners. Without this, enriching your profile with local AI (or any
 // other profile edit) only reached peers who hadn't joined yet; anyone
 // already in the room kept seeing your old keywords until they reconnected.
-export async function rebroadcastDiscovery(ns) {
+export async function rebroadcastDiscovery(ns, identityId) {
   const room = p2p.getRoom(ns);
   if (!room) return;
-  const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
+  const id = state.identitiesByNs[ns].find((i) => i.identityId === identityId);
   if (!id) return;
   const profile = await getProfile(id.identityId);
   const payload = await buildDiscoveryPayload(ns, id, profile);
   room.send('discovery', id.identityId, payload); // no target = broadcast to the whole room
 }
 
-// Connects or disconnects Search Live for a namespace outright (as opposed
-// to toggling from whatever the current state happens to be) — this is
-// what both the manual toggle and the auto-resume-on-boot path call, so
-// there's exactly one place that actually joins/leaves the P2P room.
-export async function setSearchLive(ns, desired) {
-  state.searchLive[ns] = desired;
-  db.put('cache', { key: `searchLive:${ns}`, value: desired }); // survives reload — see app.js's boot()
-  const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
+// A blob's own metadata (offerId) is enough to find which of my live
+// identities it belongs to — offer ids are random per-handshake and only
+// ever pending on the one identity that received that particular offer.
+function findLiveIdentityForOffer(ns, offerId) {
+  for (const myIdentityId of state.searchLive[ns] || []) {
+    if (state.pendingAttachmentOffers[ns].get(myIdentityId)?.has(offerId)) return myIdentityId;
+  }
+  return null;
+}
+
+// Connects or disconnects Search Live for one identity in a namespace
+// (as opposed to toggling from whatever its current state happens to be)
+// — this is what both the manual toggle and the auto-resume-on-boot path
+// call. More than one identity in the same namespace can be live at
+// once now (see state.js's searchLive) — they all share the one P2P room
+// p2p.js maintains per namespace.
+export async function setSearchLive(ns, identityId, desired) {
+  const id = state.identitiesByNs[ns].find((i) => i.identityId === identityId);
+  if (!id) return;
+  db.put('cache', { key: `searchLive:${ns}:${identityId}`, value: desired }); // survives reload — see app.js's boot()
   if (desired) {
-    if (!id) { state.searchLive[ns] = false; return; }
     try {
-      await p2p.joinNamespaceRoom(ns, {
+      await p2p.joinNamespaceRoom(ns, identityId, {
         onPeerJoin: async (peerId) => {
           const profile = await getProfile(id.identityId);
           const payload = await buildDiscoveryPayload(ns, id, profile);
@@ -126,42 +137,54 @@ export async function setSearchLive(ns, desired) {
             // Bytes catching up to a metadata record that arrived earlier
             // via conversation resync — attach to that exact record
             // (same messageId) rather than creating a duplicate entry.
+            // The record itself already says which of my identities it's
+            // mine under (persistMessage's `mine` field).
             db.get('messages', metadata.forMessageId).then((existing) => {
               if (!existing) return;
               existing.blob = blob;
               db.put('messages', existing).then(() => {
-                state.loadedConversations[ns].delete(theirIdentityId);
-                if (state.openChatWith[ns] === theirIdentityId) state.render.workspace();
+                const myIdentityId = existing.mine;
+                if (!myIdentityId) return;
+                state.loadedConversations[ns].get(myIdentityId)?.delete(theirIdentityId);
+                if (state.openChatWith[ns].get(myIdentityId) === theirIdentityId) state.render.workspace();
               });
             });
             return;
           }
+          const myIdentityId = findLiveIdentityForOffer(ns, metadata.offerId);
+          if (!myIdentityId) return; // no live identity of mine has this offer pending
           const entry = {
             messageId: metadata.offerId, // shared with the sender's own copy — see message-router.js's attachment_accept
             from: 'them', kind: 'attachment', ts: Date.now(),
             name: metadata.name || 'file', size: blob.size, url: URL.createObjectURL(blob),
           };
-          if (!state.chatLog[ns].has(theirIdentityId)) state.chatLog[ns].set(theirIdentityId, []);
-          state.chatLog[ns].get(theirIdentityId).push(entry);
-          state.loadedConversations[ns].add(theirIdentityId);
-          persistMessage(ns, theirIdentityId, { ...entry, url: undefined, blob });
+          const log = state.chatLog[ns].get(myIdentityId);
+          if (!log.has(theirIdentityId)) log.set(theirIdentityId, []);
+          log.get(theirIdentityId).push(entry);
+          state.loadedConversations[ns].get(myIdentityId).add(theirIdentityId);
+          persistMessage(ns, myIdentityId, theirIdentityId, { ...entry, url: undefined, blob });
           toast(`Received attachment: ${metadata.name || 'file'}`);
           state.render.workspace();
         },
       });
+      state.searchLive[ns].add(identityId);
     } catch (e) {
       toast('P2P networking unavailable: ' + e.message);
-      state.searchLive[ns] = false;
+      state.searchLive[ns].delete(identityId);
     }
   } else {
-    p2p.leaveNamespaceRoom(ns);
-    state.discovered[ns].clear();
+    p2p.leaveIdentityFromRoom(ns, identityId);
+    state.searchLive[ns].delete(identityId);
+    // The discovered pool is shared by every identity live in this
+    // namespace — only clear it once the *last* one stops, or stopping
+    // one identity would blind every other identity still searching.
+    if (state.searchLive[ns].size === 0) state.discovered[ns].clear();
   }
   state.render.all();
 }
 
-export async function toggleSearchLive(ns) {
-  await setSearchLive(ns, !state.searchLive[ns]);
+export async function toggleSearchLive(ns, identityId) {
+  await setSearchLive(ns, identityId, !state.searchLive[ns]?.has(identityId));
 }
 state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar calls this indirectly
 state.handlers.rebroadcastDiscovery = rebroadcastDiscovery; // same reason — the enrich control lives in the topbar now
@@ -331,9 +354,9 @@ export async function renderClassicWorkspace(ns) {
   function renderCard(p) {
     const ex = explainMatch(cfg, p.match);
     const cred = credibilityBySender.get(p.sender); // null = never observed at all, distinct from a real, low score
-    const chat = state.pendingChats[ns].get(p.sender);
-    const meeting = state.pendingMeetings[ns].get(p.sender);
-    const doc = state.pendingDocs[ns].get(p.sender);
+    const chat = state.pendingChats[ns].get(id.identityId).get(p.sender);
+    const meeting = state.pendingMeetings[ns].get(id.identityId).get(p.sender);
+    const doc = state.pendingDocs[ns].get(id.identityId).get(p.sender);
     const meetingHtml = meeting ? `
         <div class="meeting-banner">
           ${meeting.status === 'incoming'
@@ -414,11 +437,11 @@ export async function renderClassicWorkspace(ns) {
     ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Create a complementary identity — in this browser or a real second device — and it'll show up here.</div>`
     : scored.map((p) => renderCard(p)).join('');
 
-  const chatPeer = state.openChatWith[ns];
-  if (chatPeer) await loadConversation(ns, chatPeer); // defensive — most entry points already hydrate before opening
+  const chatPeer = state.openChatWith[ns].get(id.identityId);
+  if (chatPeer) await loadConversation(ns, id.identityId, chatPeer); // defensive — most entry points already hydrate before opening
   const chatHtml = chatPeer ? renderChatPanel(ns, id, chatPeer) : '';
 
-  const conversations = await listConversations(ns);
+  const conversations = await listConversations(ns, id.identityId);
   const conversationsHtml = conversations.length ? `
     <div class="panel">
       <div class="k">Conversations</div>
@@ -469,8 +492,8 @@ export function bindClassicEvents(ns) {
   ws.querySelectorAll('.open-chat').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const theirIdentityId = btn.closest('.card').dataset.identity;
-      await loadConversation(ns, theirIdentityId);
-      state.openChatWith[ns] = theirIdentityId;
+      await loadConversation(ns, id.identityId, theirIdentityId);
+      state.openChatWith[ns].set(id.identityId, theirIdentityId);
       state.render.workspace();
     });
   });
@@ -496,23 +519,23 @@ export function bindClassicEvents(ns) {
     btn.addEventListener('click', () => shareDocument(ns, id, btn.closest('.card').dataset.identity, btn.dataset.doc));
   });
   ws.querySelectorAll('.doc-decline').forEach((btn) => {
-    btn.addEventListener('click', () => declineDocument(ns, btn.closest('.card').dataset.identity));
+    btn.addEventListener('click', () => declineDocument(ns, id.identityId, btn.closest('.card').dataset.identity));
   });
   ws.querySelectorAll('.view-doc').forEach((btn) => {
     btn.addEventListener('click', () => {
       const theirIdentityId = btn.closest('.card').dataset.identity;
-      const doc = state.pendingDocs[ns].get(theirIdentityId);
+      const doc = state.pendingDocs[ns].get(id.identityId).get(theirIdentityId);
       openModal(doc.doc.replace('_', ' '), `<div style="white-space:pre-wrap;font-size:13px;color:var(--hi)">${doc.text}</div>`, { submitLabel: 'Close' });
     });
   });
   ws.querySelectorAll('.conv-open').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await loadConversation(ns, btn.dataset.identity);
-      state.openChatWith[ns] = btn.dataset.identity;
+      await loadConversation(ns, id.identityId, btn.dataset.identity);
+      state.openChatWith[ns].set(id.identityId, btn.dataset.identity);
       state.render.workspace();
     });
   });
-  ws.querySelector('#closeChat')?.addEventListener('click', () => { state.openChatWith[ns] = null; state.render.workspace(); });
+  ws.querySelector('#closeChat')?.addEventListener('click', () => { state.openChatWith[ns].set(id.identityId, null); state.render.workspace(); });
   ws.querySelectorAll('.attach-accept').forEach((btn) => {
     btn.addEventListener('click', () => respondAttachmentOffer(ns, id, btn.dataset.offer, true));
   });
@@ -523,12 +546,12 @@ export function bindClassicEvents(ns) {
   const sendBtn = ws.querySelector('#chatSend');
   if (sendBtn) {
     const input = ws.querySelector('#chatInput');
-    const fire = () => { sendChatMessage(ns, id, state.openChatWith[ns], input.value); input.value = ''; };
+    const fire = () => { sendChatMessage(ns, id, state.openChatWith[ns].get(id.identityId), input.value); input.value = ''; };
     sendBtn.addEventListener('click', fire);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') fire(); });
     ws.querySelector('#chatFile')?.addEventListener('change', (e) => {
       const f = e.target.files[0];
-      if (f) proposeAttachment(ns, id, state.openChatWith[ns], f);
+      if (f) proposeAttachment(ns, id, state.openChatWith[ns].get(id.identityId), f);
     });
     const log = ws.querySelector('#chatLog');
     if (log) log.scrollTop = log.scrollHeight;
