@@ -11,18 +11,19 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute'];
+export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute', 'pricing'];
 
 // Purely a display grouping for the Bureau (desktop-ui.js) — every other
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
-// wants the flat list, so this doesn't replace it. Three clusters: the
+// wants the flat list, so this doesn't replace it. Four clusters: the
 // actual P2P matching namespaces, the cross-cutting tools that read what
-// those already discovered, and the links out to the rest of this
-// portfolio.
+// those already discovered, the links out to the rest of this portfolio,
+// and info about Jobber itself.
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating'] },
   { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
   { label: 'Ecosystem', namespaces: ['creator', 'wallet', 'tribute'] },
+  { label: 'About', namespaces: ['pricing'] },
 ];
 
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
@@ -63,6 +64,12 @@ export const NS_CONFIG = {
   tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
     url: 'https://theodoreyong9.github.io/SGD/',
     hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
+
+  // "info" namespaces are a static page rendered inside Jobber itself — no
+  // identity, no profile, no P2P, same as near/agent/messages in that
+  // regard, but they don't read any live state either.
+  pricing: { label: 'Pricing', color: '#2FBF71', kind: 'info', icon: '🏷️',
+    hint: 'What Jobber costs, and why.' },
 };
 
 export function roleLabel(ns, roleKey) {
