@@ -91,6 +91,73 @@ a{color:var(--agent);}
   padding:2px 7px; border-radius:20px; background:var(--warn); color:#1A1400;
   font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
 }
+
+/* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, each with a
+   color-tinted decorative shape instead of sitting flat on --panel. The
+   Bureau manages its own internal scroll (the identity grid only, once it
+   overflows) instead of the whole workspace scrolling, so .workspace's
+   usual padding/scroll is turned off for it — see render.js. ---------- */
+.workspace.workspace-bureau{ padding:0; overflow:hidden; display:flex; }
+.bureau{ flex:1; min-height:0; display:flex; flex-direction:column; width:100%; }
+.bento-tools{ flex:0 0 auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:100px; }
+.bento-identities{
+  flex:1; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:84px;
+  padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
+}
+
+.bento-tile{
+  position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
+  align-items:flex-start; text-align:left; padding:10px; border:none; cursor:pointer; font-family:inherit;
+  color:var(--hi); box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 26%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 4%, transparent) 60%),
+    var(--panel);
+}
+.bento-tile::before{
+  content:''; position:absolute; width:150%; height:150%; top:-65%; right:-55%; border-radius:50%; pointer-events:none;
+  background:color-mix(in srgb, var(--tile-color, var(--border)) 16%, transparent);
+}
+.bento-tile.plain{ background:var(--panel); }
+.bento-tile.plain::before{ content:none; }
+.bento-tile:active{ filter:brightness(1.15); }
+
+.bento-icon-chip{
+  width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  background:rgba(13,17,20,.36); font-size:15px; margin-bottom:auto; position:relative; z-index:2;
+}
+.bento-icon-chip.lg{ width:34px; height:34px; border-radius:10px; font-size:19px; }
+.bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
+.bento-label.lg{ font-size:15px; margin-top:10px; }
+.bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
+
+.bento-badge-cooking{
+  position:absolute; top:7px; right:7px; z-index:3; font-size:7.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  padding:3px 6px; border-radius:20px; background:rgba(13,17,20,.62); color:var(--tile-color); backdrop-filter:blur(6px); white-space:nowrap;
+}
+.bento-badge-count{
+  position:absolute; top:8px; right:8px; z-index:3; min-width:20px; height:20px; padding:0 5px; border-radius:20px;
+  background:var(--bad); color:#1A0507; font-family:var(--font-head); font-weight:700; font-size:11px;
+  display:flex; align-items:center; justify-content:center;
+}
+
+.bento-id-tile{
+  position:relative; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
+  padding:8px; border:none; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+  background:linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 22%, transparent), transparent 65%), var(--panel);
+}
+.bento-id-tile:active{ filter:brightness(1.15); }
+.bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); }
+.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; }
+.bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; }
+
+.bento-id-empty, .bento-id-new{
+  display:flex; align-items:center; justify-content:center; background:var(--bg);
+  box-shadow:inset 0 0 0 1px var(--border-soft); color:var(--low); border:none; font-family:inherit;
+}
+.bento-id-new{ cursor:pointer; font-size:18px; }
+.bento-id-new:hover{ color:var(--mid); }
+
 .mode-picker-group{ margin-bottom:14px; }
 .mode-picker-group:last-child{ margin-bottom:0; }
 .mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
