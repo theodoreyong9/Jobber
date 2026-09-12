@@ -20,7 +20,8 @@
 
 import * as identity from './identity.js';
 import * as p2p from './p2p.js';
-import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId, ensureIdentityState, migrateIdentityState } from './state.js';
+import * as credibility from './credibility.js';
+import { state, NS_CONFIG, roleLabel, initials, setActiveNamespace, pickActiveIdentityId, ensureIdentityState, migrateIdentityState, totalActiveIdentities } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile, openProfileEditor, enrichProfileWithAI } from './profiles.js';
 
@@ -31,8 +32,22 @@ function takenRoles(ns) {
   return new Set((state.identitiesByNs[ns] || []).filter((i) => i.active && i.role).map((i) => i.role));
 }
 
-export function createIdentityFlow(ns) {
+// The Bureau's own "+" tiles already stop appearing once the cap below is
+// hit (see desktop-ui.js), but this is the one place every entry point to
+// identity creation actually funnels through — the workspace's own
+// "Create identity" fallback (renderTopbar's quickCreate, and each
+// classic/research workspace's own createHere button) reaches here
+// directly without going through the Bureau at all, so the cap has to be
+// enforced here to actually hold, not just be reflected in the Bureau's UI.
+export async function createIdentityFlow(ns) {
   const cfg = NS_CONFIG[ns];
+  const used = totalActiveIdentities(state.identitiesByNs);
+  const { score } = await credibility.computeGlobalCredibility();
+  const cap = credibility.identityCapFor(score);
+  if (used >= cap) {
+    toast(`You've hit your identity limit (${cap}) — build more real P2P history (chats, meetings, files actually exchanged) to raise your credibility score and unlock ${credibility.IDENTITY_PALIER_STEP} more.`);
+    return;
+  }
   let roles = cfg.roles;
   if (roles) {
     const taken = takenRoles(ns);
