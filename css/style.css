@@ -112,9 +112,25 @@ a{color:var(--agent);}
     radial-gradient(ellipse 50% 42% at 96% 88%, color-mix(in srgb, #2FBF71 30%, transparent), transparent 70%),
     var(--bg);
 }
-.bento-tools{ flex:0 0 auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:100px; }
+/* Columns are a fixed 97.5px (the width they already render at on a
+   390px-wide screen — the reference this whole layout was designed
+   against) rather than a fluid `1fr`, so tile size stays constant instead
+   of stretching/squishing with the viewport. A narrower screen can no
+   longer fit all 4 columns, so each row scrolls horizontally on its own
+   instead — overflow-y stays closed off (tools' row count is fixed, it
+   never needs vertical scroll; identities' vertical scroll is the
+   existing, separate "many identities" overflow below). Left-aligned
+   (the grid default), not centered: centering an overflowing grid pushes
+   part of its content to a negative offset, which a plain LTR scroll
+   container can never actually scroll to — it'd just be permanently
+   clipped and unreachable on a narrow screen. */
+.bento-tools{
+  flex:0 0 auto; display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:100px;
+  overflow-x:auto; overflow-y:hidden;
+}
 .bento-identities{
-  flex:1; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:84px;
+  flex:1; min-height:0; display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:84px;
+  overflow-x:auto; overflow-y:auto;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
 
@@ -127,9 +143,10 @@ a{color:var(--agent);}
   background:
     linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 30%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 6%, transparent) 65%),
     color-mix(in srgb, var(--panel) 46%, transparent);
+  transition:transform .12s ease, filter .12s ease;
 }
 .bento-tile.plain{ background:color-mix(in srgb, var(--panel) 46%, transparent); }
-.bento-tile:active{ filter:brightness(1.2); }
+.bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 
 /* The tile's own emoji, oversized and faded, bleeding off the corner
    instead of the old plain circle blob — "the Bureau's icons as a styled
@@ -167,8 +184,9 @@ a{color:var(--agent);}
   box-shadow:inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 0 1px rgba(0,0,0,.25);
   backdrop-filter:blur(20px) saturate(165%); -webkit-backdrop-filter:blur(20px) saturate(165%);
   background:linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 26%, transparent), transparent 65%), color-mix(in srgb, var(--panel) 46%, transparent);
+  transition:transform .12s ease, filter .12s ease;
 }
-.bento-id-tile:active{ filter:brightness(1.2); }
+.bento-id-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 .bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
 .bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; position:relative; z-index:2; }
 .bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; position:relative; z-index:2; }
@@ -180,8 +198,9 @@ a{color:var(--agent);}
   backdrop-filter:blur(20px) saturate(140%); -webkit-backdrop-filter:blur(20px) saturate(140%);
   background:color-mix(in srgb, var(--bg) 55%, transparent);
 }
-.bento-id-new{ cursor:pointer; font-size:18px; }
+.bento-id-new{ cursor:pointer; font-size:18px; transition:transform .12s ease, filter .12s ease; }
 .bento-id-new:hover{ color:var(--mid); }
+.bento-id-new:active{ transform:scale(.94); filter:brightness(1.25); }
 
 /* The tile that follows your identity slots while there's still a palier
    left to reach (see credibility.js's IDENTITY_PALIERS) — a fraction plus
