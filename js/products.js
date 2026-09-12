@@ -50,25 +50,29 @@
 
 import * as identity from './identity.js';
 
+// `price` is per month, in whole dollars, `null` for Free (nothing to
+// charge). Explicitly indicative, not a real number anyone can check out
+// at yet — see pricing-ui.js, which labels it as such rather than
+// presenting it as a locked-in price.
 export const PRODUCTS = [
-  { id: 'free', name: 'Free (Connected)', shipped: true,
+  { id: 'free', name: 'Free (Connected)', shipped: true, icon: '🌐', color: '#2FBF71', price: null,
     body: `Jobber has no backend and no server to pay for — discovery, matching, chat, meeting
            proposals, and document/file exchange all happen directly between browsers over real
            WebRTC. There's no relay in the middle doing work on your behalf, so there's nothing to
            charge for on that path. Attached automatically the moment you create your first
            identity — every identity you use in this browser gets it for free, always.` },
-  { id: 'gossip', name: 'Gossip', shipped: false,
+  { id: 'gossip', name: 'Gossip', shipped: false, icon: '📡', color: '#4DD0E1', price: 1,
     body: `P2P persistence — peers relay and hold messages for you while you're offline, instead of
            both sides needing to be online at once the way it works today.` },
-  { id: 'aiwa', name: 'AIWA', shipped: false,
+  { id: 'aiwa', name: 'AIWA', shipped: false, icon: '⛓️', color: '#5B6EE8', price: 2,
     body: `DAG persistence — the same event-DAG primitives already behind Credibility (see
            <a href="https://theodoreyong9.github.io/AIWA_chain/" target="_blank" rel="noopener">AIWA</a>),
            extended into a durable, chain-anchored layer for data that needs to outlive any one
            browser tab.` },
-  { id: 'boosterAi', name: 'Booster AI', shipped: false,
+  { id: 'boosterAi', name: 'Booster AI', shipped: false, icon: '🧠', color: '#9B8AFB', price: 3,
     body: `A larger, cloud-hosted model for profile enrichment, for when the free local model
            (which runs entirely on your own device) isn't enough.` },
-  { id: 'agentBooster', name: 'Agent Booster', shipped: false,
+  { id: 'agentBooster', name: 'Agent Booster', shipped: false, icon: '🤖', color: '#F0A830', price: 4,
     body: `A deeper, more thorough pass of Agent's cross-namespace matching — and eventually, Agent
            acting on opportunities on your behalf instead of only surfacing them.` },
 ];
