@@ -14,6 +14,7 @@
 
 import * as db from './db.js';
 import * as identity from './identity.js';
+import * as products from './products.js';
 
 export const BACKUP_FORMAT = 'jobber-backup';
 export const BACKUP_VERSION = 1;
@@ -72,6 +73,11 @@ export async function importAllData(bundle) {
       results.errors.push(`identity ${record.identityId}: ${e.message}`);
     }
   }
+  // Merges whatever products the imported identities carried into every
+  // identity already in this browser, and vice versa — see products.js.
+  // Runs even on a partial/failed import: whatever did land should still
+  // end up in sync with everything else.
+  if (results.identities > 0) await products.syncAllIdentities();
   for (const profile of bundle.profiles || []) {
     await db.put('profiles', profile);
     results.profiles++;
