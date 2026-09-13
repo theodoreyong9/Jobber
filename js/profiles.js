@@ -17,6 +17,7 @@ export async function getProfile(identityId) {
     identityId, sourceText: '', tokens: [], aiTokens: [],
     lookingForText: '', searchTokens: [],
     category: '', languages: [], availableNow: false,
+    yourMineUrl: '',
     // Employment-specific (see editEmploymentProfileFlow):
     country: '', city: '',
     coverLetterText: '', cvFileName: '', cvExtractedText: '', earliestYear: null,
@@ -45,6 +46,18 @@ async function saveNameIfChanged(id, dlg) {
   if (newName && newName !== id.displayName) await identity.renameIdentity(id.identityId, newName);
 }
 
+// A link to your own page on YourMine (Jobber's separate creator
+// marketplace — see NS_CONFIG.creator), optional, same as every other
+// profile field — available on every identity's editor regardless of
+// namespace, not just Creator's own.
+function yourMineFieldHtml(profile) {
+  return `<label>YourMine URL (optional)</label>
+    <input type="url" id="yourMineUrl" value="${profile.yourMineUrl || ''}" placeholder="https://yourmine-dapp.web.app/u/yourname">`;
+}
+function readYourMineUrl(dlg) {
+  return dlg.querySelector('#yourMineUrl').value.trim();
+}
+
 // There's no "Start searching" button (see identity-ui.js) — saving a
 // profile that has something to search on goes live automatically the
 // first time, and just rebroadcasts the fresh keywords to whoever's
@@ -71,6 +84,7 @@ export function editProfileFlow(ns, id) {
 
     openModal('Edit profile', `
       ${nameFieldHtml(id)}
+      ${yourMineFieldHtml(profile)}
       <label>Category / title</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Languages (comma separated)</label>
@@ -95,6 +109,7 @@ export function editProfileFlow(ns, id) {
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
         const sourceText = dlg.querySelector('#src').value;
+        const yourMineUrl = readYourMineUrl(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const languages = dlg.querySelector('#langs').value.split(',').map((s) => s.trim()).filter(Boolean);
         const availableNow = dlg.querySelector('#avail').checked;
@@ -102,7 +117,7 @@ export function editProfileFlow(ns, id) {
         const lookingForText = isDating ? dlg.querySelector('#looking').value : '';
         const searchTokens = isDating ? matching.tokenize(lookingForText) : [];
         await db.put('profiles', {
-          identityId: id.identityId, sourceText, category, languages, availableNow,
+          identityId: id.identityId, sourceText, yourMineUrl, category, languages, availableNow,
           tokens, aiTokens: profile.aiTokens || [], lookingForText, searchTokens,
           updatedAt: Date.now(),
         });
@@ -120,6 +135,7 @@ export function editEmploymentProfileFlow(id) {
     const isCandidate = id.role === 'candidate';
     const common = `
       ${nameFieldHtml(id)}
+      ${yourMineFieldHtml(profile)}
       <label>${isCandidate ? 'Desired position / title' : 'Position title'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Country</label>
@@ -153,6 +169,7 @@ export function editEmploymentProfileFlow(id) {
       submitLabel: 'Save profile',
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
+        const yourMineUrl = readYourMineUrl(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -185,7 +202,7 @@ export function editEmploymentProfileFlow(id) {
           if (file) toast(`Extracted ${tokens.length} keywords from ${file.name}${earliestYear ? `, earliest year ${earliestYear}` : ''}`);
 
           await db.put('profiles', {
-            ...profile, category, country, city, coverLetterText, availableNow,
+            ...profile, category, country, city, yourMineUrl, coverLetterText, availableNow,
             cvFileName, cvExtractedText, tokens, earliestYear,
             updatedAt: Date.now(),
           });
@@ -196,7 +213,7 @@ export function editEmploymentProfileFlow(id) {
           const seniorityMax = dlg.querySelector('#senMax').value.trim();
           const tokens = matching.tokenize(jobPostingText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, jobPostingText, tokens,
+            ...profile, category, country, city, yourMineUrl, jobPostingText, tokens,
             seniorityMin: seniorityMin ? parseInt(seniorityMin, 10) : null,
             seniorityMax: seniorityMax ? parseInt(seniorityMax, 10) : null,
             updatedAt: Date.now(),
@@ -223,6 +240,7 @@ export function editOutdoorProfileFlow(id) {
     const isOrganizer = id.role === 'organizer';
     const common = `
       ${nameFieldHtml(id)}
+      ${yourMineFieldHtml(profile)}
       <label>${isOrganizer ? 'Activity theme — anything, freely chosen' : 'What kind of activity are you looking for?'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Sunrise hike, beach volleyball, board game night">
       <label>Country</label>
@@ -258,6 +276,7 @@ export function editOutdoorProfileFlow(id) {
       submitLabel: 'Save profile',
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
+        const yourMineUrl = readYourMineUrl(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -270,7 +289,7 @@ export function editOutdoorProfileFlow(id) {
           const limit = dlg.querySelector('#limit').value.trim();
           const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, sourceText, availableNow, tokens,
+            ...profile, category, country, city, yourMineUrl, sourceText, availableNow, tokens,
             contactType, contactValue,
             participantLimit: limit ? parseInt(limit, 10) : null,
             updatedAt: Date.now(),
@@ -280,7 +299,7 @@ export function editOutdoorProfileFlow(id) {
           const sourceText = dlg.querySelector('#interests').value;
           const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, sourceText, availableNow, tokens,
+            ...profile, category, country, city, yourMineUrl, sourceText, availableNow, tokens,
             updatedAt: Date.now(),
           });
           await autoSearchOnSave('outdoor', id, tokens);
@@ -305,6 +324,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
   getProfile(id.identityId).then((profile) => {
     const common = `
       ${nameFieldHtml(id)}
+      ${yourMineFieldHtml(profile)}
       <label>${isSupply ? 'What you offer — category' : 'What you need — category'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Web development">
       <label>Country</label>
@@ -340,6 +360,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
       submitLabel: 'Save profile',
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
+        const yourMineUrl = readYourMineUrl(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -365,7 +386,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
           }
           const tokens = matching.tokenize([desc, cvExtractedText].filter(Boolean).join(' '), category);
           await db.put('profiles', {
-            ...profile, category, country, city, sourceText: desc, tokens,
+            ...profile, category, country, city, yourMineUrl, sourceText: desc, tokens,
             cvFileName, cvExtractedText, rate: rate ? parseFloat(rate) : null, availableNow,
             professionalEmail,
             updatedAt: Date.now(),
@@ -376,7 +397,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
           const budgetMax = dlg.querySelector('#budgetMax').value.trim();
           const tokens = matching.tokenize(desc, category);
           await db.put('profiles', {
-            ...profile, category, country, city, sourceText: desc, tokens,
+            ...profile, category, country, city, yourMineUrl, sourceText: desc, tokens,
             budgetMin: budgetMin ? parseFloat(budgetMin) : null,
             budgetMax: budgetMax ? parseFloat(budgetMax) : null,
             updatedAt: Date.now(),
