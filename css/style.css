@@ -114,39 +114,45 @@ a{color:var(--agent);}
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
 
-/* visionOS/Arc-style clean glass: real frosted translucency (heavy blur,
-   modest saturation) over a *mostly neutral* panel, with only a soft
-   wash of the tile's own color rather than a near-full-strength fill —
-   the color identifies the tile, it doesn't dominate it. Depth comes
-   from a soft neutral ambient shadow and a barely-there hairline border,
-   not a colored glow — restrained rather than punchy. */
+/* A radial "lit surface" instead of a linear wash fading to transparent —
+   fading to transparent is exactly what read as a muddy, indistinct tint
+   (it blends the tile color into the flat dark backdrop instead of into
+   a darker shade of *itself*). Depth comes from a genuine bright-white
+   light source (a near-white core, not just a lightly-tinted one) rather
+   than from darkening the far corner into shadow — a strong highlight
+   near one corner, true color through the middle, only a mild deepening
+   at the far edge for contour. Reads as a lit, contoured surface (like a
+   desktop wallpaper) instead of a flat gradient or a shadow-driven one. */
 .bento-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
   align-items:flex-start; text-align:left; padding:10px; cursor:pointer; font-family:inherit;
-  color:var(--hi); border:.5px solid rgba(255,255,255,.18);
+  color:var(--hi); border:1.5px solid rgba(255,255,255,.85);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.16),
-    0 8px 20px -8px rgba(0,0,0,.45);
-  backdrop-filter:blur(34px) saturate(140%); -webkit-backdrop-filter:blur(34px) saturate(140%);
+    inset 0 0 0 1px rgba(255,255,255,.3), inset 0 2px 6px rgba(255,255,255,.25),
+    0 0 26px -2px color-mix(in srgb, var(--tile-color, transparent) 80%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
-    radial-gradient(120% 120% at 22% 14%, rgba(255,255,255,.14), transparent 55%),
-    linear-gradient(165deg, color-mix(in srgb, var(--tile-color, var(--border)) 30%, transparent), color-mix(in srgb, var(--tile-color, var(--border)) 10%, transparent) 60%),
-    color-mix(in srgb, var(--panel) 68%, transparent);
+    radial-gradient(135% 135% at 18% 12%,
+      #fff 0%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 16%,
+      var(--tile-color, var(--border)) 55%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:transform .12s ease, filter .12s ease;
 }
-.bento-tile:active{ transform:scale(.97); filter:brightness(1.1); }
+.bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 
-/* The tile's own emoji, faded well into the background — an accent, not
-   a graphic the tile is built around. */
+/* The tile's own emoji, oversized and faded, bleeding off the corner
+   instead of the old plain circle blob — "the Bureau's icons as a styled
+   background", not a generic shape. */
 .bento-bg-icon{
   position:absolute; z-index:1; pointer-events:none; line-height:1; right:-8px; bottom:-16px;
-  font-size:60px; opacity:.16; transform:rotate(-10deg);
+  font-size:60px; opacity:.42; transform:rotate(-10deg); filter:saturate(180%);
 }
 .bento-bg-icon.lg{ font-size:104px; right:-14px; bottom:-26px; }
 
-.bento-label{ font-family:var(--font-head); font-weight:500; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; letter-spacing:.01em; }
+.bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
 .bento-label.lg{ font-size:15px; margin-top:10px; }
-.bento-sub{ font-size:10px; color:rgba(237,239,241,.55); margin-top:2px; position:relative; z-index:2; }
+.bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
 
 .bento-badge-cooking{
   position:absolute; top:7px; right:7px; z-index:3; font-size:7.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
@@ -161,20 +167,22 @@ a{color:var(--agent);}
 .bento-id-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
   padding:8px; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
-  border:.5px solid rgba(255,255,255,.16);
+  border:1.5px solid rgba(255,255,255,.85);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.14),
-    0 6px 16px -8px rgba(0,0,0,.4);
-  backdrop-filter:blur(34px) saturate(140%); -webkit-backdrop-filter:blur(34px) saturate(140%);
+    inset 0 0 0 1px rgba(255,255,255,.28), inset 0 2px 5px rgba(255,255,255,.22),
+    0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
-    radial-gradient(120% 120% at 24% 16%, rgba(255,255,255,.12), transparent 55%),
-    linear-gradient(165deg, color-mix(in srgb, var(--tile-color, var(--border)) 26%, transparent), transparent 60%),
-    color-mix(in srgb, var(--panel) 68%, transparent);
+    radial-gradient(140% 140% at 20% 15%,
+      #fff 0%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 80%, white 20%) 14%,
+      var(--tile-color, var(--border)) 58%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:transform .12s ease, filter .12s ease;
 }
-.bento-id-tile:active{ transform:scale(.97); filter:brightness(1.1); }
+.bento-id-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 .bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ font-family:var(--font-head); font-weight:500; font-size:11px; line-height:1.2; position:relative; z-index:2; }
+.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; position:relative; z-index:2; }
 .bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; position:relative; z-index:2; }
 
 .bento-id-empty, .bento-id-new{
