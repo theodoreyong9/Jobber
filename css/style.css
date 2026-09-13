@@ -102,46 +102,59 @@ a{color:var(--agent);}
 /* min-height:100% is load-bearing: without it, .bureau is only as tall as
    its own content, and once that's shorter than the visible viewport
    (few identities), it stops short of the modebar — leaving a dead gap
-   between .bureau-wave (pinned to *its* bottom) and the modebar itself.
+   between .bureau-glitch (pinned to *its* bottom) and the modebar itself.
    Forcing .bureau to fill the available height means its bottom, and the
-   wave with it, always reaches all the way down; taller content (many
+   glitch with it, always reaches all the way down; taller content (many
    identities) still grows past this floor and scrolls exactly as before. */
 .bureau{ width:100%; min-height:100%; position:relative; }
 
-/* A moving wave behind the tiles, pinned to the bottom of the Bureau
-   (z-index:-1 puts it behind .bureau's own normal-flow children — a
-   positioned element would otherwise paint *above* them by default — but
-   still in front of the plain page background). Two SVG data-URI
-   background tiles, each just `transform: translateX()`-animated by
-   exactly one tile width so the loop has no visible seam — no canvas, no
-   JS render loop, nothing to repaint per frame: `transform` is a
-   compositor-only property, so once the browser has painted the tile
-   once, animating it is essentially free on the GPU (the same trick used
-   for cheap marquees/parallax elsewhere on the web). `pointer-events:none`
-   since it's purely decorative. */
-/* bottom is offset by the modebar's own reserved height, not 0 — the
-   modebar is position:fixed (see its own rule) and .workspace-bureau
-   deliberately runs its content full-bleed under it with no padding, so
-   .bureau's box (and a wave pinned flush to its bottom) would otherwise
-   end up mostly hidden behind the opaque, higher-z-index bar instead of
-   sitting visibly above it. Same offset .bento-identities already
-   reserves at its own bottom, for the same reason. */
-.bureau-wave{ position:absolute; left:0; right:0; bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom)); height:76px; z-index:-1; overflow:hidden; pointer-events:none; }
-.bureau-wave-layer{ position:absolute; inset:0; background-repeat:repeat-x; background-position:0 100%; will-change:transform; }
-.bureau-wave-layer.back{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60'%3E%3Cpath d='M0 34 C33 10,67 10,100 34 C133 58,167 58,200 34 L200 60 L0 60 Z' fill='%235B6EE8' fill-opacity='0.3'/%3E%3Cpath d='M0 34 C33 10,67 10,100 34 C133 58,167 58,200 34' fill='none' stroke='%23FFFFFF' stroke-opacity='0.12' stroke-width='1.5'/%3E%3C/svg%3E");
-  background-size:200px 60px;
-  animation:bureau-wave-drift-200 20s linear infinite;
+/* A glitching wordmark behind the tiles, pinned to the bottom of the
+   Bureau — the RGB-split/clip-path trick behind the classic "Cyberpunk
+   2077 button" glitch effect, just idle instead of hover-triggered (see
+   https://www.sitepoint.com/recreate-the-cyberpunk-2077-button-glitch-effect-in-css/):
+   ::before/::after each duplicate the real text (via attr(data-text), so
+   it's only typed once) in a different neon color, sitting invisibly on
+   top of it (opacity:0) almost all the time; a short keyframe burst near
+   the end of each loop briefly slices each copy into a horizontal band
+   (clip-path:inset(...)) and nudges it a few px sideways before snapping
+   back — that's the whole "glitch". steps(1,end) holds each keyframe
+   frame rigidly instead of easing between them, which is what makes it
+   read as a digital corruption blip instead of a smooth wobble. Same
+   z-index:-1/bottom-offset reasoning as the wave this replaced (see
+   render.js) — positioned elements paint above non-positioned in-flow
+   content by default, and .workspace-bureau runs full-bleed under the
+   fixed, opaque modebar with no padding of its own to clear it. Only
+   clip-path/opacity/transform ever change, so like the wave, there's
+   nothing to repaint once each glitch frame's shapes are cached — cheap
+   even while it's actively glitching. */
+.bureau-glitch{
+  position:absolute; left:0; right:0; bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom)); height:76px; z-index:-1;
+  display:flex; align-items:center; justify-content:center; overflow:hidden; pointer-events:none; user-select:none;
+  font-family:var(--font-head); font-weight:700; font-size:30px; letter-spacing:7px;
+  color:rgba(237,239,241,.4); text-transform:uppercase;
 }
-.bureau-wave-layer.front{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 48'%3E%3Cpath d='M0 26 C40 2,80 2,120 26 C160 50,200 50,240 26 L240 48 L0 48 Z' fill='%2359C9B8' fill-opacity='0.42'/%3E%3Cpath d='M0 26 C40 2,80 2,120 26 C160 50,200 50,240 26' fill='none' stroke='%23FFFFFF' stroke-opacity='0.18' stroke-width='1.5'/%3E%3C/svg%3E");
-  background-size:240px 48px;
-  animation:bureau-wave-drift-240 12s linear infinite reverse;
+.bureau-glitch::before, .bureau-glitch::after{
+  content:attr(data-text); position:absolute; left:50%; top:50%; white-space:nowrap; opacity:0;
+  transform:translate(-50%,-50%);
 }
-@keyframes bureau-wave-drift-200{ from{ transform:translateX(0); } to{ transform:translateX(-200px); } }
-@keyframes bureau-wave-drift-240{ from{ transform:translateX(0); } to{ transform:translateX(-240px); } }
+.bureau-glitch::before{ color:#4DD0E1; animation:bureau-glitch-1 5s steps(1,end) infinite; }
+.bureau-glitch::after{ color:#E5606A; animation:bureau-glitch-2 5s steps(1,end) infinite; animation-delay:.12s; }
+@keyframes bureau-glitch-1{
+  0%, 90%, 100% { clip-path:inset(0 0 0 0); transform:translate(-50%,-50%); opacity:0; }
+  91% { clip-path:inset(10% 0 65% 0); transform:translate(calc(-50% - 4px),-50%); opacity:.85; }
+  92% { clip-path:inset(60% 0 5% 0); transform:translate(calc(-50% + 3px),-50%); opacity:.85; }
+  93% { clip-path:inset(25% 0 45% 0); transform:translate(calc(-50% - 3px),-50%); opacity:.85; }
+  94% { clip-path:inset(0 0 0 0); transform:translate(-50%,-50%); opacity:0; }
+}
+@keyframes bureau-glitch-2{
+  0%, 88%, 100% { clip-path:inset(0 0 0 0); transform:translate(-50%,-50%); opacity:0; }
+  89% { clip-path:inset(0 0 70% 0); transform:translate(calc(-50% + 4px),-50%); opacity:.85; }
+  90% { clip-path:inset(68% 0 0 0); transform:translate(calc(-50% - 3px),-50%); opacity:.85; }
+  91% { clip-path:inset(35% 0 30% 0); transform:translate(calc(-50% + 2px),-50%); opacity:.85; }
+  92% { clip-path:inset(0 0 0 0); transform:translate(-50%,-50%); opacity:0; }
+}
 @media (prefers-reduced-motion: reduce){
-  .bureau-wave-layer{ animation:none; }
+  .bureau-glitch::before, .bureau-glitch::after{ animation:none; }
 }
 /* Columns are a fixed 97.5px (the width they already render at on a
    390px-wide screen — the reference this whole layout was designed
