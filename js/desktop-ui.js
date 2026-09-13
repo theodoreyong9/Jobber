@@ -84,23 +84,29 @@ function wheelToolTile(ns, pos, pendingCount) {
   return `
     <button type="button" class="bento-hex ${pos === 0 ? 'pos-center' : `pos-${pos - 1}`}" style="--tile-color:${cfg.color}" data-act="tool" data-ns="${ns}">
       ${badge ? `<span class="bento-hex-badge ${isLabel ? 'label' : 'count'}">${badgeText}</span>` : ''}
-      <span class="bento-hex-icon">${cfg.icon}</span>
+      <span class="bento-hex-bg-icon">${cfg.icon}</span>
       <span class="bento-hex-label">${cfg.label}</span>
     </button>`;
 }
 
 // Same flat-top hex geometry as the tools wheel (see style.css) — the
-// identity section is its own honeycomb strip below it, continuing the
-// tiling rather than switching back to a rectangular grid. Slots fill in
-// "bands" of 3 (left, right, then center — the same column pattern the
-// wheel itself uses), extending downward for as many bands as needed;
-// unlike the fixed 7-tile flower, this has to work for any count.
+// identity section shares the exact same coordinate origin as the wheel
+// (Messages' own center), not a fresh one starting below it, so it reads
+// as one continuous honeycomb instead of two stacked grids with a seam
+// between them. Slots fill in "bands" of 3 (left, right, then center —
+// the same column pattern the wheel itself uses), extending downward for
+// as many bands as needed; unlike the fixed 7-tile flower, this has to
+// work for any count.
 const HEX_H = 121.24;
 const HEX_HALF_H = HEX_H / 2;
 const HEX_COL_SPACING = 105;
+// The flower's middle column runs 3 slots (-HEX_H, 0, +HEX_H) around
+// Messages, so its own outermost edge sits 1.5 hex-heights from center —
+// the identity strip's first band continues right after that same edge.
+const FLOWER_HALF_H = 1.5 * HEX_H;
 
 function hexSlotOffset(index) {
-  const band = Math.floor(index / 3);
+  const band = Math.floor(index / 3) + 1;
   const posInBand = index % 3;
   if (posInBand === 0) return { x: -HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
   if (posInBand === 1) return { x: HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
@@ -117,7 +123,7 @@ function hexIdTile(ns, id, isLive, index) {
   return `
     <button type="button" class="bento-hex bento-id-tile" style="--tile-color:${cfg.color}; ${hexTransform(index)}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
       ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
-      <span class="bento-hex-icon">${cfg.icon}</span>
+      <span class="bento-hex-bg-icon">${cfg.icon}</span>
       <span class="bento-id-name">${id.displayName}</span>
       <span class="bento-id-sub">${cfg.label}</span>
     </button>`;
@@ -182,20 +188,20 @@ export async function renderDesktop() {
 
   // Absolutely-positioned children (every .bento-hex) don't contribute to
   // their container's height on their own, so it's computed explicitly
-  // from the deepest slot actually used — see .bento-identities's
-  // box-sizing:content-box in style.css for why this doesn't fight with
-  // its own padding-bottom (the modebar clearance).
+  // from the deepest slot actually used, plus the flower's own half-height
+  // above the shared center — see .bento-hive's box-sizing:content-box in
+  // style.css for why this doesn't fight with its own padding-bottom (the
+  // modebar clearance).
   let maxY = 0;
   for (let i = 0; i < index; i++) maxY = Math.max(maxY, hexSlotOffset(i).y);
-  const stripHeight = Math.ceil(maxY + HEX_HALF_H);
+  const hiveHeight = Math.ceil(FLOWER_HALF_H + maxY + HEX_HALF_H);
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
 
   return `
     <div class="bureau">
-      <div class="bento-wheel">${tools}</div>
-      <div class="bento-identities" style="height:${stripHeight}px">${cells.join('')}</div>
+      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${cells.join('')}</div>
     </div>`;
 }
 
