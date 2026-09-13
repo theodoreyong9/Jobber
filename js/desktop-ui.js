@@ -89,25 +89,56 @@ function wheelToolTile(ns, pos, pendingCount) {
     </button>`;
 }
 
-function bentoIdTile(ns, id, isLive) {
+// Same flat-top hex geometry as the tools wheel (see style.css) — the
+// identity section is its own honeycomb strip below it, continuing the
+// tiling rather than switching back to a rectangular grid. Slots fill in
+// "bands" of 3 (left, right, then center — the same column pattern the
+// wheel itself uses), extending downward for as many bands as needed;
+// unlike the fixed 7-tile flower, this has to work for any count.
+const HEX_H = 121.24;
+const HEX_HALF_H = HEX_H / 2;
+const HEX_COL_SPACING = 105;
+
+function hexSlotOffset(index) {
+  const band = Math.floor(index / 3);
+  const posInBand = index % 3;
+  if (posInBand === 0) return { x: -HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
+  if (posInBand === 1) return { x: HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
+  return { x: 0, y: HEX_H + band * HEX_H };
+}
+
+function hexTransform(index) {
+  const { x, y } = hexSlotOffset(index);
+  return `transform:translate(-50%,-50%) translate(${x}px,${y}px);`;
+}
+
+function hexIdTile(ns, id, isLive, index) {
   const cfg = NS_CONFIG[ns];
   return `
-    <button type="button" class="bento-id-tile" style="--tile-color:${cfg.color}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
-      <span class="bento-bg-icon" aria-hidden="true">${cfg.icon}</span>
+    <button type="button" class="bento-hex bento-id-tile" style="--tile-color:${cfg.color}; ${hexTransform(index)}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
       ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
+      <span class="bento-hex-icon">${cfg.icon}</span>
       <span class="bento-id-name">${id.displayName}</span>
       <span class="bento-id-sub">${cfg.label}</span>
     </button>`;
+}
+
+function hexNewButton(index) {
+  return `<button type="button" class="bento-hex bento-id-empty bento-id-new" style="${hexTransform(index)}" data-act="new" title="New identity">+</button>`;
+}
+
+function hexFillerDiv(index) {
+  return `<div class="bento-hex bento-id-empty" style="${hexTransform(index)}"></div>`;
 }
 
 // The tile that follows your identity slots once there's still a palier
 // worth reaching — see credibility.js. Shown as "score/palier" rather
 // than just the raw score, since the number alone means nothing without
 // the target it's climbing toward.
-function bentoScoreTile(score, palier) {
+function hexScoreTile(score, palier, index) {
   const pct = Math.min(100, Math.round((score / palier) * 100));
   return `
-    <div class="bento-id-score" title="Global credibility — every real chat, meeting, or file exchange counts. Reach ${palier} to unlock ${credibility.IDENTITY_PALIER_STEP} more identity slots.">
+    <div class="bento-hex bento-id-score" style="${hexTransform(index)}" title="Global credibility — every real chat, meeting, or file exchange counts. Reach ${palier} to unlock ${credibility.IDENTITY_PALIER_STEP} more identity slots.">
       <span class="bento-score-frac">${score}<span class="bento-score-slash">/${palier}</span></span>
       <span class="bento-score-label">Credibility</span>
       <span class="bento-score-bar"><span class="bento-score-fill" style="width:${pct}%"></span></span>
@@ -115,16 +146,18 @@ function bentoScoreTile(score, palier) {
 }
 
 export async function renderDesktop() {
-  const identityTiles = [];
+  let index = 0;
+  const cells = [];
   for (const ns of CREATABLE) {
     for (const id of (state.identitiesByNs[ns] || []).filter((i) => i.active)) {
       // Every identity in a namespace can be live independently now — no
       // longer tied to whichever one happens to be the currently *viewed*
       // identity (state.activeIdentityId is a separate, UI-only concern).
       const isLive = !!state.searchLive[ns]?.has(id.identityId);
-      identityTiles.push(bentoIdTile(ns, id, isLive));
+      cells.push(hexIdTile(ns, id, isLive, index++));
     }
   }
+  const realCount = index;
 
   // Real identities never get hidden by the cap below — it only gates
   // *creating* more (see identity-ui.js's createIdentityFlow, the one
@@ -136,17 +169,25 @@ export async function renderDesktop() {
   const { score } = await credibility.computeGlobalCredibility();
   const cap = credibility.identityCapFor(score);
   const palier = credibility.nextPalier(score);
-  const plusSlots = Math.max(0, cap - identityTiles.length);
-  const newTiles = Array.from({ length: plusSlots }, () => '<button type="button" class="bento-id-empty bento-id-new" data-act="new" title="New identity">+</button>').join('');
-  const scoreTile = palier != null ? bentoScoreTile(score, palier) : '';
+  const plusSlots = Math.max(0, cap - realCount);
+  for (let i = 0; i < plusSlots; i++) cells.push(hexNewButton(index++));
+  if (palier != null) cells.push(hexScoreTile(score, palier, index++));
 
-  // Pad empty slots so the grid never looks like a half-finished row, and
-  // reads as "room for more" rather than sparse when there are few or no
-  // identities yet — a floor of 12 (3 rows), or just enough to complete
-  // the current row once there are already more than that.
-  const usedSlots = identityTiles.length + plusSlots + (scoreTile ? 1 : 0);
-  const targetSlots = Math.max(12, Math.ceil(usedSlots / 4) * 4);
-  const fillers = Array.from({ length: targetSlots - usedSlots }, () => '<div class="bento-id-empty"></div>').join('');
+  // Pad empty slots so the strip never looks like a half-finished band,
+  // and reads as "room for more" rather than sparse when there are few or
+  // no identities yet — a floor of 12 (4 bands of 3), or just enough to
+  // complete the current band once there are already more than that.
+  const targetSlots = Math.max(12, Math.ceil(index / 3) * 3);
+  while (index < targetSlots) cells.push(hexFillerDiv(index++));
+
+  // Absolutely-positioned children (every .bento-hex) don't contribute to
+  // their container's height on their own, so it's computed explicitly
+  // from the deepest slot actually used — see .bento-identities's
+  // box-sizing:content-box in style.css for why this doesn't fight with
+  // its own padding-bottom (the modebar clearance).
+  let maxY = 0;
+  for (let i = 0; i < index; i++) maxY = Math.max(maxY, hexSlotOffset(i).y);
+  const stripHeight = Math.ceil(maxY + HEX_HALF_H);
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
@@ -154,7 +195,7 @@ export async function renderDesktop() {
   return `
     <div class="bureau">
       <div class="bento-wheel">${tools}</div>
-      <div class="bento-identities">${identityTiles.join('')}${newTiles}${scoreTile}${fillers}</div>
+      <div class="bento-identities" style="height:${stripHeight}px">${cells.join('')}</div>
     </div>`;
 }
 
