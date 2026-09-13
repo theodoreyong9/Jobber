@@ -114,17 +114,27 @@ a{color:var(--agent);}
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
 
+/* A radial "lit surface" instead of a linear wash fading to transparent —
+   fading to transparent is exactly what read as a muddy, indistinct tint
+   (it blends the tile color into the flat dark backdrop instead of into
+   a darker shade of *itself*). Every stop below is a lightness variant
+   of the same --tile-color — a bright hotspot near one corner, the true
+   color through the middle, a near-black shade of that same color at the
+   far corner — so it reads as a lit, contoured surface (like a desktop
+   wallpaper) instead of a flat gradient. */
 .bento-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
   align-items:flex-start; text-align:left; padding:10px; cursor:pointer; font-family:inherit;
-  color:var(--hi); border:1px solid color-mix(in srgb, var(--tile-color, var(--border)) 55%, transparent);
+  color:var(--hi); border:1px solid color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.1), inset 0 0 0 1px rgba(0,0,0,.2),
-    0 0 22px -2px color-mix(in srgb, var(--tile-color, transparent) 65%, transparent);
-  backdrop-filter:blur(18px) saturate(280%); -webkit-backdrop-filter:blur(18px) saturate(280%);
+    inset 0 1px 0 rgba(255,255,255,.14), inset 0 0 0 1px rgba(0,0,0,.3),
+    0 0 26px -2px color-mix(in srgb, var(--tile-color, transparent) 80%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
-    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 92%, white 8%), color-mix(in srgb, var(--tile-color, var(--border)) 50%, transparent) 65%),
-    color-mix(in srgb, var(--panel) 12%, transparent);
+    radial-gradient(135% 135% at 18% 12%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 80%, white 20%) 0%,
+      var(--tile-color, var(--border)) 42%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 55%, black 45%) 100%);
   transition:transform .12s ease, filter .12s ease;
 }
 .bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
@@ -155,14 +165,16 @@ a{color:var(--agent);}
 .bento-id-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
   padding:8px; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
-  border:1px solid color-mix(in srgb, var(--tile-color, var(--border)) 50%, transparent);
+  border:1px solid color-mix(in srgb, var(--tile-color, var(--border)) 65%, black 35%);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.08), inset 0 0 0 1px rgba(0,0,0,.2),
-    0 0 16px -2px color-mix(in srgb, var(--tile-color, transparent) 55%, transparent);
-  backdrop-filter:blur(18px) saturate(280%); -webkit-backdrop-filter:blur(18px) saturate(280%);
+    inset 0 1px 0 rgba(255,255,255,.1), inset 0 0 0 1px rgba(0,0,0,.3),
+    0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
-    linear-gradient(160deg, color-mix(in srgb, var(--tile-color, var(--border)) 85%, white 6%), color-mix(in srgb, var(--tile-color, var(--border)) 38%, transparent) 65%),
-    color-mix(in srgb, var(--panel) 12%, transparent);
+    radial-gradient(140% 140% at 20% 15%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 78%, white 18%) 0%,
+      var(--tile-color, var(--border)) 45%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 55%, black 45%) 100%);
   transition:transform .12s ease, filter .12s ease;
 }
 .bento-id-tile:active{ transform:scale(.94); filter:brightness(1.25); }
