@@ -64,21 +64,25 @@ function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
 // tiers is real (see pricing-ui.js) — the rest of that page is "Soon".
 const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 
-// The 7 tools sit as hexagons around a wheel now instead of a hand-placed
-// bento grid — a fixed order, evenly spaced by angle (360°/7), rather
-// than a bespoke size/position per tool. There's no room left on a small
-// hex for the old sub-text (live counts, "opt-in radius" etc.) — icon,
-// label, and badge only.
+// 7 tools = 1 center hex + a ring of 6 around it, tiled edge-to-edge like
+// real honeycomb cells (not floating in a sparse circle) — 6 is exactly
+// how many regular hexagons fit flush around one, so this is the one
+// tool count that tiles perfectly with no leftover gap or overlap.
+// Messages is the center (it was already the bento grid's hero tile);
+// the rest fill the ring in a fixed order. `pos` selects which of the
+// six touching neighbor slots a tile sits in — see the matching
+// .bento-hex.pos-N rules in style.css for the actual offsets. There's no
+// room on a hex for the old sub-text (live counts, "opt-in radius" etc.)
+// — icon, label, and badge only.
 const TOOL_ORDER = ['messages', 'pricing', 'creator', 'wallet', 'tribute', 'near', 'agent'];
 
-function wheelToolTile(ns, index, total, pendingCount) {
+function wheelToolTile(ns, pos, pendingCount) {
   const cfg = NS_CONFIG[ns];
-  const angle = (360 / total) * index;
   const badge = ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0);
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   return `
-    <button type="button" class="bento-hex" style="--tile-color:${cfg.color}; --angle:${angle}deg;" data-act="tool" data-ns="${ns}">
+    <button type="button" class="bento-hex ${pos === 0 ? 'pos-center' : `pos-${pos - 1}`}" style="--tile-color:${cfg.color}" data-act="tool" data-ns="${ns}">
       ${badge ? `<span class="bento-hex-badge ${isLabel ? 'label' : 'count'}">${badgeText}</span>` : ''}
       <span class="bento-hex-icon">${cfg.icon}</span>
       <span class="bento-hex-label">${cfg.label}</span>
@@ -145,14 +149,11 @@ export async function renderDesktop() {
   const fillers = Array.from({ length: targetSlots - usedSlots }, () => '<div class="bento-id-empty"></div>').join('');
 
   const pendingCount = countPendingNotifications();
-  const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, TOOL_ORDER.length, pendingCount)).join('');
+  const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
 
   return `
     <div class="bureau">
-      <div class="bento-wheel">
-        <div class="bento-wheel-hub"><span class="bento-wheel-hub-dot"></span></div>
-        ${tools}
-      </div>
+      <div class="bento-wheel">${tools}</div>
       <div class="bento-identities">${identityTiles.join('')}${newTiles}${scoreTile}${fillers}</div>
     </div>`;
 }
