@@ -101,25 +101,21 @@ a{color:var(--agent);}
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
 
-/* The 7 tools as hexagons around a wheel — .bento-wheel is the circular
-   frame, sized to fit a 390px-wide screen with room either side; each
-   .bento-hex is placed with the standard "rotate, push out, counter-
-   rotate" trick so its own content stays upright regardless of where
-   around the circle it sits (see --angle, set per tile in desktop-ui.js).
-   The hub is purely decorative — a visual center for the wheel, not a
-   button. */
-.bento-wheel{ position:relative; width:min(84vw, 320px); aspect-ratio:1; margin:18px auto 8px; }
-.bento-wheel-hub{
-  position:absolute; top:50%; left:50%; width:54px; height:54px; transform:translate(-50%,-50%);
-  border-radius:50%; background:var(--panel); border:1px solid var(--border-soft);
-  display:flex; align-items:center; justify-content:center; z-index:2;
-}
-.bento-wheel-hub-dot{ width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--accent-dim); }
-
+/* The 7 tools as a real honeycomb: one hex dead center (Messages) and
+   six more tiled flush around it, edge-to-edge, no gaps — 6 is exactly
+   how many regular hexagons fit touching one, so 7 tools tiles perfectly
+   with nothing left over. Sizing is real hex geometry, not an
+   approximation: for a flat-top hexagon of circumradius s, width=2s and
+   height=s√3 (140px/121.24px below, s=70) — matching that ratio is what
+   makes edge-to-edge tiling actually meet without a gap or overlap.
+   Neighbor offsets follow the standard flat-top hex-grid formula
+   (horizontal spacing = 0.75×width, vertical spacing = height, with the
+   two side neighbors split ±height/2) — see e.g. redblobgames' hex grid
+   guide for the same math. */
+.bento-wheel{ position:relative; width:350px; height:364px; margin:18px auto 8px; }
 .bento-hex{
-  position:absolute; top:50%; left:50%; width:98px; height:98px; z-index:1;
-  transform:translate(-50%,-50%) rotate(var(--angle)) translate(0,-118px) rotate(calc(-1 * var(--angle)));
-  clip-path:polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0% 50%);
+  position:absolute; top:50%; left:50%; width:140px; height:121.24px; z-index:1;
+  clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
   border:none; cursor:pointer; font-family:inherit; color:var(--hi);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
@@ -132,9 +128,16 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:transform .15s ease, filter .12s ease;
 }
-.bento-hex:active{ filter:brightness(1.25); }
+.bento-hex:active{ filter:brightness(1.15); }
+.bento-hex.pos-center{ transform:translate(-50%,-50%); z-index:2; }
+.bento-hex.pos-0{ transform:translate(-50%,-50%) translate(105px,60.62px); }
+.bento-hex.pos-1{ transform:translate(-50%,-50%) translate(105px,-60.62px); }
+.bento-hex.pos-2{ transform:translate(-50%,-50%) translate(-105px,60.62px); }
+.bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-60.62px); }
+.bento-hex.pos-4{ transform:translate(-50%,-50%) translate(0,121.24px); }
+.bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-121.24px); }
 .bento-hex-icon{ font-size:22px; line-height:1; }
-.bento-hex-label{ font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 8px; }
+.bento-hex-label{ font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; }
 .bento-hex-badge{
   position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
