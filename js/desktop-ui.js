@@ -24,7 +24,6 @@ import * as credibility from './credibility.js';
 // is this identity for".
 const NO_IDENTITY_KINDS = ['near', 'agent', 'messages', 'external', 'info'];
 const CREATABLE = NAMESPACES.filter((ns) => !NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
-const TOOL_NAMESPACES = NAMESPACES.filter((ns) => NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 
 function groupsOf(list) {
   return NAMESPACE_GROUPS
@@ -65,35 +64,24 @@ function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
 // tiers is real (see pricing-ui.js) — the rest of that page is "Soon".
 const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 
-// Explicit, hand-placed bento layout for the 7 tool tiles — a bento
-// arrangement is inherently bespoke (which tile is the hero, which is
-// small) rather than something that falls out of a generic rule, so this
-// is authored directly instead of derived from NAMESPACE_GROUPS. Grid
-// lines are `row-start / col-start / row-end / col-end` on a 4-column
-// grid. `sub` is optional short live-ish context text.
-const TOOL_LAYOUT = {
-  messages: { area: '1 / 1 / 3 / 3', size: 'lg', sub: (n) => (n > 0 ? `${n} waiting for a reply` : 'All caught up') },
-  pricing: { area: '1 / 3 / 2 / 4', size: 'sm' },
-  creator: { area: '1 / 4 / 2 / 5', size: 'sm' },
-  wallet: { area: '2 / 3 / 3 / 4', size: 'sm' },
-  tribute: { area: '2 / 4 / 3 / 5', size: 'sm' },
-  near: { area: '3 / 1 / 4 / 3', size: 'md', sub: () => 'Opt-in radius' },
-  agent: { area: '3 / 3 / 4 / 5', size: 'md', sub: () => 'Cross-namespace' },
-};
+// The 7 tools sit as hexagons around a wheel now instead of a hand-placed
+// bento grid — a fixed order, evenly spaced by angle (360°/7), rather
+// than a bespoke size/position per tool. There's no room left on a small
+// hex for the old sub-text (live counts, "opt-in radius" etc.) — icon,
+// label, and badge only.
+const TOOL_ORDER = ['messages', 'pricing', 'creator', 'wallet', 'tribute', 'near', 'agent'];
 
-function bentoToolTile(ns, pendingCount) {
+function wheelToolTile(ns, index, total, pendingCount) {
   const cfg = NS_CONFIG[ns];
-  const layout = TOOL_LAYOUT[ns];
+  const angle = (360 / total) * index;
   const badge = ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0);
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
-  const sub = layout.sub ? layout.sub(pendingCount) : '';
   return `
-    <button type="button" class="bento-tile" style="--tile-color:${cfg.color}; grid-area:${layout.area};" data-act="tool" data-ns="${ns}">
-      <span class="bento-bg-icon${layout.size === 'lg' ? ' lg' : ''}" aria-hidden="true">${cfg.icon}</span>
-      ${badge ? `<span class="${isLabel ? 'bento-badge-cooking' : 'bento-badge-count'}">${badgeText}</span>` : ''}
-      <span class="bento-label${layout.size === 'lg' ? ' lg' : ''}">${cfg.label}</span>
-      ${sub ? `<span class="bento-sub">${sub}</span>` : ''}
+    <button type="button" class="bento-hex" style="--tile-color:${cfg.color}; --angle:${angle}deg;" data-act="tool" data-ns="${ns}">
+      ${badge ? `<span class="bento-hex-badge ${isLabel ? 'label' : 'count'}">${badgeText}</span>` : ''}
+      <span class="bento-hex-icon">${cfg.icon}</span>
+      <span class="bento-hex-label">${cfg.label}</span>
     </button>`;
 }
 
@@ -157,11 +145,14 @@ export async function renderDesktop() {
   const fillers = Array.from({ length: targetSlots - usedSlots }, () => '<div class="bento-id-empty"></div>').join('');
 
   const pendingCount = countPendingNotifications();
-  const tools = TOOL_NAMESPACES.filter((ns) => TOOL_LAYOUT[ns]).map((ns) => bentoToolTile(ns, pendingCount)).join('');
+  const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, TOOL_ORDER.length, pendingCount)).join('');
 
   return `
     <div class="bureau">
-      <div class="bento-tools">${tools}</div>
+      <div class="bento-wheel">
+        <div class="bento-wheel-hub"><span class="bento-wheel-hub-dot"></span></div>
+        ${tools}
+      </div>
       <div class="bento-identities">${identityTiles.join('')}${newTiles}${scoreTile}${fillers}</div>
     </div>`;
 }
