@@ -114,21 +114,20 @@ a{color:var(--agent);}
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
 
-/* A radial "lit surface" instead of a linear wash fading to transparent —
-   fading to transparent is exactly what read as a muddy, indistinct tint
-   (it blends the tile color into the flat dark backdrop instead of into
-   a darker shade of *itself*). Depth comes from a genuine bright-white
-   light source (a near-white core, not just a lightly-tinted one) rather
-   than from darkening the far corner into shadow — a strong highlight
-   near one corner, true color through the middle, only a mild deepening
-   at the far edge for contour. Reads as a lit, contoured surface (like a
-   desktop wallpaper) instead of a flat gradient or a shadow-driven one. */
+/* Fighting-game/manga-panel treatment: a thick black ink outline (not a
+   soft border) with a bright inner rim of light just inside it, a corner
+   cut off on the diagonal (top-left/bottom-right) like a character-select
+   panel instead of a plain rectangle, and a radiating "speed line" burst
+   (::after) from the same corner the light source itself comes from —
+   the lit radial gradient below is unchanged, this is what sits on top
+   of it. */
 .bento-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
   align-items:flex-start; text-align:left; padding:10px; cursor:pointer; font-family:inherit;
-  color:var(--hi); border:1.5px solid rgba(255,255,255,.85);
+  color:var(--hi); border:3px solid #05070a;
+  clip-path:polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
   box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.3), inset 0 2px 6px rgba(255,255,255,.25),
+    inset 0 0 0 1.5px rgba(255,255,255,.55), inset 0 2px 6px rgba(255,255,255,.2),
     0 0 26px -2px color-mix(in srgb, var(--tile-color, transparent) 80%, transparent);
   backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
@@ -138,6 +137,10 @@ a{color:var(--agent);}
       var(--tile-color, var(--border)) 55%,
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:transform .12s ease, filter .12s ease;
+}
+.bento-tile::after{
+  content:''; position:absolute; inset:0; z-index:1; pointer-events:none; mix-blend-mode:overlay; opacity:.6;
+  background:repeating-conic-gradient(from 15deg at 18% 12%, rgba(255,255,255,.4) 0deg 1.1deg, transparent 1.1deg 9deg);
 }
 .bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 
@@ -150,8 +153,16 @@ a{color:var(--agent);}
 }
 .bento-bg-icon.lg{ font-size:104px; right:-14px; bottom:-26px; }
 
-.bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
-.bento-label.lg{ font-size:15px; margin-top:10px; }
+/* Bold, italic, drop-shadowed instead of a plain upright label — the
+   comic/fighting-game logo treatment: skewX for the forward-leaning
+   "speed" slant, a hard-edged (no-blur) offset shadow like a printed
+   sticker rather than a soft UI shadow. */
+.bento-label{
+  font-family:var(--font-head); font-weight:800; font-style:italic; font-size:11.5px; margin-top:8px;
+  position:relative; z-index:2; line-height:1.2; transform:skewX(-8deg); transform-origin:left bottom;
+  text-shadow:1.5px 1.5px 0 rgba(0,0,0,.55);
+}
+.bento-label.lg{ font-size:16px; margin-top:10px; text-shadow:2px 2px 0 rgba(0,0,0,.55); }
 .bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
 
 .bento-badge-cooking{
@@ -167,9 +178,10 @@ a{color:var(--agent);}
 .bento-id-tile{
   position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
   padding:8px; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
-  border:1.5px solid rgba(255,255,255,.85);
+  border:2.5px solid #05070a;
+  clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.28), inset 0 2px 5px rgba(255,255,255,.22),
+    inset 0 0 0 1.5px rgba(255,255,255,.5), inset 0 2px 5px rgba(255,255,255,.18),
     0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
   backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
@@ -180,9 +192,17 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:transform .12s ease, filter .12s ease;
 }
+.bento-id-tile::after{
+  content:''; position:absolute; inset:0; z-index:1; pointer-events:none; mix-blend-mode:overlay; opacity:.55;
+  background:repeating-conic-gradient(from 15deg at 20% 15%, rgba(255,255,255,.4) 0deg 1.1deg, transparent 1.1deg 10deg);
+}
 .bento-id-tile:active{ transform:scale(.94); filter:brightness(1.25); }
 .bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; position:relative; z-index:2; }
+.bento-id-name{
+  font-family:var(--font-head); font-weight:800; font-style:italic; font-size:11px; line-height:1.2;
+  position:relative; z-index:2; transform:skewX(-8deg); transform-origin:left bottom;
+  text-shadow:1px 1px 0 rgba(0,0,0,.5);
+}
 .bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; position:relative; z-index:2; }
 
 .bento-id-empty, .bento-id-new{
