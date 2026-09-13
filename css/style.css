@@ -168,7 +168,7 @@ a{color:var(--agent);}
   position:absolute; z-index:0; pointer-events:none; line-height:1;
   right:10px; bottom:2px; font-size:42px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
 }
-.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; color:#000; }
+.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:13px; line-height:1.15; text-align:center; padding:0 10px; color:#000; }
 .bento-hex-badge{
   position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
@@ -190,7 +190,7 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
 }
 .bento-id-dot{ position:absolute; top:14%; right:22%; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; color:#000; }
+.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:13.5px; line-height:1.2; color:#000; }
 .bento-id-sub{ position:relative; z-index:1; font-size:8px; color:rgba(237,239,241,.55); }
 
 /* Solid fills, not a border — box-shadow:inset draws along the element's
