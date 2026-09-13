@@ -151,21 +151,24 @@ a{color:var(--agent);}
 .bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-60.62px); }
 .bento-hex.pos-4{ transform:translate(-50%,-50%) translate(0,121.24px); }
 .bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-121.24px); }
-/* The emoji as a big faint watermark filling the tile, not a small icon
-   sitting above the label like a title — position:absolute takes it out
-   of the flex flow entirely (so the label centers on its own), and
-   clip-path on the parent .bento-hex crops it to the hex shape for free.
+/* The emoji as a faint tilted watermark tucked in the bottom-right
+   corner — the same treatment as .product-bg-icon's oversized rotated
+   glyph, not a big centered fill — instead of a small icon sitting above
+   the label like a title. position:absolute takes it out of the flex
+   flow entirely (so the label centers on its own), and clip-path on the
+   parent .bento-hex crops it to the hex shape for free — kept closer to
+   center than .product-bg-icon's own offset since a hex's corners are
+   cut away by that same clip-path and would just chop the glyph off.
    z-index:0 (paired with position:relative;z-index:1 on the text below)
    keeps it behind the label instead of painting over it — a plain
    position:absolute child would otherwise paint AFTER static in-flow
    siblings per normal stacking rules, i.e. on top, backwards from what's
    wanted here. */
 .bento-hex-bg-icon{
-  position:absolute; inset:0; z-index:0; pointer-events:none;
-  display:flex; align-items:center; justify-content:center;
-  font-size:64px; line-height:1; opacity:.26; filter:saturate(120%);
+  position:absolute; z-index:0; pointer-events:none; line-height:1;
+  right:10px; bottom:2px; font-size:42px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
 }
-.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; }
+.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; color:#000; }
 .bento-hex-badge{
   position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
@@ -187,7 +190,7 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
 }
 .bento-id-dot{ position:absolute; top:14%; right:22%; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; }
+.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; color:#000; }
 .bento-id-sub{ position:relative; z-index:1; font-size:8px; color:rgba(237,239,241,.55); }
 
 /* Solid fills, not a border — box-shadow:inset draws along the element's
