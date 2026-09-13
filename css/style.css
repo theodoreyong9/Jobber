@@ -99,12 +99,19 @@ a{color:var(--agent);}
    usual side/top padding so the tiles can sit truly edge-to-edge; see
    render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
-.bureau{ width:100%; position:relative; }
+/* min-height:100% is load-bearing: without it, .bureau is only as tall as
+   its own content, and once that's shorter than the visible viewport
+   (few identities), it stops short of the modebar — leaving a dead gap
+   between .bureau-wave (pinned to *its* bottom) and the modebar itself.
+   Forcing .bureau to fill the available height means its bottom, and the
+   wave with it, always reaches all the way down; taller content (many
+   identities) still grows past this floor and scrolls exactly as before. */
+.bureau{ width:100%; min-height:100%; position:relative; }
 
-/* A quiet moving wave behind the tiles, pinned to the bottom of the
-   Bureau (z-index:-1 puts it behind .bureau's own normal-flow children —
-   a positioned element would otherwise paint *above* them by default —
-   but still in front of the plain page background). Two SVG data-URI
+/* A moving wave behind the tiles, pinned to the bottom of the Bureau
+   (z-index:-1 puts it behind .bureau's own normal-flow children — a
+   positioned element would otherwise paint *above* them by default — but
+   still in front of the plain page background). Two SVG data-URI
    background tiles, each just `transform: translateX()`-animated by
    exactly one tile width so the loop has no visible seam — no canvas, no
    JS render loop, nothing to repaint per frame: `transform` is a
@@ -112,17 +119,24 @@ a{color:var(--agent);}
    once, animating it is essentially free on the GPU (the same trick used
    for cheap marquees/parallax elsewhere on the web). `pointer-events:none`
    since it's purely decorative. */
-.bureau-wave{ position:absolute; left:0; right:0; bottom:0; height:56px; z-index:-1; overflow:hidden; pointer-events:none; }
+/* bottom is offset by the modebar's own reserved height, not 0 — the
+   modebar is position:fixed (see its own rule) and .workspace-bureau
+   deliberately runs its content full-bleed under it with no padding, so
+   .bureau's box (and a wave pinned flush to its bottom) would otherwise
+   end up mostly hidden behind the opaque, higher-z-index bar instead of
+   sitting visibly above it. Same offset .bento-identities already
+   reserves at its own bottom, for the same reason. */
+.bureau-wave{ position:absolute; left:0; right:0; bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom)); height:76px; z-index:-1; overflow:hidden; pointer-events:none; }
 .bureau-wave-layer{ position:absolute; inset:0; background-repeat:repeat-x; background-position:0 100%; will-change:transform; }
 .bureau-wave-layer.back{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 40'%3E%3Cpath d='M0 22 C25 8,75 8,100 22 C125 36,175 36,200 22 L200 40 L0 40 Z' fill='%2359C9B8' fill-opacity='0.14'/%3E%3C/svg%3E");
-  background-size:200px 40px;
-  animation:bureau-wave-drift-200 22s linear infinite;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60'%3E%3Cpath d='M0 34 C33 10,67 10,100 34 C133 58,167 58,200 34 L200 60 L0 60 Z' fill='%235B6EE8' fill-opacity='0.3'/%3E%3Cpath d='M0 34 C33 10,67 10,100 34 C133 58,167 58,200 34' fill='none' stroke='%23FFFFFF' stroke-opacity='0.12' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-size:200px 60px;
+  animation:bureau-wave-drift-200 20s linear infinite;
 }
 .bureau-wave-layer.front{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 32'%3E%3Cpath d='M0 18 C30 4,90 4,120 18 C150 32,210 32,240 18 L240 32 L0 32 Z' fill='%2359C9B8' fill-opacity='0.22'/%3E%3C/svg%3E");
-  background-size:240px 32px;
-  animation:bureau-wave-drift-240 14s linear infinite reverse;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 48'%3E%3Cpath d='M0 26 C40 2,80 2,120 26 C160 50,200 50,240 26 L240 48 L0 48 Z' fill='%2359C9B8' fill-opacity='0.42'/%3E%3Cpath d='M0 26 C40 2,80 2,120 26 C160 50,200 50,240 26' fill='none' stroke='%23FFFFFF' stroke-opacity='0.18' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-size:240px 48px;
+  animation:bureau-wave-drift-240 12s linear infinite reverse;
 }
 @keyframes bureau-wave-drift-200{ from{ transform:translateX(0); } to{ transform:translateX(-200px); } }
 @keyframes bureau-wave-drift-240{ from{ transform:translateX(0); } to{ transform:translateX(-240px); } }
