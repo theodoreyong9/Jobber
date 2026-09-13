@@ -101,19 +101,33 @@ a{color:var(--agent);}
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
 
-/* The 7 tools as a real honeycomb: one hex dead center (Messages) and
-   six more tiled flush around it, edge-to-edge, no gaps — 6 is exactly
-   how many regular hexagons fit touching one, so 7 tools tiles perfectly
-   with nothing left over. Sizing is real hex geometry, not an
-   approximation: for a flat-top hexagon of circumradius s, width=2s and
-   height=s√3 (140px/121.24px below, s=70) — matching that ratio is what
-   makes edge-to-edge tiling actually meet without a gap or overlap.
-   Neighbor offsets follow the standard flat-top hex-grid formula
-   (horizontal spacing = 0.75×width, vertical spacing = height, with the
-   two side neighbors split ±height/2) — see e.g. redblobgames' hex grid
-   guide for the same math. */
-.bento-wheel{ position:relative; width:350px; height:364px; margin:18px auto 8px; }
-.bento-wheel .bento-hex{ top:50%; left:50%; }
+/* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
+   center on Messages, six more tiled flush around it — 6 is exactly how
+   many regular hexagons fit touching one, so 7 tools tile perfectly with
+   nothing left over) and the identity strip below them are positioned in
+   the SAME coordinate space, all measured from Messages' own center
+   (see desktop-ui.js's FLOWER_HALF_H/hexSlotOffset). Two separate
+   containers each with their own origin left a visible seam between
+   them; one container fixes that by construction, since the identity
+   strip's rows are just a continuation of the tools' own column
+   sequence, not a fresh grid starting after it.
+   Sizing is real hex geometry, not an approximation: for a flat-top
+   hexagon of circumradius s, width=2s and height=s√3 (140px/121.24px
+   below, s=70) — matching that ratio is what makes edge-to-edge tiling
+   actually meet without a gap or overlap. Neighbor offsets follow the
+   standard flat-top hex-grid formula (horizontal spacing = 0.75×width,
+   vertical spacing = height, with side neighbors split ±height/2) — see
+   e.g. redblobgames' hex grid guide for the same math.
+   Height is set inline per render (position:absolute children don't
+   size their parent on their own); box-sizing:content-box keeps that
+   explicit height purely about the hex content, so the modebar-clearance
+   padding-bottom below still adds on top of it instead of eating into
+   it. */
+.bento-hive{
+  position:relative; width:350px; margin:18px auto 0; box-sizing:content-box;
+  padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
+}
+.bento-hive .bento-hex{ top:181.86px; left:50%; }
 .bento-hex{
   position:absolute; width:140px; height:121.24px; z-index:1;
   clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
@@ -137,29 +151,27 @@ a{color:var(--agent);}
 .bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-60.62px); }
 .bento-hex.pos-4{ transform:translate(-50%,-50%) translate(0,121.24px); }
 .bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-121.24px); }
-.bento-hex-icon{ font-size:22px; line-height:1; }
-.bento-hex-label{ font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; }
+/* The emoji as a big faint watermark filling the tile, not a small icon
+   sitting above the label like a title — position:absolute takes it out
+   of the flex flow entirely (so the label centers on its own), and
+   clip-path on the parent .bento-hex crops it to the hex shape for free.
+   z-index:0 (paired with position:relative;z-index:1 on the text below)
+   keeps it behind the label instead of painting over it — a plain
+   position:absolute child would otherwise paint AFTER static in-flow
+   siblings per normal stacking rules, i.e. on top, backwards from what's
+   wanted here. */
+.bento-hex-bg-icon{
+  position:absolute; inset:0; z-index:0; pointer-events:none;
+  display:flex; align-items:center; justify-content:center;
+  font-size:64px; line-height:1; opacity:.26; filter:saturate(120%);
+}
+.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:9.5px; line-height:1.15; text-align:center; padding:0 12px; }
 .bento-hex-badge{
   position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
 }
 .bento-hex-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
 .bento-hex-badge.count{ background:var(--bad); color:#1A0507; font-size:9px; min-width:16px; text-align:center; }
-
-/* The identity strip continues the same hex tiling below the wheel,
-   instead of switching back to a rectangular grid — same 140×121.24px
-   hex geometry, just its own top-anchored honeycomb (see
-   desktop-ui.js's hexSlotOffset) rather than the wheel's fixed 7-slot
-   flower, since this list is unbounded. Height is set inline per render
-   (position:absolute children don't size their parent on their own);
-   box-sizing:content-box keeps that explicit height purely about the hex
-   content, so the modebar-clearance padding-bottom below still adds on
-   top of it instead of eating into it. */
-.bento-identities{
-  position:relative; width:350px; margin:0 auto; box-sizing:content-box;
-  padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
-}
-.bento-identities .bento-hex{ top:0; left:50%; }
 
 .bento-id-tile{
   padding:6px; text-align:center; color:var(--hi);
@@ -175,8 +187,8 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
 }
 .bento-id-dot{ position:absolute; top:14%; right:22%; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; }
-.bento-id-sub{ font-size:8px; color:rgba(237,239,241,.55); }
+.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; }
+.bento-id-sub{ position:relative; z-index:1; font-size:8px; color:rgba(237,239,241,.55); }
 
 /* Solid fills, not a border — box-shadow:inset draws along the element's
    rectangular box, not its clip-path shape, so on a hexagon it only ever
