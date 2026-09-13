@@ -74,7 +74,7 @@ const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 // .bento-hex.pos-N rules in style.css for the actual offsets. There's no
 // room on a hex for the old sub-text (live counts, "opt-in radius" etc.)
 // — icon, label, and badge only.
-const TOOL_ORDER = ['messages', 'pricing', 'creator', 'wallet', 'tribute', 'near', 'agent'];
+const TOOL_ORDER = ['messages', 'agent', 'creator', 'wallet', 'tribute', 'near', 'pricing'];
 
 function wheelToolTile(ns, pos, pendingCount) {
   const cfg = NS_CONFIG[ns];
