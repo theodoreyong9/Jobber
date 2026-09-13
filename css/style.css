@@ -113,8 +113,9 @@ a{color:var(--agent);}
    two side neighbors split ±height/2) — see e.g. redblobgames' hex grid
    guide for the same math. */
 .bento-wheel{ position:relative; width:350px; height:364px; margin:18px auto 8px; }
+.bento-wheel .bento-hex{ top:50%; left:50%; }
 .bento-hex{
-  position:absolute; top:50%; left:50%; width:140px; height:121.24px; z-index:1;
+  position:absolute; width:140px; height:121.24px; z-index:1;
   clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
   border:none; cursor:pointer; font-family:inherit; color:var(--hi);
@@ -145,58 +146,63 @@ a{color:var(--agent);}
 .bento-hex-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
 .bento-hex-badge.count{ background:var(--bad); color:#1A0507; font-size:9px; min-width:16px; text-align:center; }
 
-/* Columns are a fixed 97.5px (the width they already render at on a
-   390px-wide screen — the reference this whole layout was designed
-   against) rather than a fluid `1fr`, so tile size stays constant instead
-   of stretching/squishing with the viewport. The grid doesn't scroll on
-   its own — .workspace-bureau's overflow-x:hidden above just clips
-   anything narrower screens can't fit, rather than growing a second,
-   per-section scrollbar; the page's one vertical scroll is all that's
-   needed once there's more content (more identities) than fits. */
+/* The identity strip continues the same hex tiling below the wheel,
+   instead of switching back to a rectangular grid — same 140×121.24px
+   hex geometry, just its own top-anchored honeycomb (see
+   desktop-ui.js's hexSlotOffset) rather than the wheel's fixed 7-slot
+   flower, since this list is unbounded. Height is set inline per render
+   (position:absolute children don't size their parent on their own);
+   box-sizing:content-box keeps that explicit height purely about the hex
+   content, so the modebar-clearance padding-bottom below still adds on
+   top of it instead of eating into it. */
 .bento-identities{
-  display:grid; grid-template-columns:repeat(4,97.5px); grid-auto-rows:84px;
+  position:relative; width:350px; margin:0 auto; box-sizing:content-box;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
 }
+.bento-identities .bento-hex{ top:0; left:50%; }
 
-/* A radial "lit surface" instead of a linear wash fading to transparent —
-   fading to transparent is exactly what read as a muddy, indistinct tint
-   (it blends the tile color into the flat dark backdrop instead of into
-   a darker shade of *itself*). Depth comes from a genuine bright-white
-   light source (a near-white core, not just a lightly-tinted one) rather
-   than from darkening the far corner into shadow — a strong highlight
-   near one corner, true color through the middle, only a mild deepening
-   at the far edge for contour. Reads as a lit, contoured surface (like a
-   desktop wallpaper) instead of a flat gradient or a shadow-driven one. */
-.bento-tile{
-  position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
-  align-items:flex-start; text-align:left; padding:10px; cursor:pointer; font-family:inherit;
-  color:var(--hi); border:1.5px solid rgba(255,255,255,.85);
+.bento-id-tile{
+  padding:6px; text-align:center; color:var(--hi);
+  border:1.5px solid rgba(255,255,255,.85);
   box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.3), inset 0 2px 6px rgba(255,255,255,.25),
-    0 0 26px -2px color-mix(in srgb, var(--tile-color, transparent) 80%, transparent);
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    inset 0 0 0 1px rgba(255,255,255,.28), inset 0 2px 5px rgba(255,255,255,.22),
+    0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
   background:
-    radial-gradient(135% 135% at 18% 12%,
+    radial-gradient(140% 140% at 30% 15%,
       #fff 0%,
-      color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 16%,
-      var(--tile-color, var(--border)) 55%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 80%, white 20%) 14%,
+      var(--tile-color, var(--border)) 58%,
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
-  transition:transform .12s ease, filter .12s ease;
 }
-.bento-tile:active{ transform:scale(.94); filter:brightness(1.25); }
+.bento-id-dot{ position:absolute; top:14%; right:22%; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
+.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:10.5px; line-height:1.2; }
+.bento-id-sub{ font-size:8px; color:rgba(237,239,241,.55); }
 
-/* The tile's own emoji, oversized and faded, bleeding off the corner
-   instead of the old plain circle blob — "the Bureau's icons as a styled
-   background", not a generic shape. */
-.bento-bg-icon{
-  position:absolute; z-index:1; pointer-events:none; line-height:1; right:-8px; bottom:-16px;
-  font-size:60px; opacity:.42; transform:rotate(-10deg); filter:saturate(180%);
+/* Solid fills, not a border — box-shadow:inset draws along the element's
+   rectangular box, not its clip-path shape, so on a hexagon it only ever
+   shows on the flat top/bottom edges (the one place the rectangle and the
+   hex boundary coincide) and leaves the slanted sides invisible. A plain
+   panel-toned fill reads as a real (if quiet) hex cell instead. */
+.bento-id-empty, .bento-id-new{
+  color:var(--low); font-family:inherit;
+  background:var(--panel);
 }
-.bento-bg-icon.lg{ font-size:104px; right:-14px; bottom:-26px; }
+.bento-id-new{ cursor:pointer; font-size:18px; }
+.bento-id-new:hover{ color:var(--mid); background:var(--panel-raised); }
 
-.bento-label{ font-family:var(--font-head); font-weight:600; font-size:11.5px; margin-top:8px; position:relative; z-index:2; line-height:1.2; }
-.bento-label.lg{ font-size:15px; margin-top:10px; }
-.bento-sub{ font-size:10px; color:rgba(237,239,241,.6); margin-top:2px; position:relative; z-index:2; }
+/* The tile that follows your identity slots while there's still a palier
+   left to reach (see credibility.js's IDENTITY_PALIERS) — a fraction plus
+   a thin fill bar rather than a bare number, since "42" alone says
+   nothing without the target it's climbing toward. */
+.bento-id-score{
+  padding:6px; gap:3px;
+  background:var(--panel-raised);
+}
+.bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:14px; color:var(--hi); }
+.bento-score-slash{ font-weight:600; font-size:10px; color:var(--low); }
+.bento-score-label{ font-size:8px; text-transform:uppercase; letter-spacing:.05em; color:var(--low); }
+.bento-score-bar{ width:70%; height:3px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
+.bento-score-fill{ display:block; height:100%; background:var(--ok); }
 
 .bento-badge-cooking{
   position:absolute; top:7px; right:7px; z-index:3; font-size:7.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
@@ -207,54 +213,6 @@ a{color:var(--agent);}
   background:var(--bad); color:#1A0507; font-family:var(--font-head); font-weight:700; font-size:11px;
   display:flex; align-items:center; justify-content:center;
 }
-
-.bento-id-tile{
-  position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-end;
-  padding:8px; cursor:pointer; font-family:inherit; text-align:left; color:var(--hi);
-  border:1.5px solid rgba(255,255,255,.85);
-  box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.28), inset 0 2px 5px rgba(255,255,255,.22),
-    0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
-  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-  background:
-    radial-gradient(140% 140% at 20% 15%,
-      #fff 0%,
-      color-mix(in srgb, var(--tile-color, var(--border)) 80%, white 20%) 14%,
-      var(--tile-color, var(--border)) 58%,
-      color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
-  transition:transform .12s ease, filter .12s ease;
-}
-.bento-id-tile:active{ transform:scale(.94); filter:brightness(1.25); }
-.bento-id-dot{ position:absolute; top:8px; right:8px; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ font-family:var(--font-head); font-weight:600; font-size:11px; line-height:1.2; position:relative; z-index:2; }
-.bento-id-sub{ font-size:8.5px; color:rgba(237,239,241,.5); margin-top:1px; position:relative; z-index:2; }
-
-.bento-id-empty, .bento-id-new{
-  display:flex; align-items:center; justify-content:center; color:var(--low); font-family:inherit;
-  border:1px solid rgba(255,255,255,.06);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
-  backdrop-filter:blur(20px) saturate(140%); -webkit-backdrop-filter:blur(20px) saturate(140%);
-  background:color-mix(in srgb, var(--bg) 55%, transparent);
-}
-.bento-id-new{ cursor:pointer; font-size:18px; transition:transform .12s ease, filter .12s ease; }
-.bento-id-new:hover{ color:var(--mid); }
-.bento-id-new:active{ transform:scale(.94); filter:brightness(1.25); }
-
-/* The tile that follows your identity slots while there's still a palier
-   left to reach (see credibility.js's IDENTITY_PALIERS) — a fraction plus
-   a thin fill bar rather than a bare number, since "42" alone says
-   nothing without the target it's climbing toward. */
-.bento-id-score{
-  display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:4px;
-  padding:8px; border:1px solid rgba(255,255,255,.06); box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
-  backdrop-filter:blur(20px) saturate(140%); -webkit-backdrop-filter:blur(20px) saturate(140%);
-  background:color-mix(in srgb, var(--panel) 46%, transparent);
-}
-.bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:15px; color:var(--hi); }
-.bento-score-slash{ font-weight:600; font-size:10.5px; color:var(--low); }
-.bento-score-label{ font-size:8.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--low); }
-.bento-score-bar{ width:100%; height:3px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
-.bento-score-fill{ display:block; height:100%; background:var(--ok); }
 
 .mode-picker-group{ margin-bottom:14px; }
 .mode-picker-group:last-child{ margin-bottom:0; }
