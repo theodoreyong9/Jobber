@@ -11,7 +11,7 @@
 
 import * as db from './db.js';
 
-export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute', 'pricing'];
+export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'info', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute', 'pricing'];
 
 // Purely a display grouping for the Bureau (desktop-ui.js) — every other
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
@@ -20,7 +20,7 @@ export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'resea
 // those already discovered, the links out to the rest of this portfolio,
 // and info about Jobber itself.
 export const NAMESPACE_GROUPS = [
-  { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating'] },
+  { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating', 'info'] },
   { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
   { label: 'Ecosystem', namespaces: ['creator', 'wallet', 'tribute'] },
   { label: 'About', namespaces: ['pricing'] },
@@ -42,6 +42,9 @@ export const NS_CONFIG = {
     hint: 'Organizers post an out-of-home activity — any theme, freely chosen — with a contact method and a participant limit; participants are matched by shared interest, not a price range.' },
   dating: { label: 'Dating', color: '#D46FB3', kind: 'reciprocal', icon: '💗',
     hint: 'Your "looking for" is matched against their profile, and theirs against yours — a real match needs both directions to work.' },
+  info: { label: 'Info', color: '#3FA9F5', kind: 'twoSided', icon: '🔎',
+    roles: [{ key: 'source', label: 'Source' }, { key: 'seeker', label: 'Seeker' }],
+    hint: 'Seekers describe what they need as keywords; sources describe what they know as free text — matched by keyword overlap, the same baseline every namespace uses.' },
   research: { label: 'Intelligence', color: '#7C9EF5', kind: 'research', icon: '🧠',
     hint: 'Agent-to-agent collaboration. Hypothesis and critique are symmetric roles.' },
   near: { label: 'Near', color: '#6FBF73', kind: 'near', icon: '📍',
