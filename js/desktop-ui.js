@@ -175,21 +175,14 @@ function hexScoreTile(score, palier, index) {
 // The project's own vision statement, sitting below the identities —
 // static, plain-flow content, deliberately outside .bento-hive so it
 // doesn't inherit the levitation animation or the hex coordinate system
-// (there's nothing to align it to; it's prose, not a tile). The opening
-// line is the lede (bigger, brighter — the one-sentence version of the
-// whole thing); the rest expand on it at equal weight to each other.
+// (there's nothing to align it to; it's prose, not a tile).
 const MANIFESTO_LEAD = 'A world without accounts, where everyone owns their identity and connects directly with anyone, anywhere, for anything.';
-const MANIFESTO_BODY = [
-  'AI helps us meet, understand, and build — without becoming the authority.',
-  'Anyone can create, execute, vote, and fork — without asking permission.',
-  'A decentralized, attack-resistant network connecting people, payments, and the physical world without a central entity.',
-  'A civilization that can coordinate across planets — even Earth and Mars, despite distance, delay, and no instant coordination.',
-];
+const MANIFESTO_SUB = 'A world that doesn’t disappear when the network does.';
 const manifestoHtml = `
   <div class="bureau-manifesto">
     <div class="bureau-manifesto-rule"></div>
     <p class="bureau-manifesto-lead">${MANIFESTO_LEAD}</p>
-    ${MANIFESTO_BODY.map((p) => `<p class="bureau-manifesto-line">${p}</p>`).join('')}
+    <p class="bureau-manifesto-sub">${MANIFESTO_SUB}</p>
   </div>`;
 
 export async function renderDesktop() {
