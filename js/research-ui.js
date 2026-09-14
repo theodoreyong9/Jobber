@@ -8,9 +8,11 @@ import * as db from './db.js';
 import * as p2p from './p2p.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
+import * as matching from './matching.js';
 import { state, NS_CONFIG, relativeTime } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
+import { getProfile } from './profiles.js';
 
 const ARTIFACT_COLOR_LABEL = {
   hypothesis: 'Hypothesis', counter_hypothesis: 'Counter-hypothesis', critique: 'Critique',
@@ -93,6 +95,43 @@ function bindSkillMdFile(dlg) {
   dlg.querySelector('#skillFile')?.addEventListener('change', async (e) => {
     const f = e.target.files[0];
     if (f) dlg.querySelector('#skillMd').value = await f.text();
+  });
+}
+
+// A *persistent* declaration of what this identity brings — unlike the
+// one above, which is retyped fresh for every join request. Stored via
+// profiles.js's generic profile record (getProfile/db.put('profiles', …)
+// already work for any identityId regardless of namespace, so no schema
+// change is needed here) and tokenized the same way every other
+// namespace's profile text is, so it can be scored against open
+// projects' problem statements with the exact same matching.matchTokens
+// primitive Employment/Business/etc. already use — see
+// renderResearchWorkspace's discoverableHtml.
+//
+// Deliberately doesn't call profiles.js's autoSearchOnSave: that ties a
+// profile save to starting/rebroadcasting a per-identity live search,
+// which is the Set-based model every namespace but Research uses (see
+// state.js's searchLive) — Research's own "connect to peers" is already
+// a separate, explicit, room-level toggle (setResearchConnected), not
+// something a skill edit should silently trigger.
+function editSkillFlow(id) {
+  getProfile(id.identityId).then((profile) => {
+    openModal('Your skill / expertise', `
+      <label>Short title (optional)</label>
+      <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Statistical methods">
+      <label>Describe what you bring — matched against open projects' problem statements below</label>
+      <textarea id="skill" placeholder="e.g. Specialized in statistical critique; sample-size and p-hacking issues.">${profile.sourceText || ''}</textarea>
+    `, {
+      submitLabel: 'Save',
+      onSubmit: async (dlg) => {
+        const category = dlg.querySelector('#cat').value.trim();
+        const sourceText = dlg.querySelector('#skill').value;
+        const tokens = matching.tokenize(sourceText, category);
+        await db.put('profiles', { ...profile, category, sourceText, tokens, updatedAt: Date.now() });
+        toast('Skill saved locally');
+        state.render.workspace();
+      },
+    });
   });
 }
 
@@ -214,14 +253,29 @@ export async function renderResearchWorkspace() {
   if (!state.activeProjectId && state.researchProjects.length) state.activeProjectId = state.researchProjects[0].projectId;
   const project = state.researchProjects.find((p) => p.projectId === state.activeProjectId);
 
+  // My declared skill (see editSkillFlow) scored against each open
+  // project's problem statement — same matching.matchTokens Jaccard
+  // primitive every other namespace already uses, just with a project's
+  // "problem" text standing in for a job posting/listing. Sorted highest
+  // match first, same as every other namespace's results list.
+  const myProfile = await getProfile(id.identityId);
+  const skillBtnLabel = myProfile.tokens.length ? `Edit your skill (${myProfile.tokens.length} keywords)` : 'Declare your skill';
+  const skillBtnHtml = `<button class="btn ghost" id="editSkill">${skillBtnLabel}</button>`;
+
+  const discoverableEntries = [...state.discoverableProjects.values()]
+    .filter((d) => !state.researchProjects.some((p) => p.projectId === d.projectId))
+    .map((d) => ({ ...d, matchScore: matching.matchTokens(myProfile.tokens, matching.tokenize(d.problem)).score }))
+    .sort((a, b) => b.matchScore - a.matchScore);
+
   const discoverableHtml = state.discoverableProjects.size ? `
     <div class="panel">
       <div class="k">Open projects on the network</div>
-      ${[...state.discoverableProjects.values()]
-        .filter((d) => !state.researchProjects.some((p) => p.projectId === d.projectId))
-        .map((d) => `
+      ${discoverableEntries.map((d) => `
           <div class="agree-row">
-            <span class="k2">${d.problem.slice(0, 50)} — by ${d.initiatorDisplayName} (${d.filledCount}/${d.chain.length} filled)</span>
+            <span class="k2">
+              <span class="chip" title="How well your declared skill overlaps this project's problem statement">Match ${d.matchScore}%</span>
+              ${d.problem.slice(0, 50)} — by ${d.initiatorDisplayName} (${d.filledCount}/${d.chain.length} filled)
+            </span>
             <button class="btn small ${state.outgoingJoinRequests.get(d.projectId) ? 'ghost' : 'primary'} join-discoverable" data-pid="${d.projectId}" ${state.outgoingJoinRequests.get(d.projectId) ? 'disabled' : ''}>
               ${state.outgoingJoinRequests.get(d.projectId) === 'pending' ? 'Requested…' : state.outgoingJoinRequests.get(d.projectId) === 'declined' ? 'Declined' : 'Request to join'}
             </button>
@@ -239,6 +293,7 @@ export async function renderResearchWorkspace() {
     return `<h2 class="section-title">Intelligence — model-to-model with declared agent skills</h2>
       <p class="section-sub">${NS_CONFIG.research.hint}</p>
       ${listHtml}
+      <div style="margin:10px 0">${skillBtnHtml}</div>
       ${discoverableHtml}
       <div class="empty-state">No project yet. Create one to state a problem, define a build/critic chain, and start collaborating.</div>`;
   }
@@ -265,7 +320,9 @@ export async function renderResearchWorkspace() {
       <div class="k">Join requests — you accept last, and it's final</div>
       ${pendingForThis.map((r) => `
         <div class="agree-row" style="align-items:flex-start;flex-direction:column;gap:6px">
-          <div><b>${r.displayName}</b> requests slot ${openSlot ? openSlot.chainIndex + 1 : '?'} (${openSlot ? (openSlot.mode === 'build' ? 'Build' : 'Critic') : 'chain full'})</div>
+          <div><b>${r.displayName}</b> requests slot ${openSlot ? openSlot.chainIndex + 1 : '?'} (${openSlot ? (openSlot.mode === 'build' ? 'Build' : 'Critic') : 'chain full'})
+            ${r.skillMd ? `<span class="chip" title="How well their declared skill overlaps this project's problem statement">Match ${matching.matchTokens(matching.tokenize(project.problem), matching.tokenize(r.skillMd)).score}%</span>` : ''}
+          </div>
           ${r.skillMd ? `<details style="font-size:11.5px;color:var(--mid)"><summary style="cursor:pointer">View declared skill</summary><div style="white-space:pre-wrap;margin-top:4px">${r.skillMd}</div></details>` : '<div style="font-size:11px;color:var(--low)">No skill declared</div>'}
           <div style="display:flex;gap:8px">
             <button class="btn small primary accept-join" data-pid="${project.projectId}" data-applicant="${r.identityId}">Accept</button>
@@ -341,6 +398,7 @@ export async function renderResearchWorkspace() {
       <div class="actions" style="margin-top:12px">
         <button class="btn" id="connectPeers">${state.searchLive.research ? 'Connected to research room' : 'Connect with peers'}</button>
         <button class="btn" id="exportProject">Export .jobber</button>
+        ${skillBtnHtml}
         ${joinCta}
         ${closeCta}
       </div>
@@ -382,6 +440,7 @@ export function bindResearchEvents(id) {
   const ws = document.getElementById('workspace');
   ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow('research'));
   ws.querySelector('#newProjectBtn')?.addEventListener('click', () => newProjectFlow(id));
+  ws.querySelector('#editSkill')?.addEventListener('click', () => editSkillFlow(id));
   ws.querySelectorAll('.project-pill[data-pid]').forEach((btn) => {
     btn.addEventListener('click', () => { state.activeProjectId = btn.dataset.pid; state.render.workspace(); });
   });
