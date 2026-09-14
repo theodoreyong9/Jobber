@@ -116,6 +116,10 @@ const FLOWER_HALF_H = 1.5 * HEX_H;
 // identities themselves), lightly separated rather than one unbroken
 // honeycomb.
 const MATCHES_GAP = 28;
+// Must match style.css's .pos-1/.pos-3/.pos-5 push (28px) — used here
+// only to place the "Insights" label in the gap it opens, not to move
+// any hex (that's pure CSS, these three are static positions).
+const ECOSYSTEM_GAP = 28;
 
 function hexSlotOffset(index) {
   const band = Math.floor(index / 3) + 1;
@@ -210,11 +214,20 @@ export async function renderDesktop() {
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
+  // "Insights" sits in the gap between the Ecosystem row and the rest of
+  // the flower (style.css's .pos-1/.pos-3/.pos-5 push); "Matchs" in the
+  // matching gap below Near, before the identity strip. "Écosystème"
+  // itself isn't part of this absolutely-positioned coordinate system at
+  // all — it has nothing but open margin above it, so it's a plain
+  // in-flow heading before .bento-hive instead (see the CSS comment on
+  // .bento-hive's margin-top for why that margin is sized the way it is).
+  const insightsLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${-(HEX_HALF_H + ECOSYSTEM_GAP / 2)}px);">Insights</span>`;
   const matchesLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${FLOWER_HALF_H + MATCHES_GAP / 2}px);">Matchs</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${matchesLabel}${cells.join('')}</div>
+      <div class="bento-zone-heading">Écosystème</div>
+      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${insightsLabel}${matchesLabel}${cells.join('')}</div>
     </div>`;
 }
 
