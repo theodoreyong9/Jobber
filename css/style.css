@@ -126,6 +126,20 @@ a{color:var(--agent);}
 .bento-hive{
   position:relative; width:350px; margin:18px auto 0; box-sizing:content-box;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
+  animation:hiveFloat 4s ease-in-out infinite; will-change:transform;
+}
+/* The whole honeycomb (flower + identity strip) bobs as one rigid block,
+   not each hex independently — they tile edge-to-edge with zero gap by
+   construction (see the comment above), and floating them on separate
+   phases would pull that tiling apart at every peak/trough. transform
+   alone (no layout properties) keeps this on the compositor, cheap
+   regardless of how many hex cells are currently rendered below it. */
+@keyframes hiveFloat{
+  0%, 100%{ transform:translateY(0); }
+  50%{ transform:translateY(-8px); }
+}
+@media (prefers-reduced-motion: reduce){
+  .bento-hive{ animation:none; }
 }
 .bento-hive .bento-hex{ top:181.86px; left:50%; }
 .bento-hex{
