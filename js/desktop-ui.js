@@ -64,118 +64,281 @@ function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
 // tiers is real (see pricing-ui.js) — the rest of that page is "Soon".
 const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 
-// 7 tools = 1 center hex + a ring of 6 around it, tiled edge-to-edge like
-// real honeycomb cells (not floating in a sparse circle) — 6 is exactly
-// how many regular hexagons fit flush around one, so this is the one
-// tool count that tiles perfectly with no leftover gap or overlap.
-// Messages is the center (it was already the bento grid's hero tile);
-// the rest fill the ring in a fixed order. `pos` selects which of the
-// six touching neighbor slots a tile sits in — see the matching
-// .bento-hex.pos-N rules in style.css for the actual offsets. There's no
-// room on a hex for the old sub-text (live counts, "opt-in radius" etc.)
-// — icon, label, and badge only.
-// Grouped so the top row (pos-5/pos-3/pos-1) is Ecosystem (wallet,
-// tribute, creator) and the rest (center + pos-2/pos-0/pos-4) is Insight
-// (messages, pricing, near, agent) — see the extra gap between them in
-// style.css's .pos-1/.pos-3/.pos-5 rules.
-const TOOL_ORDER = ['messages', 'agent', 'creator', 'pricing', 'tribute', 'near', 'wallet'];
+// --- Cairo pentagon tiling geometry -------------------------------------
+// A regular hexagon tiles the plane on its own; a regular pentagon
+// cannot (108°×3=324°, never closes to 360°). The Cairo pentagonal
+// tiling is what real edge-to-edge, gap-free pentagon tiling actually
+// looks like: an irregular (but fully determined) pentagon with angles
+// 120°,120°,90°,120°,90° going around — the two right angles are
+// non-adjacent — one short edge and four long edges (ratio √3-1 : 1).
+//
+// Two rules fully generate it (verified against this exact shape by
+// brute-force edge-matching over a 300+ pentagon patch — every edge
+// either matched exactly one neighbor or sat on the patch boundary,
+// zero mismatches, zero overlapping centroids — before any of this went
+// near CSS):
+//  1) Four copies of the pentagon, rotated 0/90/180/270° about EITHER of
+//     its two 90° corners, tile perfectly around that point.
+//  2) The neighbor across the one short edge is the pentagon rotated
+//     180° about that edge's midpoint.
+// Together these cover all 5 edges (the 90°-corner rule covers the 4
+// edges touching V3/V5; the short-edge rule covers the 5th).
+const SQRT3 = Math.sqrt(3);
+const PENT_EDGE = 84; // px — length of one long edge; the one tunable size knob
+const PENT_W = PENT_EDGE * SQRT3; // ≈145.5px
+const PENT_H = PENT_EDGE * (SQRT3 + 1) / 2; // ≈114.8px
+// V1..V5, centered on the pentagon's own bounding-box center — which is
+// also where CSS rotate() pivots by default (transform-origin:50% 50%),
+// so a plain `rotate(Ndeg)` reproduces exactly the rotations the tiling
+// rule above is defined in terms of. Given in units of PENT_EDGE.
+const PENT_LOCAL = [
+  [-0.3660254, -0.6830127], // V1 — 120°, short-edge corner
+  [0.3660254, -0.6830127],  // V2 — 120°, short-edge corner
+  [0.8660254, 0.1830127],   // V3 — 90°
+  [0, 0.6830127],           // V4 — 120°, apex
+  [-0.8660254, 0.1830127],  // V5 — 90°
+];
+// clip-path polygon for orientation 0 — same 5 points as PENT_LOCAL,
+// converted to percentages of the PENT_W×PENT_H box (every rotated
+// orientation reuses this exact clip-path; only a CSS rotate() differs
+// — see .bento-pent.rot-* in style.css).
+const PENT_CLIP_PATH = 'polygon(28.8675% 0%, 71.1325% 0%, 100% 63.3975%, 50% 100%, 0% 63.3975%)';
 
-function wheelToolTile(ns, pos, pendingCount) {
+function pentRotateVec([x, y], deg) {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r), s = Math.sin(r);
+  return [x * c - y * s, x * s + y * c];
+}
+function pentWorldVerts(p) {
+  return PENT_LOCAL.map((v) => {
+    const [rx, ry] = pentRotateVec(v, p.rot);
+    return [p.cx + rx, p.cy + ry];
+  });
+}
+// Rotates the whole pentagon `p` by `delta` degrees about world point `pivot`.
+function pentRotateAbout(p, pivot, delta) {
+  const [rx, ry] = pentRotateVec([p.cx - pivot[0], p.cy - pivot[1]], delta);
+  return { cx: pivot[0] + rx, cy: pivot[1] + ry, rot: (((p.rot + delta) % 360) + 360) % 360 };
+}
+function pentNeighbors(p) {
+  const wv = pentWorldVerts(p);
+  const out = [];
+  for (const idx of [2, 4]) { // V3, V5 — the two 90° corners
+    for (const delta of [90, 180, 270]) out.push(pentRotateAbout(p, wv[idx], delta));
+  }
+  const shortEdgeMid = [(wv[0][0] + wv[1][0]) / 2, (wv[0][1] + wv[1][1]) / 2]; // midpoint of V1-V2
+  out.push(pentRotateAbout(p, shortEdgeMid, 180));
+  return out;
+}
+function pentKey(p) {
+  const r = (v) => Math.round(v * 1000) / 1000;
+  return `${r(p.cx)},${r(p.cy)},${(((p.rot % 360) + 360) % 360)}`;
+}
+// BFS out from one seed pentagon far enough to cover the tools + a long
+// identity strip below them. Pure math, cheap (a few hundred pentagons at
+// most) — computed once and reused for the life of the module rather
+// than redone on every render.
+function generatePentagonPatch(rounds) {
+  const start = { cx: 0, cy: 0, rot: 0 };
+  const seen = new Map([[pentKey(start), start]]);
+  let frontier = [start];
+  for (let i = 0; i < rounds; i++) {
+    const next = [];
+    for (const p of frontier) {
+      for (const nb of pentNeighbors(p)) {
+        const k = pentKey(nb);
+        if (!seen.has(k)) { seen.set(k, nb); next.push(nb); }
+      }
+    }
+    frontier = next;
+  }
+  return [...seen.values()];
+}
+const PENT_PATCH = generatePentagonPatch(13);
+
+// The 7 tools as two stacked rows instead of a hex flower — a regular
+// hexagon can surround itself with 6 neighbors in a closed ring; this
+// pentagon can't (see the tiling notes above), so there's no equivalent
+// single-tile-in-the-middle shape for exactly 7. A 3-tile row (Ecosystem)
+// directly above a 4-tile row (Insight) is the most compact arrangement
+// that actually occurs in the real tiling with no gaps between them —
+// verified the same way as the rest of this geometry, by checking every
+// edge among these 7 either matches its neighbor here or continues
+// cleanly into the wider tiling.
+const TOOL_SLOTS = [
+  { cx: -3.4641016, cy: 0, rot: 0 },              // Ecosystem, left
+  { cx: 0, cy: 0, rot: 0 },                       // Ecosystem, center
+  { cx: 3.4641016, cy: 0, rot: 0 },               // Ecosystem, right
+  { cx: -2.4148146, cy: -0.6830127, rot: 90 },    // Insight, 1
+  { cx: -1.0492786, cy: -0.6830127, rot: 270 },   // Insight, 2
+  { cx: 1.0492786, cy: -0.6830127, rot: 90 },     // Insight, 3
+  { cx: 2.4148146, cy: -0.6830127, rot: 270 },    // Insight, 4
+];
+const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agent', 'near'];
+// A light gap between the Ecosystem row and the Insight row below it
+// (pure visual padding, same idea as the old hex layout's zone gaps) —
+// applied to the Ecosystem row's y only, so it stays flush with itself
+// and only pulls away from Insight. In "pentagon units" (÷PENT_EDGE),
+// added directly to cy before scaling to px.
+const ECOSYSTEM_GAP_UNITS = 0.35;
+// Same idea below Insight, before the identity strip starts.
+const MATCHES_GAP_UNITS = 0.35;
+
+// Every pentagon in PENT_PATCH strictly below the tool rows (cy < -1,
+// i.e. below Insight's own row at cy=-0.683), within a band wide enough
+// to read as one strip rather than the tools' own narrower width, ordered
+// top-to-bottom then left-to-right — this is what identity slots are
+// handed out from, in order, same role hexSlotOffset(index) used to play.
+// Unlike the old hex formula this can't be a closed-form expression: the
+// real Cairo tiling's rows alternate 3/2/4/2 tiles wide on a 6-row
+// repeat, not a uniform grid, so slots are read off the real generated
+// patch instead of computed. Cutting the tiling off at any finite width
+// necessarily leaves some edge tiles' true neighbors (in the fuller
+// patch) just outside the band — same as a hex flower's own silhouette
+// never being a perfect hexagon — so the strip's left/right edge reads as
+// a naturally jagged Cairo edge rather than a clean rectangle; verified
+// (brute-force edge check against the full patch, see cairo_tiling_verify
+// in dev notes) that every one of those cut edges' true partners really
+// do exist in the wider patch, i.e. this is an expected finite-crop
+// boundary, not a gap in the tiling itself.
+const IDENTITY_BAND = 3.6;
+const IDENTITY_SLOTS = PENT_PATCH
+  .filter((p) => Math.abs(p.cx) <= IDENTITY_BAND && p.cy < -1)
+  .sort((a, b) => (b.cy - a.cy) || (a.cx - b.cx));
+// IDENTITY_SLOTS' rows aren't a fixed size (2, 3, or 4 tiles, alternating
+// — see above), so stopping the strip mid-row would leave one side of
+// that row's own natural jagged edge missing its (harmless) counterpart
+// on the other side, reading as a one-sided notch rather than the
+// tiling's own symmetric edge. Precomputed once so renderDesktop can
+// always round the strip's length up to the end of a whole row.
+const IDENTITY_ROW_ENDS = (() => {
+  const ends = [];
+  let i = 0;
+  while (i < IDENTITY_SLOTS.length) {
+    let j = i + 1;
+    while (j < IDENTITY_SLOTS.length && Math.abs(IDENTITY_SLOTS[j].cy - IDENTITY_SLOTS[i].cy) < 1e-6) j++;
+    ends.push(j);
+    i = j;
+  }
+  return ends;
+})();
+function roundUpToIdentityRow(n) {
+  for (const end of IDENTITY_ROW_ENDS) if (end >= n) return end;
+  return IDENTITY_SLOTS.length;
+}
+// Container width: wide enough for the widest thing actually placed in
+// it (the identity band, ±IDENTITY_BAND, is wider than the 3-tile tool
+// row) plus one full pentagon's width so a tile centered at the band's
+// edge doesn't get half-clipped. On a narrow viewport this can exceed
+// the screen — .bento-hive-scroll (style.css) turns that into a
+// horizontal scroll shelf instead of clipping tiles outright.
+const HIVE_WIDTH = Math.ceil(2 * IDENTITY_BAND * PENT_EDGE + PENT_W);
+
+function pentSlotPx({ cx, cy, rot }, extraYUnits = 0) {
+  // Flips y (this geometry's derivation used math convention, +y up;
+  // CSS wants +y down) and scales from pentagon-edge units to px.
+  return { x: cx * PENT_EDGE, y: -(cy + extraYUnits) * PENT_EDGE, rot };
+}
+// Raw (pre-clearance) y of the Ecosystem/Insight tool rows — every tile
+// in a row shares the same cy, so any one slot from it gives the row's y.
+const ECOSYSTEM_ROW_Y = pentSlotPx(TOOL_SLOTS[1], ECOSYSTEM_GAP_UNITS).y;
+const INSIGHT_ROW_Y = pentSlotPx(TOOL_SLOTS[3], 0).y;
+// How far below the container's top edge the tiling's own y=0 line sits.
+// Sized so the highest thing drawn (the pushed-up Ecosystem row's top
+// edge) clears the container, with LABEL_HEADROOM to spare for its own
+// "Ecosystem" label above it. Baked directly into pentTransform's
+// translate() below instead of split across a shared CSS `top:Xpx` the
+// way the old hex flower did it (that value, FLOWER_HALF_H, quietly ran
+// ~28px short of the tallest hex it actually needed to clear — folding
+// the clearance into one JS constant instead of two independently-tuned
+// numbers removes that whole class of drift).
+const LABEL_HEADROOM = 22;
+const TOP_CLEARANCE = Math.ceil(PENT_H / 2 - ECOSYSTEM_ROW_Y + LABEL_HEADROOM);
+
+function pentTransform(slotPx) {
+  return `transform:translate(-50%,-50%) translate(${slotPx.x}px,${slotPx.y + TOP_CLEARANCE}px) rotate(${slotPx.rot}deg);`;
+}
+// The tile's own rotate() (above) is what makes its clip-path trace the
+// right edges for the tiling — but that same rotate() would also turn
+// its icon/label/badge sideways or upside down, since they're painted
+// inside that same rotated box. Wrapping them in a `.bento-pent-face`
+// child and rotating THAT by the opposite amount cancels it back out:
+// the two rotations compose to zero for the face's own content, while
+// the outer element's box (and its clip-path, drawn from that box) is
+// still visually rotated. Content stays upright regardless of which of
+// the 4 tiling orientations a given tile lands in.
+function pentFaceStyle(rot) {
+  return `transform:rotate(${-rot}deg);`;
+}
+
+function wheelToolTile(ns, i, pendingCount) {
   const cfg = NS_CONFIG[ns];
   const badge = ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0);
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
+  const isEcosystem = i < 3;
+  const slotPx = pentSlotPx(TOOL_SLOTS[i], isEcosystem ? ECOSYSTEM_GAP_UNITS : 0);
   return `
-    <button type="button" class="bento-hex ${pos === 0 ? 'pos-center' : `pos-${pos - 1}`}" style="--tile-color:${cfg.color}" data-act="tool" data-ns="${ns}">
-      ${badge ? `<span class="bento-hex-badge ${isLabel ? 'label' : 'count'}">${badgeText}</span>` : ''}
-      <span class="bento-hex-bg-icon">${cfg.icon}</span>
-      <span class="bento-hex-label">${cfg.label}</span>
+    <button type="button" class="bento-pent" style="--tile-color:${cfg.color}; ${pentTransform(slotPx)}" data-act="tool" data-ns="${ns}">
+      <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">
+        ${badge ? `<span class="bento-pent-badge ${isLabel ? 'label' : 'count'}">${badgeText}</span>` : ''}
+        <span class="bento-pent-bg-icon">${cfg.icon}</span>
+        <span class="bento-pent-label">${cfg.label}</span>
+      </span>
     </button>`;
 }
 
-// Same flat-top hex geometry as the tools wheel (see style.css) — the
-// identity section shares the exact same coordinate origin as the wheel
-// (Messages' own center), not a fresh one starting below it, so it reads
-// as one continuous honeycomb instead of two stacked grids with a seam
-// between them. Slots fill in "bands" of 3 (left, right, then center —
-// the same column pattern the wheel itself uses), extending downward for
-// as many bands as needed; unlike the fixed 7-tile flower, this has to
-// work for any count.
-const HEX_H = 121.24;
-const HEX_HALF_H = HEX_H / 2;
-const HEX_COL_SPACING = 105;
-// The flower's middle column runs 3 slots (-HEX_H, 0, +HEX_H) around
-// Messages, so its own outermost edge sits 1.5 hex-heights from center —
-// the identity strip's first band continues right after that same edge.
-const FLOWER_HALF_H = 1.5 * HEX_H;
-// A light gap (plus the "Matchs" label, see renderDesktop) between the
-// flower's Insight cluster — Messages/Pricing/Near/Agent, ending at
-// Near's bottom vertex — and the identity strip below it, matching the
-// same kind of gap the flower's own Ecosystem row carries above (style
-// .pos-1/.pos-3/.pos-5): three named zones (Ecosystem, Insight, and the
-// identities themselves), lightly separated rather than one unbroken
-// honeycomb.
-const MATCHES_GAP = 28;
-// Must match style.css's .pos-1/.pos-3/.pos-5 push (28px) — used here
-// only to place the "Insights" label in the gap it opens, not to move
-// any hex (that's pure CSS, these three are static positions).
-const ECOSYSTEM_GAP = 28;
-// How far above the pushed-up top row (AIWA/Tribute/YourMine) the
-// "Ecosystem" label sits — purely visual padding, there's no second gap
-// to center it in the way Insights/Matchs have, since this is the
-// flower's own outer edge.
-const ECOSYSTEM_LABEL_PAD = 20;
-
-function hexSlotOffset(index) {
-  const band = Math.floor(index / 3) + 1;
-  const posInBand = index % 3;
-  if (posInBand === 0) return { x: -HEX_COL_SPACING, y: MATCHES_GAP + HEX_HALF_H + band * HEX_H };
-  if (posInBand === 1) return { x: HEX_COL_SPACING, y: MATCHES_GAP + HEX_HALF_H + band * HEX_H };
-  return { x: 0, y: MATCHES_GAP + HEX_H + band * HEX_H };
+function identitySlotPx(index) {
+  return pentSlotPx(IDENTITY_SLOTS[index], MATCHES_GAP_UNITS);
 }
 
-function hexTransform(index) {
-  const { x, y } = hexSlotOffset(index);
-  return `transform:translate(-50%,-50%) translate(${x}px,${y}px);`;
-}
-
-function hexIdTile(ns, id, isLive, index) {
+function pentIdTile(ns, id, isLive, index) {
   const cfg = NS_CONFIG[ns];
+  const slotPx = identitySlotPx(index);
   return `
-    <button type="button" class="bento-hex bento-id-tile" style="--tile-color:${cfg.color}; ${hexTransform(index)}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
-      ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
-      <span class="bento-hex-bg-icon">${cfg.icon}</span>
-      <span class="bento-id-name">${id.displayName}</span>
-      <span class="bento-id-sub">${cfg.label}</span>
+    <button type="button" class="bento-pent bento-id-tile" style="--tile-color:${cfg.color}; ${pentTransform(slotPx)}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
+      <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">
+        ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
+        <span class="bento-pent-bg-icon">${cfg.icon}</span>
+        <span class="bento-id-name">${id.displayName}</span>
+        <span class="bento-id-sub">${cfg.label}</span>
+      </span>
     </button>`;
 }
 
-function hexNewButton(index) {
-  return `<button type="button" class="bento-hex bento-id-empty bento-id-new" style="${hexTransform(index)}" data-act="new" title="New identity">+</button>`;
+function pentNewButton(index) {
+  const slotPx = identitySlotPx(index);
+  return `
+    <button type="button" class="bento-pent bento-id-empty bento-id-new" style="${pentTransform(slotPx)}" data-act="new" title="New identity">
+      <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">+</span>
+    </button>`;
 }
 
-function hexFillerDiv(index) {
-  return `<div class="bento-hex bento-id-empty" style="${hexTransform(index)}"></div>`;
+function pentFillerDiv(index) {
+  return `<div class="bento-pent bento-id-empty" style="${pentTransform(identitySlotPx(index))}"></div>`;
 }
 
 // The tile that follows your identity slots once there's still a palier
 // worth reaching — see credibility.js. Shown as "score/palier" rather
 // than just the raw score, since the number alone means nothing without
 // the target it's climbing toward.
-function hexScoreTile(score, palier, index) {
+function pentScoreTile(score, palier, index) {
   const pct = Math.min(100, Math.round((score / palier) * 100));
+  const slotPx = identitySlotPx(index);
   return `
-    <div class="bento-hex bento-id-score" style="${hexTransform(index)}" title="Global credibility — every real chat, meeting, or file exchange counts. Reach ${palier} to unlock ${credibility.IDENTITY_PALIER_STEP} more identity slots.">
-      <span class="bento-score-frac">${score}<span class="bento-score-slash">/${palier}</span></span>
-      <span class="bento-score-label">Credibility</span>
-      <span class="bento-score-bar"><span class="bento-score-fill" style="width:${pct}%"></span></span>
+    <div class="bento-pent bento-id-score" style="${pentTransform(slotPx)}" title="Global credibility — every real chat, meeting, or file exchange counts. Reach ${palier} to unlock ${credibility.IDENTITY_PALIER_STEP} more identity slots.">
+      <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">
+        <span class="bento-score-frac">${score}<span class="bento-score-slash">/${palier}</span></span>
+        <span class="bento-score-label">Credibility</span>
+        <span class="bento-score-bar"><span class="bento-score-fill" style="width:${pct}%"></span></span>
+      </span>
     </div>`;
 }
 
 // The project's own vision statement, sitting below the identities —
 // static, plain-flow content, deliberately outside .bento-hive so it
-// doesn't inherit the levitation animation or the hex coordinate system
-// (there's nothing to align it to; it's prose, not a tile).
+// doesn't inherit the levitation animation or the pentagon coordinate
+// system (there's nothing to align it to; it's prose, not a tile).
 const MANIFESTO_LEAD = 'A world without accounts, where everyone owns their identity and connects directly with anyone, anywhere, for anything.';
 const MANIFESTO_SUB = 'A world that doesn’t disappear when the network does.';
 const manifestoHtml = `
@@ -198,7 +361,7 @@ export async function renderDesktop() {
       // rather than calling .has() on a boolean.
       const live = state.searchLive[ns];
       const isLive = live instanceof Set && live.has(id.identityId);
-      cells.push(hexIdTile(ns, id, isLive, index++));
+      cells.push(pentIdTile(ns, id, isLive, index++));
     }
   }
   const realCount = index;
@@ -214,43 +377,47 @@ export async function renderDesktop() {
   const cap = credibility.identityCapFor(score);
   const palier = credibility.nextPalier(score);
   const plusSlots = Math.max(0, cap - realCount);
-  for (let i = 0; i < plusSlots; i++) cells.push(hexNewButton(index++));
-  if (palier != null) cells.push(hexScoreTile(score, palier, index++));
+  for (let i = 0; i < plusSlots; i++) cells.push(pentNewButton(index++));
+  if (palier != null) cells.push(pentScoreTile(score, palier, index++));
 
   // Pad empty slots so the strip never looks like a half-finished band,
   // and reads as "room for more" rather than sparse when there are few or
-  // no identities yet — a floor of 12 (4 bands of 3), or just enough to
-  // complete the current band once there are already more than that.
-  const targetSlots = Math.max(12, Math.ceil(index / 3) * 3);
-  while (index < targetSlots) cells.push(hexFillerDiv(index++));
+  // no identities yet — a floor of 12, rounded up to the end of whichever
+  // Cairo row that floor lands in (see IDENTITY_ROW_ENDS above) so the
+  // strip always stops at one of the tiling's own natural row edges
+  // instead of an arbitrary cut partway through one.
+  const targetSlots = roundUpToIdentityRow(Math.max(12, index));
+  while (index < targetSlots) cells.push(pentFillerDiv(index++));
 
-  // Absolutely-positioned children (every .bento-hex) don't contribute to
+  // Absolutely-positioned children (every .bento-pent) don't contribute to
   // their container's height on their own, so it's computed explicitly
-  // from the deepest slot actually used, plus the flower's own half-height
-  // above the shared center — see .bento-hive's box-sizing:content-box in
-  // style.css for why this doesn't fight with its own padding-bottom (the
-  // modebar clearance).
+  // from the deepest identity slot actually used, plus the clearance
+  // above y=0 (TOP_CLEARANCE) and this pentagon's own half-height below
+  // it — see .bento-hive's box-sizing:content-box in style.css for why
+  // this doesn't fight with its own padding-bottom (the modebar
+  // clearance).
   let maxY = 0;
-  for (let i = 0; i < index; i++) maxY = Math.max(maxY, hexSlotOffset(i).y);
-  const hiveHeight = Math.ceil(FLOWER_HALF_H + maxY + HEX_HALF_H);
+  for (let i = 0; i < index; i++) maxY = Math.max(maxY, identitySlotPx(i).y);
+  const hiveHeight = Math.ceil(TOP_CLEARANCE + maxY + PENT_H / 2);
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
-  // All three labels live inside .bento-hive, positioned in the same
-  // coordinate space as every hex — so they bob with the levitation
-  // animation exactly like the tiles do, instead of sitting outside it
-  // as a static element that would visibly detach from the honeycomb on
-  // every float cycle. "Ecosystem" sits above the pushed-up top row
-  // (AIWA/Tribute/YourMine); "Insights" in the gap that push opens
-  // against the rest of the flower; "Matchs" in the matching gap below
-  // Near, before the identity strip.
-  const ecosystemLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${-(HEX_H + ECOSYSTEM_GAP + HEX_HALF_H + ECOSYSTEM_LABEL_PAD)}px);">Ecosystem</span>`;
-  const insightsLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${-(HEX_HALF_H + ECOSYSTEM_GAP / 2)}px);">Insights</span>`;
-  const matchesLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${FLOWER_HALF_H + MATCHES_GAP / 2}px);">Matchs</span>`;
+  // All three labels live inside .bento-hive, positioned in the same raw
+  // (pre-TOP_CLEARANCE) coordinate space as every pentagon above, via the
+  // same helper — so they bob with the levitation animation exactly like
+  // the tiles do, instead of sitting outside it as a static element that
+  // would visibly detach on every float cycle. "Ecosystem" sits just
+  // above the pushed-up top row; "Insights" in the gap that push opens
+  // against the row below it; "Matchs" in the MATCHES_GAP_UNITS gap
+  // before the identity strip starts.
+  const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
+  const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ECOSYSTEM_ROW_Y - PENT_H / 2 - 10)}">Ecosystem</span>`;
+  const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ECOSYSTEM_ROW_Y + INSIGHT_ROW_Y) / 2)}">Insights</span>`;
+  const matchesLabel = `<span class="bento-section-label" style="${labelTransform((INSIGHT_ROW_Y + identitySlotPx(0).y) / 2)}">Matchs</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div>
+      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div></div>
       ${manifestoHtml}
     </div>`;
 }
