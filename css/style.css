@@ -55,11 +55,26 @@ a{color:var(--agent);}
 .modebar-side-right{ justify-content:flex-end; }
 .modebar-side .stat{ display:flex; align-items:center; gap:4px; white-space:nowrap; }
 .modebar-side .stat b{ color:var(--mid); font-family:var(--font-mono); font-weight:500; }
+/* Looked like plain text before (no border/background at all) — nothing
+   said "button" about it besides the cursor. A visible pill (the same
+   border+radius language every other pill control in the app already
+   uses) plus a hover/active state makes it read as one. */
 .brand-mini{
   font-family:var(--font-head); font-weight:700; font-size:13px; display:flex; align-items:center; gap:5px;
-  flex:0 0 auto; cursor:pointer; border:none; background:none; padding:2px 4px; color:var(--hi);
+  flex:0 0 auto; cursor:pointer; color:var(--hi);
+  border:1px solid var(--border); background:var(--panel-raised); border-radius:20px; padding:5px 12px;
+  transition:background .15s ease, border-color .15s ease;
 }
+.brand-mini:hover{ background:var(--panel); border-color:var(--mid); }
+.brand-mini:active{ filter:brightness(1.15); }
 .brand-mini .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
+.github-link{
+  display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+  width:28px; height:28px; border-radius:50%; color:var(--low);
+  border:1px solid var(--border); background:var(--panel-raised);
+  transition:color .15s ease, background .15s ease, border-color .15s ease;
+}
+.github-link:hover{ color:var(--hi); background:var(--panel); border-color:var(--mid); }
 
 /* ---------- BUREAU (the home screen — desktop-ui.js) ---------- */
 .desktop{ max-width:720px; margin:0 auto; padding:8px 4px 24px; }
