@@ -122,19 +122,15 @@ a{color:var(--agent);}
    line ends up hidden behind the fixed bar instead of scrollable clear
    of it. */
 .bureau-manifesto{
-  max-width:520px; margin:32px auto 0; text-align:center;
+  max-width:440px; margin:32px auto 0; text-align:center;
   padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom));
 }
 .bureau-manifesto-rule{ width:36px; height:3px; margin:0 auto 20px; border-radius:2px; background:var(--accent); }
 .bureau-manifesto-lead{
   font-family:var(--font-head); font-weight:600; font-size:18px; line-height:1.45;
-  letter-spacing:-.01em; color:var(--hi); margin:0 0 28px;
+  letter-spacing:-.01em; color:var(--hi); margin:0 0 10px;
 }
-.bureau-manifesto-line{
-  text-align:left; font-size:13px; line-height:1.65; color:var(--mid);
-  border-left:2px solid var(--border); padding-left:14px; margin:0 0 16px;
-}
-.bureau-manifesto-line:last-child{ margin-bottom:0; }
+.bureau-manifesto-sub{ font-size:13px; line-height:1.5; color:var(--low); }
 
 /* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
    center on Messages, six more tiled flush around it — 6 is exactly how
