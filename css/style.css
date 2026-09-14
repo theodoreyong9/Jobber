@@ -402,7 +402,6 @@ h2.section-title{ font-family:var(--font-head); font-size:15px; font-weight:600;
 .funnel .stage:last-child{ border-right:none; background:linear-gradient(180deg, rgba(241,85,44,.08), transparent); }
 .funnel .stage .n{ font-family:var(--font-mono); font-size:19px; font-weight:500; }
 .funnel .stage .lbl{ font-size:10.5px; color:var(--low); margin-top:2px; }
-.funnel .arrow{ display:flex; align-items:center; padding:0 2px; color:var(--low); font-size:13px; }
 
 .panel{ border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); padding:14px 16px; margin-bottom:14px; }
 .panel .k{ font-size:11px; color:var(--low); margin-bottom:6px; }
