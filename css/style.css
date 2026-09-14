@@ -116,8 +116,8 @@ a{color:var(--agent);}
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
 /* .workspace-bureau zeroes .workspace's own side/top/bottom padding (see
-   above) so the hex tiles can sit edge-to-edge — .bento-hive restores its
-   own bottom clearance for that reason, and since this comes after it,
+   above) so the pentagon tiles can sit edge-to-edge — .bento-hive restores
+   its own bottom clearance for that reason, and since this comes after it,
    it needs the exact same modebar-clearance padding-bottom, or its last
    line ends up hidden behind the fixed bar instead of scrollable clear
    of it. */
@@ -132,39 +132,43 @@ a{color:var(--agent);}
 }
 .bureau-manifesto-sub{ font-size:13px; line-height:1.5; color:var(--low); }
 
-/* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
-   center on Messages, six more tiled flush around it — 6 is exactly how
-   many regular hexagons fit touching one, so 7 tools tile perfectly with
-   nothing left over) and the identity strip below them are positioned in
-   the SAME coordinate space, all measured from Messages' own center
-   (see desktop-ui.js's FLOWER_HALF_H/hexSlotOffset). Two separate
-   containers each with their own origin left a visible seam between
-   them; one container fixes that by construction, since the identity
-   strip's rows are just a continuation of the tools' own column
-   sequence, not a fresh grid starting after it.
-   Sizing is real hex geometry, not an approximation: for a flat-top
-   hexagon of circumradius s, width=2s and height=s√3 (140px/121.24px
-   below, s=70) — matching that ratio is what makes edge-to-edge tiling
-   actually meet without a gap or overlap. Neighbor offsets follow the
-   standard flat-top hex-grid formula (horizontal spacing = 0.75×width,
-   vertical spacing = height, with side neighbors split ±height/2) — see
-   e.g. redblobgames' hex grid guide for the same math.
-   Height is set inline per render (position:absolute children don't
-   size their parent on their own); box-sizing:content-box keeps that
-   explicit height purely about the hex content, so the modebar-clearance
+/* One shared tiling, not two stacked grids: the 7 tools (a 3-tile
+   "Ecosystem" row over a 4-tile "Insight" row — a regular hexagon can
+   ring itself with 6 neighbors, but a regular pentagon can't tile at
+   all on its own; see desktop-ui.js's Cairo-tiling comment) and the
+   identity strip below them are positioned in the SAME coordinate
+   space, all measured from the same y=0 line (desktop-ui.js's
+   TOP_CLEARANCE/pentTransform). One container fixes what two separate
+   ones would leave as a visible seam, since the identity strip is just
+   a continuation of the real generated tiling, not a fresh grid
+   starting after it.
+   Sizing is real Cairo-pentagon geometry, not an approximation: for the
+   120/120/90/120/90° pentagon with one short edge and four long edges
+   of length s (145.49px/114.75px below, s=84), width=s√3 and
+   height=s(√3+1)/2 — matching that ratio, plus the clip-path below, is
+   what makes edge-to-edge tiling actually meet without a gap or
+   overlap (verified by brute-force edge-matching before this went near
+   CSS — see desktop-ui.js).
+   Width and height are both set inline per render (position:absolute
+   children don't size their parent on their own; width also depends on
+   PENT_EDGE, so it's computed once alongside height rather than
+   hardcoded here) — box-sizing:content-box keeps that explicit height
+   purely about the tiling content, so the modebar-clearance
    padding-bottom below still adds on top of it instead of eating into
-   it. */
+   it. .bento-hive-scroll lets a viewport narrower than the tiling
+   scroll horizontally instead of clipping tiles outright. */
+.bento-hive-scroll{ width:100%; overflow-x:auto; overflow-y:visible; }
 .bento-hive{
-  position:relative; width:350px; margin:74px auto 0; box-sizing:content-box;
+  position:relative; margin:74px auto 0; box-sizing:content-box;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
   animation:hiveFloat 4s ease-in-out infinite; will-change:transform;
 }
-/* The whole honeycomb (flower + identity strip) bobs as one rigid block,
-   not each hex independently — they tile edge-to-edge with zero gap by
+/* The whole tiling (tools + identity strip) bobs as one rigid block, not
+   each pentagon independently — they tile edge-to-edge with zero gap by
    construction (see the comment above), and floating them on separate
    phases would pull that tiling apart at every peak/trough. transform
    alone (no layout properties) keeps this on the compositor, cheap
-   regardless of how many hex cells are currently rendered below it. */
+   regardless of how many pentagon cells are currently rendered below it. */
 @keyframes hiveFloat{
   0%, 100%{ transform:translateY(0); }
   50%{ transform:translateY(-8px); }
@@ -172,17 +176,16 @@ a{color:var(--agent);}
 @media (prefers-reduced-motion: reduce){
   .bento-hive{ animation:none; }
 }
-.bento-hive .bento-hex{ top:181.86px; left:50%; }
+.bento-hive .bento-pent{ top:0; left:50%; }
 .bento-section-label{
-  position:absolute; top:181.86px; left:50%; z-index:1; pointer-events:none;
+  position:absolute; top:0; left:50%; z-index:1; pointer-events:none;
   font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.08em;
   color:var(--low); white-space:nowrap;
 }
-.bento-hex{
-  position:absolute; width:140px; height:121.24px; z-index:1;
-  clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
-  border:none; cursor:pointer; font-family:inherit; color:var(--hi);
+.bento-pent{
+  position:absolute; width:145.49px; height:114.75px; z-index:1;
+  clip-path:polygon(28.8675% 0%, 71.1325% 0%, 100% 63.3975%, 50% 100%, 0% 63.3975%);
+  border:none; cursor:pointer; font-family:inherit; color:var(--hi); padding:0;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
   backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   background:
@@ -191,56 +194,54 @@ a{color:var(--agent);}
       color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 16%,
       var(--tile-color, var(--border)) 55%,
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
-  transition:transform .15s ease, filter .12s ease;
+  transition:filter .12s ease;
 }
-.bento-hex:active{ filter:brightness(1.15); }
-.bento-hex.pos-center{ transform:translate(-50%,-50%); z-index:2; }
-.bento-hex.pos-0{ transform:translate(-50%,-50%) translate(105px,60.62px); }
-.bento-hex.pos-2{ transform:translate(-50%,-50%) translate(-105px,60.62px); }
-.bento-hex.pos-4{ transform:translate(-50%,-50%) translate(0,121.24px); }
-/* pos-1/pos-3/pos-5 (the top row: Creator/Tribute/Wallet — Ecosystem)
-   get an extra 28px pushed further up on top of their normal hex-grid
-   spot (must match desktop-ui.js's ECOSYSTEM_GAP, used to place the
-   "Insights"/"Écosystème" labels in that same opening), opening a light
-   gap against the Insight cluster below (center + pos-0/pos-2/pos-4) —
-   the three of them still move together, so they stay flush with *each
-   other*, only pulling away from the rest. */
-.bento-hex.pos-1{ transform:translate(-50%,-50%) translate(105px,-88.62px); }
-.bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-88.62px); }
-.bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-149.24px); }
+.bento-pent:active{ filter:brightness(1.15); }
+/* The tile itself (.bento-pent) carries the tiling rotation, so its
+   clip-path traces the right edges — but that rotation would turn its
+   own content sideways too if the content lived directly inside it.
+   .bento-pent-face is a same-size absolutely-positioned child carrying
+   the opposite rotation (see pentFaceStyle in desktop-ui.js): the two
+   cancel for its own content while the outer box (and clip-path drawn
+   from it) stays visually rotated — so icon/label/badge read upright in
+   every one of the tiling's 4 orientations. */
+.bento-pent-face{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+}
 /* The emoji as a faint tilted watermark tucked in the bottom-right
    corner — the same treatment as .product-bg-icon's oversized rotated
    glyph, not a big centered fill — instead of a small icon sitting above
    the label like a title. position:absolute takes it out of the flex
    flow entirely (so the label centers on its own), and clip-path on the
-   parent .bento-hex crops it to the hex shape for free — kept closer to
-   center than .product-bg-icon's own offset since a hex's corners are
-   cut away by that same clip-path and would just chop the glyph off.
-   z-index:0 (paired with position:relative;z-index:1 on the text below)
-   keeps it behind the label instead of painting over it — a plain
-   position:absolute child would otherwise paint AFTER static in-flow
-   siblings per normal stacking rules, i.e. on top, backwards from what's
-   wanted here. */
-.bento-hex-bg-icon{
+   ancestor .bento-pent crops it to the pentagon shape for free — kept
+   closer to center than .product-bg-icon's own offset since a
+   pentagon's corners are cut away by that same clip-path and would just
+   chop the glyph off. z-index:0 (paired with position:relative;z-index:1
+   on the text below) keeps it behind the label instead of painting over
+   it — a plain position:absolute child would otherwise paint AFTER
+   static in-flow siblings per normal stacking rules, i.e. on top,
+   backwards from what's wanted here. */
+.bento-pent-bg-icon{
   position:absolute; z-index:0; pointer-events:none; line-height:1;
-  right:10px; bottom:2px; font-size:42px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
+  right:10px; bottom:2px; font-size:38px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
 }
-.bento-hex-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:13px; line-height:1.15; text-align:center; padding:0 10px; color:#000; }
-.bento-hex-badge{
+.bento-pent-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:12.5px; line-height:1.15; text-align:center; padding:0 10px; color:#000; }
+.bento-pent-badge{
   position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
 }
-.bento-hex-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
-.bento-hex-badge.count{ background:var(--bad); color:#1A0507; font-size:9px; min-width:16px; text-align:center; }
+.bento-pent-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
+.bento-pent-badge.count{ background:var(--bad); color:#1A0507; font-size:9px; min-width:16px; text-align:center; }
 
 /* No border, no extra box-shadow here — both are drawn along the
-   element's rectangular box and only clipped to the hexagon afterward,
-   so they used to show only on the flat top/bottom edges (where the
-   rectangle and the hex boundary coincide) and vanish on the slanted
-   sides, leaving stray white line segments instead of a clean outline.
-   Falling through to .bento-hex's own single subtle inset (which has
-   the same limitation, but at low enough opacity it isn't visible) is
-   what keeps these tiles looking like the rest of the honeycomb. */
+   element's rectangular box and only clipped to the pentagon afterward,
+   so they used to show only on the flat top edge (where the rectangle
+   and the pentagon boundary coincide) and vanish on the slanted sides,
+   leaving stray white line segments instead of a clean outline. Falling
+   through to .bento-pent's own single subtle inset (which has the same
+   limitation, but at low enough opacity it isn't visible) is what keeps
+   these tiles looking like the rest of the tiling. */
 .bento-id-tile{
   padding:6px; text-align:center; color:var(--hi);
   background:
