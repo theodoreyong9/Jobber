@@ -74,7 +74,11 @@ const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 // .bento-hex.pos-N rules in style.css for the actual offsets. There's no
 // room on a hex for the old sub-text (live counts, "opt-in radius" etc.)
 // — icon, label, and badge only.
-const TOOL_ORDER = ['messages', 'agent', 'creator', 'wallet', 'tribute', 'near', 'pricing'];
+// Grouped so the top row (pos-5/pos-3/pos-1) is Ecosystem (wallet,
+// tribute, creator) and the rest (center + pos-2/pos-0/pos-4) is Insight
+// (messages, pricing, near, agent) — see the extra gap between them in
+// style.css's .pos-1/.pos-3/.pos-5 rules.
+const TOOL_ORDER = ['messages', 'agent', 'creator', 'pricing', 'tribute', 'near', 'wallet'];
 
 function wheelToolTile(ns, pos, pendingCount) {
   const cfg = NS_CONFIG[ns];
@@ -104,13 +108,21 @@ const HEX_COL_SPACING = 105;
 // Messages, so its own outermost edge sits 1.5 hex-heights from center —
 // the identity strip's first band continues right after that same edge.
 const FLOWER_HALF_H = 1.5 * HEX_H;
+// A light gap (plus the "Matchs" label, see renderDesktop) between the
+// flower's Insight cluster — Messages/Pricing/Near/Agent, ending at
+// Near's bottom vertex — and the identity strip below it, matching the
+// same kind of gap the flower's own Ecosystem row carries above (style
+// .pos-1/.pos-3/.pos-5): three named zones (Ecosystem, Insight, and the
+// identities themselves), lightly separated rather than one unbroken
+// honeycomb.
+const MATCHES_GAP = 28;
 
 function hexSlotOffset(index) {
   const band = Math.floor(index / 3) + 1;
   const posInBand = index % 3;
-  if (posInBand === 0) return { x: -HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
-  if (posInBand === 1) return { x: HEX_COL_SPACING, y: HEX_HALF_H + band * HEX_H };
-  return { x: 0, y: HEX_H + band * HEX_H };
+  if (posInBand === 0) return { x: -HEX_COL_SPACING, y: MATCHES_GAP + HEX_HALF_H + band * HEX_H };
+  if (posInBand === 1) return { x: HEX_COL_SPACING, y: MATCHES_GAP + HEX_HALF_H + band * HEX_H };
+  return { x: 0, y: MATCHES_GAP + HEX_H + band * HEX_H };
 }
 
 function hexTransform(index) {
@@ -198,10 +210,11 @@ export async function renderDesktop() {
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
+  const matchesLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${FLOWER_HALF_H + MATCHES_GAP / 2}px);">Matchs</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${cells.join('')}</div>
+      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${matchesLabel}${cells.join('')}</div>
     </div>`;
 }
 
