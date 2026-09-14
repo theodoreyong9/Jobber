@@ -202,12 +202,16 @@ a{color:var(--agent);}
 .bento-hex-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
 .bento-hex-badge.count{ background:var(--bad); color:#1A0507; font-size:9px; min-width:16px; text-align:center; }
 
+/* No border, no extra box-shadow here — both are drawn along the
+   element's rectangular box and only clipped to the hexagon afterward,
+   so they used to show only on the flat top/bottom edges (where the
+   rectangle and the hex boundary coincide) and vanish on the slanted
+   sides, leaving stray white line segments instead of a clean outline.
+   Falling through to .bento-hex's own single subtle inset (which has
+   the same limitation, but at low enough opacity it isn't visible) is
+   what keeps these tiles looking like the rest of the honeycomb. */
 .bento-id-tile{
   padding:6px; text-align:center; color:var(--hi);
-  border:1.5px solid rgba(255,255,255,.85);
-  box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.28), inset 0 2px 5px rgba(255,255,255,.22),
-    0 0 18px -2px color-mix(in srgb, var(--tile-color, transparent) 70%, transparent);
   background:
     radial-gradient(140% 140% at 30% 15%,
       #fff 0%,
