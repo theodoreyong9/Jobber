@@ -76,6 +76,12 @@ async function buildDiscoveryPayload(ns, id, profile) {
         payload.contactValue = profile.contactValue;
         payload.participantLimit = profile.participantLimit;
       }
+    } else if (ns === 'info') {
+      // Same direction as Outdoor: the supply side (Source) has the actual
+      // content — the whole point is for Seekers to be able to read it.
+      // No extra fields beyond that; matching is pure keyword overlap,
+      // same baseline as Dating/generic, no hard-filterable range.
+      if (isSupply) payload.postingText = profile.sourceText;
     }
   }
   return payload;
@@ -389,7 +395,7 @@ export async function renderClassicWorkspace(ns) {
     // opposite direction there.
     const previewFromSupplySide = ns !== 'outdoor';
     const postingPreview = ((previewFromSupplySide ? isSupplySide : !isSupplySide) && p.postingText)
-      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
+      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : ns === 'info' ? 'shared' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
 
     return `
         <div class="card" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
