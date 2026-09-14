@@ -57,7 +57,9 @@ import * as identity from './identity.js';
 export const PRODUCTS = [
   { id: 'free', name: 'Free (Connected)', shipped: true, icon: '🌐', color: '#2FBF71', price: null,
     body: `Discovery, chat, meetings, and files travel directly between browsers over WebRTC — free
-           forever, for every identity in this browser.` },
+           forever, for every identity in this browser. Includes local AI enrichment and Agent's
+           cross-namespace matching too — Booster AI and Agent Booster are optional upgrades on top
+           of this, not what unlocks it.` },
   { id: 'gossip', name: 'Gossip', shipped: false, icon: '📡', color: '#4DD0E1', price: 1,
     body: `Peers relay and hold your messages while you're offline.` },
   { id: 'aiwa', name: 'AIWA', shipped: false, icon: '⛓️', color: '#5B6EE8', price: 2,
