@@ -100,6 +100,10 @@ a{color:var(--agent);}
    render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
+.bento-zone-heading{
+  margin:0; text-align:center; font-size:10px; font-weight:600;
+  text-transform:uppercase; letter-spacing:.08em; color:var(--low);
+}
 
 /* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
    center on Messages, six more tiled flush around it — 6 is exactly how
@@ -124,7 +128,7 @@ a{color:var(--agent);}
    padding-bottom below still adds on top of it instead of eating into
    it. */
 .bento-hive{
-  position:relative; width:350px; margin:32px auto 0; box-sizing:content-box;
+  position:relative; width:350px; margin:46px auto 0; box-sizing:content-box;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
   animation:hiveFloat 4s ease-in-out infinite; will-change:transform;
 }
@@ -168,13 +172,15 @@ a{color:var(--agent);}
 .bento-hex.pos-2{ transform:translate(-50%,-50%) translate(-105px,60.62px); }
 .bento-hex.pos-4{ transform:translate(-50%,-50%) translate(0,121.24px); }
 /* pos-1/pos-3/pos-5 (the top row: Creator/Tribute/Wallet — Ecosystem)
-   get an extra 14px pushed further up on top of their normal hex-grid
-   spot, opening a light gap against the Insight cluster below (center +
-   pos-0/pos-2/pos-4) — the three of them still move together, so they
-   stay flush with *each other*, only pulling away from the rest. */
-.bento-hex.pos-1{ transform:translate(-50%,-50%) translate(105px,-74.62px); }
-.bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-74.62px); }
-.bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-135.24px); }
+   get an extra 28px pushed further up on top of their normal hex-grid
+   spot (must match desktop-ui.js's ECOSYSTEM_GAP, used to place the
+   "Insights"/"Écosystème" labels in that same opening), opening a light
+   gap against the Insight cluster below (center + pos-0/pos-2/pos-4) —
+   the three of them still move together, so they stay flush with *each
+   other*, only pulling away from the rest. */
+.bento-hex.pos-1{ transform:translate(-50%,-50%) translate(105px,-88.62px); }
+.bento-hex.pos-3{ transform:translate(-50%,-50%) translate(-105px,-88.62px); }
+.bento-hex.pos-5{ transform:translate(-50%,-50%) translate(0,-149.24px); }
 /* The emoji as a faint tilted watermark tucked in the bottom-right
    corner — the same treatment as .product-bg-icon's oversized rotated
    glyph, not a big centered fill — instead of a small icon sitting above
