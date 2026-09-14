@@ -40,7 +40,33 @@ export async function renderPricingWorkspace() {
       <h2 class="section-title" style="margin-bottom:6px">Pricing</h2>
       <p class="section-sub">What Jobber costs, and why.</p>
 
-      <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+      <h3 class="section-title" style="font-size:14px;margin-top:22px;margin-bottom:10px">How does it work?</h3>
+      <div class="pricing-steps">
+        <div class="pricing-step">
+          <span class="pricing-step-num">1</span>
+          <div>
+            <div class="pricing-step-title">Create your identity</div>
+            <div class="pricing-step-body">No account. Keep your browser, or back up your private key.</div>
+          </div>
+        </div>
+        <div class="pricing-step">
+          <span class="pricing-step-num">2</span>
+          <div>
+            <div class="pricing-step-title">Choose your capabilities</div>
+            <div class="pricing-step-body">Free or paid, with automatic renewal for paid capabilities.</div>
+          </div>
+        </div>
+        <div class="pricing-step">
+          <span class="pricing-step-num">3</span>
+          <div>
+            <div class="pricing-step-title">Use Jobber</div>
+            <div class="pricing-step-body">Your identity and capabilities follow you — no central customer account.</div>
+          </div>
+        </div>
+      </div>
+      <p class="pricing-warning">Important: if you lose your private key and your local data, your identity can't be recovered.</p>
+
+      <div style="margin-top:18px;display:flex;flex-direction:column;gap:10px">
         ${products.join('')}
       </div>
     </div>
