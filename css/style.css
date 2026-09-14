@@ -100,10 +100,6 @@ a{color:var(--agent);}
    render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
-.bento-zone-heading{
-  margin:0; text-align:center; font-size:10px; font-weight:600;
-  text-transform:uppercase; letter-spacing:.08em; color:var(--low);
-}
 
 /* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
    center on Messages, six more tiled flush around it — 6 is exactly how
@@ -128,7 +124,7 @@ a{color:var(--agent);}
    padding-bottom below still adds on top of it instead of eating into
    it. */
 .bento-hive{
-  position:relative; width:350px; margin:46px auto 0; box-sizing:content-box;
+  position:relative; width:350px; margin:74px auto 0; box-sizing:content-box;
   padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
   animation:hiveFloat 4s ease-in-out infinite; will-change:transform;
 }
