@@ -120,6 +120,11 @@ const MATCHES_GAP = 28;
 // only to place the "Insights" label in the gap it opens, not to move
 // any hex (that's pure CSS, these three are static positions).
 const ECOSYSTEM_GAP = 28;
+// How far above the pushed-up top row (AIWA/Tribute/YourMine) the
+// "Ecosystem" label sits — purely visual padding, there's no second gap
+// to center it in the way Insights/Matchs have, since this is the
+// flower's own outer edge.
+const ECOSYSTEM_LABEL_PAD = 20;
 
 function hexSlotOffset(index) {
   const band = Math.floor(index / 3) + 1;
@@ -214,20 +219,21 @@ export async function renderDesktop() {
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
-  // "Insights" sits in the gap between the Ecosystem row and the rest of
-  // the flower (style.css's .pos-1/.pos-3/.pos-5 push); "Matchs" in the
-  // matching gap below Near, before the identity strip. "Écosystème"
-  // itself isn't part of this absolutely-positioned coordinate system at
-  // all — it has nothing but open margin above it, so it's a plain
-  // in-flow heading before .bento-hive instead (see the CSS comment on
-  // .bento-hive's margin-top for why that margin is sized the way it is).
+  // All three labels live inside .bento-hive, positioned in the same
+  // coordinate space as every hex — so they bob with the levitation
+  // animation exactly like the tiles do, instead of sitting outside it
+  // as a static element that would visibly detach from the honeycomb on
+  // every float cycle. "Ecosystem" sits above the pushed-up top row
+  // (AIWA/Tribute/YourMine); "Insights" in the gap that push opens
+  // against the rest of the flower; "Matchs" in the matching gap below
+  // Near, before the identity strip.
+  const ecosystemLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${-(HEX_H + ECOSYSTEM_GAP + HEX_HALF_H + ECOSYSTEM_LABEL_PAD)}px);">Ecosystem</span>`;
   const insightsLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${-(HEX_HALF_H + ECOSYSTEM_GAP / 2)}px);">Insights</span>`;
   const matchesLabel = `<span class="bento-section-label" style="transform:translate(-50%,-50%) translate(0px,${FLOWER_HALF_H + MATCHES_GAP / 2}px);">Matchs</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-zone-heading">Écosystème</div>
-      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${insightsLabel}${matchesLabel}${cells.join('')}</div>
+      <div class="bento-hive" style="height:${hiveHeight}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div>
     </div>`;
 }
 
