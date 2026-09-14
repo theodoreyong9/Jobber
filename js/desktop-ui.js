@@ -175,26 +175,21 @@ function hexScoreTile(score, palier, index) {
 // The project's own vision statement, sitting below the identities —
 // static, plain-flow content, deliberately outside .bento-hive so it
 // doesn't inherit the levitation animation or the hex coordinate system
-// (there's nothing to align it to; it's prose, not a tile).
-const MANIFESTO_LINES = [
-  'without login accounts, where everyone owns their own digital identities',
-  'where people can meet directly — for employment, business, leisure, research, and much more',
-  'where AI helps people meet, understand, and build, without becoming the authority',
-  'where anyone can create their own execution systems, without permission',
-  'where you can vote without an account and without a ballot',
-  'where forking becomes a mode of governance',
-  'able to withstand coordinated attacks, including by AIs',
-  'where the real world can connect directly to the digital world',
-  'where we can coordinate our personal and collective lives without a central entity',
-  'where even paying requires no customer account',
-  'where an Earth–Mars economy could work, despite the distance, communication delays, and the absence of instant coordination',
+// (there's nothing to align it to; it's prose, not a tile). The opening
+// line is the lede (bigger, brighter — the one-sentence version of the
+// whole thing); the rest expand on it at equal weight to each other.
+const MANIFESTO_LEAD = 'A world without accounts, where everyone owns their identity and connects directly with anyone, anywhere, for anything.';
+const MANIFESTO_BODY = [
+  'AI helps us meet, understand, and build — without becoming the authority.',
+  'Anyone can create, execute, vote, and fork — without asking permission.',
+  'A decentralized, attack-resistant network connecting people, payments, and the physical world without a central entity.',
+  'A civilization that can coordinate across planets — even Earth and Mars, despite distance, delay, and no instant coordination.',
 ];
 const manifestoHtml = `
   <div class="bureau-manifesto">
-    <p class="bureau-manifesto-lead">A world:</p>
-    <ul class="bureau-manifesto-list">
-      ${MANIFESTO_LINES.map((line) => `<li>${line}</li>`).join('')}
-    </ul>
+    <div class="bureau-manifesto-rule"></div>
+    <p class="bureau-manifesto-lead">${MANIFESTO_LEAD}</p>
+    ${MANIFESTO_BODY.map((p) => `<p class="bureau-manifesto-line">${p}</p>`).join('')}
   </div>`;
 
 export async function renderDesktop() {
