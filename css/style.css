@@ -68,13 +68,13 @@ a{color:var(--agent);}
 .brand-mini:hover{ background:var(--panel); border-color:var(--mid); }
 .brand-mini:active{ filter:brightness(1.15); }
 .brand-mini .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
-.github-link{
+.modebar-icon-btn{
   display:flex; align-items:center; justify-content:center; flex:0 0 auto;
   width:28px; height:28px; border-radius:50%; color:var(--low);
   border:1px solid var(--border); background:var(--panel-raised);
   transition:color .15s ease, background .15s ease, border-color .15s ease;
 }
-.github-link:hover{ color:var(--hi); background:var(--panel); border-color:var(--mid); }
+.modebar-icon-btn:hover{ color:var(--hi); background:var(--panel); border-color:var(--mid); }
 
 /* ---------- BUREAU (the home screen — desktop-ui.js) ---------- */
 .desktop{ max-width:720px; margin:0 auto; padding:8px 4px 24px; }
