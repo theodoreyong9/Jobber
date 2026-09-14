@@ -115,6 +115,22 @@ a{color:var(--agent);}
    render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
 .bureau{ width:100%; position:relative; }
+/* .workspace-bureau zeroes .workspace's own side/top/bottom padding (see
+   above) so the hex tiles can sit edge-to-edge — .bento-hive restores its
+   own bottom clearance for that reason, and since this comes after it,
+   it needs the exact same modebar-clearance padding-bottom, or its last
+   line ends up hidden behind the fixed bar instead of scrollable clear
+   of it. */
+.bureau-manifesto{
+  max-width:480px; margin:8px auto 0; text-align:center;
+  padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom));
+}
+.bureau-manifesto-lead{ font-family:var(--font-head); font-weight:600; font-size:13px; color:var(--mid); margin:0 0 8px; }
+.bureau-manifesto-list{
+  list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;
+  font-size:12px; line-height:1.5; color:var(--low);
+}
+.bureau-manifesto-list li::before{ content:'— '; color:var(--border); }
 
 /* One shared honeycomb, not two stacked grids: the 7 tools (one hex dead
    center on Messages, six more tiled flush around it — 6 is exactly how
