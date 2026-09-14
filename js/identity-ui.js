@@ -276,7 +276,10 @@ function rotateFlow(id) {
   openModal('Rotate identity', `<p style="font-size:12.5px;color:var(--mid)">A fresh keypair will be generated with the same name. The old id (#${id.identityId}) will be marked retired, and connected peers on this namespace will receive an <code>identity_retired</code> message.</p>`, {
     submitLabel: 'Rotate',
     onSubmit: async () => {
-      const wasLive = !!state.searchLive[id.namespace]?.has(id.identityId);
+      // Research's searchLive is a plain bool, not a Set (see state.js) —
+      // guard against it rather than calling .has() on a boolean.
+      const liveSet = state.searchLive[id.namespace];
+      const wasLive = liveSet instanceof Set && liveSet.has(id.identityId);
       const fresh = await identity.rotateIdentity(id.identityId);
       const room = p2p.getRoom(id.namespace);
       if (room) room.send('identity_retired', fresh.identityId, { retiredId: id.identityId, rotatedTo: fresh.identityId });
@@ -303,8 +306,11 @@ function retireFlow(id) {
     onSubmit: async () => {
       // Otherwise a retired identity keeps its p2p.js room registration —
       // still announcing itself and receiving messages under an id that no
-      // longer shows up anywhere in the UI to manage it.
-      if (state.searchLive[id.namespace]?.has(id.identityId)) {
+      // longer shows up anywhere in the UI to manage it. Research's
+      // searchLive is a plain bool, not a Set (see state.js) — guard
+      // against it rather than calling .has() on a boolean.
+      const liveSet = state.searchLive[id.namespace];
+      if (liveSet instanceof Set && liveSet.has(id.identityId)) {
         await state.handlers.toggleSearchLive(id.namespace, id.identityId);
       }
       await identity.retireIdentity(id.identityId);
