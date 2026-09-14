@@ -79,6 +79,8 @@ export function editProfileFlow(ns, id) {
       : roleTag === 'Service' ? 'Describe the service you offer'
       : roleTag === 'Offer' ? 'Describe your offer'
       : roleTag === 'Candidate' ? 'Résumé / skills'
+      : roleTag === 'Seeker' ? 'What are you looking for — keywords (this is what gets matched)'
+      : roleTag === 'Source' ? 'What you know — free text (this is what gets matched, and is shown to seekers as-is)'
       : isDating ? 'About me'
       : 'Source text (résumé / offer / listing — stays local, never sent as-is)';
 
