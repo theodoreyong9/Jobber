@@ -314,9 +314,13 @@ export async function renderClassicWorkspace(ns) {
   const credibilityBySender = new Map();
   for (const p of scored) credibilityBySender.set(p.sender, await credibility.computeCredibility(ns, p.sender));
 
-  const funnelHtml = cascade.stages.map((s, i) => `
+  // Skips the cascade's own first stage ("Discovered on network") — that
+  // count is the same thing the modebar's own "N peers" stat already
+  // shows, just rescoped to this namespace, so showing both read as a
+  // duplicate. cascade.pool itself (the actual filtered/ranked results)
+  // is untouched; this only trims what gets displayed.
+  const funnelHtml = cascade.stages.slice(1).map((s) => `
       <div class="stage"><div class="n">${s.count}</div><div class="lbl">${s.label}</div></div>
-      ${i < cascade.stages.length - 1 ? '<div class="arrow">→</div>' : ''}
     `).join('');
 
   const theirRoleLabel = cfg.kind === 'twoSided' ? roleLabel(ns, complementaryRole(ns, id.role)) : null;
