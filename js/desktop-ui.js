@@ -180,7 +180,11 @@ export async function renderDesktop() {
       // Every identity in a namespace can be live independently now — no
       // longer tied to whichever one happens to be the currently *viewed*
       // identity (state.activeIdentityId is a separate, UI-only concern).
-      const isLive = !!state.searchLive[ns]?.has(id.identityId);
+      // Research's searchLive is a plain bool, not a Set (see state.js) —
+      // guard against it the same way resolveLiveIdentity/near-ui.js do,
+      // rather than calling .has() on a boolean.
+      const live = state.searchLive[ns];
+      const isLive = live instanceof Set && live.has(id.identityId);
       cells.push(hexIdTile(ns, id, isLive, index++));
     }
   }
