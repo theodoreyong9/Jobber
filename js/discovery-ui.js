@@ -82,6 +82,17 @@ async function buildDiscoveryPayload(ns, id, profile) {
       // No extra fields beyond that; matching is pure keyword overlap,
       // same baseline as Dating/generic, no hard-filterable range.
       if (isSupply) payload.postingText = profile.sourceText;
+    } else if (ns === 'wallet' || ns === 'creator') {
+      // Same direction as Info: the Address holder's description is the
+      // whole point, meant to be read by Seekers. addressType/exactAddress
+      // only travel from the Address side — a Seeker's own exactAddress
+      // (if any) is a local filter on THEIR side (see renderClassicWorkspace's
+      // requiredExactAddress), never broadcast.
+      if (isSupply) {
+        payload.postingText = profile.sourceText;
+        payload.addressType = profile.addressType;
+        payload.exactAddress = profile.exactAddress;
+      }
     }
   }
   return payload;
@@ -243,6 +254,7 @@ async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
       postingText: p2.jobPostingText || p2.sourceText, photoDataUrl: p2.photoDataUrl,
       languages: p2.languages, availableNow: p2.availableNow,
       contactType: p2.contactType, contactValue: p2.contactValue, participantLimit: p2.participantLimit,
+      addressType: p2.addressType, exactAddress: p2.exactAddress,
     };
     const match = scoreAgainstPeer(cfg, myTokens, myLookingForTokens, peerLike);
     out.push({ ...peerLike, match });
@@ -292,6 +304,15 @@ export async function renderClassicWorkspace(ns) {
     // as every namespace's baseline. Location is still worth soft-ranking.
     softConstraints.country = profile.country;
     softConstraints.city = profile.city;
+  } else if (ns === 'wallet' || ns === 'creator') {
+    // Mirrors Employment/Business's own asymmetric hard-filter-when-present
+    // pattern, just for an exact string instead of a numeric range: a
+    // Seeker who already knows the exact address they're after only wants
+    // Address holders of that exact value; leaving it blank falls back to
+    // the namespace's baseline keyword matching on sourceText.
+    if (!isSupplySide && profile.exactAddress) {
+      hardConstraints.requiredExactAddress = profile.exactAddress.trim().toLowerCase();
+    }
   }
 
   const cascade = discovery.runCascade(peers, {
@@ -355,6 +376,15 @@ export async function renderClassicWorkspace(ns) {
         <span class="chip">${p.availableNow ? (isSupplySide ? 'Available now' : 'Still open') : 'Availability unknown'}</span>
       `;
     }
+    if (ns === 'wallet' || ns === 'creator') {
+      // exactAddress only ever travels on an Address holder's own
+      // broadcast (see buildDiscoveryPayload) — so it only ever shows up
+      // here on peer cards a Seeker is looking at, never the reverse.
+      return `
+        ${p.addressType ? `<span class="chip">${p.addressType}</span>` : ''}
+        ${!isSupplySide && p.exactAddress ? `<span class="chip mono">${p.exactAddress}</span>` : ''}
+      `;
+    }
     return `
       <span class="chip">${(p.languages || []).join(' / ') || 'no language declared'}</span>
       <span class="chip">${p.availableNow ? 'Available now' : 'Availability unknown'}</span>
@@ -389,13 +419,21 @@ export async function renderClassicWorkspace(ns) {
                 ? `You shared your ${doc.doc.replace('_', ' ')}.`
                 : `Received their ${doc.doc.replace('_', ' ')}: <button class="btn small ghost view-doc">View</button>`}
         </div>` : '';
-    // Outdoor is the one namespace where it's the supply side (organizer)
-    // whose text is worth previewing, not the demand side — see
-    // buildDiscoveryPayload's comment for why postingText travels the
-    // opposite direction there.
-    const previewFromSupplySide = ns !== 'outdoor';
+    // Employment/Business are the odd ones out: postingText travels from
+    // the DEMAND side there (a job ad/mission request, public unlike a
+    // CV), so the supply-side viewer (candidate/offer) is who should see
+    // the preview. Outdoor, Info, and AIWA/YourMine all go the other way
+    // — postingText comes from the SUPPLY side (organizer/Source/Address
+    // holder), meant for the demand-side viewer (participant/Seeker) to
+    // actually read — see each of buildDiscoveryPayload's own branches.
+    // Pre-existing bug this fixes: only Outdoor was ever excluded here,
+    // so Info's own Seekers could never see Source's shared text despite
+    // it being broadcast specifically for them (confirmed empirically —
+    // the <details> never rendered — before AIWA/YourMine hit the same
+    // pattern and made it worth tracking down).
+    const previewFromSupplySide = ns === 'employment' || ns === 'business';
     const postingPreview = ((previewFromSupplySide ? isSupplySide : !isSupplySide) && p.postingText)
-      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : ns === 'info' ? 'shared' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
+      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : ns === 'info' ? 'shared' : (ns === 'wallet' || ns === 'creator') ? 'address' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
 
     return `
         <div class="card" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
