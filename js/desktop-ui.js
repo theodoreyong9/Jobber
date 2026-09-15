@@ -62,7 +62,7 @@ function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
 // Still being built out — flagged on the Bureau so it's clear these
 // aren't finished features yet. Pricing counts too: only one of its five
 // tiers is real (see pricing-ui.js) — the rest of that page is "Soon".
-const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
+const COOKING = ['agent', 'pricing'];
 
 // --- Cairo pentagon tiling geometry -------------------------------------
 // A regular hexagon tiles the plane on its own; a regular pentagon
