@@ -96,32 +96,6 @@ a{color:var(--agent);}
 .desktop{ max-width:720px; margin:0 auto; padding:8px 4px 24px; }
 .desktop-section{ margin-bottom:22px; }
 .desktop-section-label{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:10px; }
-.desktop-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:10px; }
-.desktop-tile{
-  position:relative;
-  display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;
-  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-m);
-  padding:14px 8px; color:var(--hi); border-top:2px solid var(--tile-color, var(--border));
-}
-.desktop-tile:hover{ border-color:var(--mid); background:var(--panel-raised); }
-.desktop-tile-glyph{ font-size:22px; line-height:1; }
-.desktop-tile-label{ font-size:12px; font-weight:500; line-height:1.3; }
-.desktop-tile-sub{ font-size:10px; color:var(--low); }
-.desktop-tile-new{ border-style:dashed; color:var(--low); }
-.desktop-tile-new .desktop-tile-glyph{ color:var(--mid); }
-.desktop-tile-badge{
-  position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px;
-  border-radius:20px; background:var(--accent); color:#fff; font-size:10px; font-weight:700;
-  display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px var(--bg);
-}
-/* A status tag (e.g. "cooking") rather than a notification count — wider,
-   amber instead of the count badge's alert red, top edge instead of a
-   corner bubble so it doesn't read as "N unread". */
-.desktop-tile-badge-label{
-  top:-7px; right:auto; left:50%; transform:translateX(-50%); height:auto; min-width:0;
-  padding:2px 7px; border-radius:20px; background:var(--warn); color:#1A1400;
-  font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
-}
 
 /* ---------- BUREAU bento grid: big tiles stuck edge-to-edge, glass panes
    over the page's plain --bg. Scrolling itself is just .workspace's own
@@ -323,9 +297,39 @@ a{color:var(--agent);}
   display:flex; align-items:center; justify-content:center;
 }
 
-.mode-picker-group{ margin-bottom:14px; }
-.mode-picker-group:last-child{ margin-bottom:0; }
-.mode-picker-group-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--low); margin-bottom:8px; }
+/* "New identity" mode picker (desktop-ui.js's pentModePickerHtml) — the
+   same pentagon clip-path and radial-gradient tile language as the
+   Bureau's own .bento-pent, at a smaller fixed size (no rotation-driven
+   tiling math needed here beyond placing each tile's own pre-computed
+   x/y/rot — see buildPickerLayout). .mode-pent-face's counter-rotation
+   mirrors .bento-pent-face's for the same reason: the outer button
+   carries the tiling rotation, so its content needs the opposite
+   rotation to stay upright. */
+.mode-pent-grid{ position:relative; margin:6px auto 10px; }
+.mode-pent{
+  position:absolute; z-index:1;
+  clip-path:polygon(28.8675% 0%, 71.1325% 0%, 100% 63.3975%, 50% 100%, 0% 63.3975%);
+  border:none; cursor:pointer; font-family:inherit; color:var(--hi); padding:0;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
+  background:
+    radial-gradient(135% 135% at 30% 15%,
+      #fff 0%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 7%,
+      var(--tile-color, var(--border)) 45%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
+  transition:filter .12s ease;
+}
+.mode-pent:hover{ filter:brightness(1.1); }
+.mode-pent:active{ filter:brightness(1.2); }
+.mode-pent-face{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+}
+.mode-pent-icon{ font-size:19px; line-height:1; }
+.mode-pent-label{
+  font-family:var(--font-head); font-weight:700; font-size:9.5px; line-height:1.15;
+  text-align:center; padding:0 5px; color:#000;
+}
 
 .role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
 
