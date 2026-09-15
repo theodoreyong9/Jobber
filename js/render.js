@@ -45,8 +45,10 @@ export async function renderWorkspace() {
     ws.innerHTML = html;
     bindDesktopEvents();
     document.getElementById('peerCount').textContent = p2p.peerCountAcrossRooms();
+    document.getElementById('bureauBackdrop')?.classList.add('visible');
     return;
   }
+  document.getElementById('bureauBackdrop')?.classList.remove('visible');
 
   const ns = state.activeNamespace;
   const id = state.identitiesByNs[ns]?.find((i) => i.identityId === state.activeIdentityId[ns]);
