@@ -581,7 +581,16 @@ export function bindDesktopEvents() {
     btn.addEventListener('click', () => {
       const ns = btn.dataset.ns;
       const cfg = NS_CONFIG[ns];
-      if (cfg.kind === 'external') { window.open(cfg.url, '_blank', 'noopener'); return; }
+      // AIWA/YourMine are real twoSided matching namespaces now (Address/
+      // Seeker identities, created via "+" same as any other mode, and
+      // reachable afterward through their own tile further down in the
+      // Matches zone — pentIdTile's own "open" handler above doesn't go
+      // through here at all) — but their TOP tool-wheel tile up here
+      // still opens the actual app directly, same as an `external`
+      // namespace's tile (Tribute). Two separate entry points, on
+      // purpose: the wheel tile is the shortcut to the real AIWA/YourMine
+      // site, "+" is the shortcut to matching on it.
+      if (cfg.kind === 'external' || ns === 'wallet' || ns === 'creator') { window.open(cfg.url, '_blank', 'noopener'); return; }
       // Near / Agent: no identity to pick, opens straight into its own workspace.
       setActiveNamespace(ns);
       state.view = 'workspace';
