@@ -17,8 +17,9 @@ export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'info'
 // consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
 // wants the flat list, so this doesn't replace it. Four clusters: the
 // actual P2P matching namespaces, the cross-cutting tools that read what
-// those already discovered, the links out to the rest of this portfolio,
-// and info about Jobber itself.
+// those already discovered, AIWA/YourMine's own address matching plus
+// Tribute's link out to the rest of this portfolio, and info about
+// Jobber itself.
 export const NAMESPACE_GROUPS = [
   { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating', 'info'] },
   { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
@@ -54,16 +55,38 @@ export const NS_CONFIG = {
   messages: { label: 'Messages', color: '#4DD0E1', kind: 'messages', icon: '💬',
     hint: 'Every conversation and pending request (chat, meeting, document, file) across every mode, in one place — no identity of its own, it just reads what your other identities already have.' },
 
+  // Real matching namespaces (see editAddressProfileFlow in profiles.js):
+  // one role ("Address") publishes an exact address, the other
+  // ("Seeker") searches for one — by its exact value if they already
+  // know it (only Seekers who typed that same value ever see the
+  // holder — see renderClassicWorkspace's requiredExactAddress), or by
+  // keyword otherwise, the same baseline every twoSided namespace
+  // already gets from matching.matchTokens. `addressTypes` is just the
+  // dropdown of what kind of address this namespace deals in — AIWA's
+  // README distinguishes a real Solana wallet address from a
+  // content-addressed "contract" (published source, not a wallet-like
+  // address at all); YourMine's distinguishes a sphere (a JS module,
+  // GitHub-URL-addressed), a theme (an HTML shell, same addressing), and
+  // a profile (a local cross-sphere identity, not published/addressed
+  // the same way) — three genuinely different things worth telling
+  // apart, not just decoration. `url` links to the actual app, shown
+  // inside the profile editor for looking an address up in the first
+  // place — unlike an `external` namespace's tile (see `tribute` below),
+  // it no longer replaces identity creation on click.
+  creator: { label: 'YourMine', color: '#F0A830', kind: 'twoSided', icon: '🎨',
+    roles: [{ key: 'address', label: 'Address' }, { key: 'seeker', label: 'Seeker' }],
+    addressTypes: ['Theme', 'Sphere', 'Profile'],
+    url: 'https://yourmine-dapp.web.app',
+    hint: 'Publish an exact theme, sphere, or profile address, or search for one — by its exact value if you know it, or by keyword if you don\'t.' },
+  wallet: { label: 'AIWA', color: '#5B6EE8', kind: 'twoSided', icon: '👛',
+    roles: [{ key: 'address', label: 'Address' }, { key: 'seeker', label: 'Seeker' }],
+    addressTypes: ['Wallet address', 'Contract'],
+    url: 'https://theodoreyong9.github.io/AIWA_chain/',
+    hint: 'Publish an exact wallet or contract address, or search for one — by its exact value if you know it, or by keyword if you don\'t.' },
   // "external" namespaces aren't part of Jobber's own matching at all —
   // the tile just opens another app in this same portfolio in a new tab.
   // No identity, no profile, nothing to render here; desktop-ui.js skips
   // setActiveNamespace entirely for this kind and opens `url` instead.
-  creator: { label: 'YourMine', color: '#F0A830', kind: 'external', icon: '🎨',
-    url: 'https://yourmine-dapp.web.app',
-    hint: 'Publish JavaScript apps and interface themes, permissionlessly.' },
-  wallet: { label: 'AIWA', color: '#5B6EE8', kind: 'external', icon: '👛',
-    url: 'https://theodoreyong9.github.io/AIWA_chain/',
-    hint: 'Local, geographically-independent value accrual.' },
   tribute: { label: 'Tribute', color: '#B85C8A', kind: 'external', icon: '🌐',
     url: 'https://theodoreyong9.github.io/SGD/',
     hint: 'Opens SGD — collective participation through a shared semantic graph, no up/down vote.' },
