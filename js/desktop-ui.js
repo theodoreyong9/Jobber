@@ -222,6 +222,32 @@ const ALL_SLOTS = PENT_PATCH
   .sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx));
 const TOOL_COUNT = 7;
 const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agent', 'near'];
+// Tools split into two named groups (matching TOOL_ORDER's own order):
+// Ecosystem is the first ECOSYSTEM_COUNT tools, Insights the rest up to
+// TOOL_COUNT. Identity slots (index >= TOOL_COUNT) are "Matches".
+const ECOSYSTEM_COUNT = 3;
+// A light, deliberate gap at each of the two zone boundaries only — unlike
+// the old per-cluster gaps that caused real bugs, this shifts each WHOLE
+// zone by a uniform amount (never just some of a zone's tiles), so every
+// zone stays internally gap-free (verified the same flood-fill way as the
+// rest of this file) and only the two boundaries themselves open up, on
+// purpose, with clean edges on both sides — enough room for a label.
+// Sized well above what a naive "row spacing" guess would give: a tile
+// rotated 90°/270° reaches PENT_W/2 from its own center, not PENT_H/2
+// (its footprint swaps width/height under that rotation), and PENT_W is
+// bigger than PENT_H — a gap that only cleared PENT_H/2 on each side
+// still let two rotated tiles' real edges overlap by a wide margin,
+// which is exactly what put a label on top of a tile the first time this
+// was tried. 1.15 units clears that overlap plus real margin, verified
+// against zoneBottomTop's actual (rotation-aware) edges below, not just
+// eyeballed.
+const ECOSYSTEM_GAP_UNITS = 1.15;
+const MATCHES_GAP_UNITS = 1.15;
+function zoneShift(index) {
+  if (index < ECOSYSTEM_COUNT) return -ECOSYSTEM_GAP_UNITS;
+  if (index < TOOL_COUNT) return 0;
+  return MATCHES_GAP_UNITS;
+}
 
 // Rows aren't a fixed size (the real Cairo tiling alternates 2/3/4 tiles
 // wide on a repeat, not a uniform grid), so stopping the strip mid-row
@@ -246,6 +272,37 @@ function roundUpToRow(n) {
   for (const end of ALL_ROW_ENDS) if (end >= n) return end;
   return ALL_SLOTS.length;
 }
+// [start, end) of the row containing `index`, reusing the same row
+// boundaries — used to find a zone-boundary label's real vertical gap
+// (see zoneBottomTop below): a naive "midpoint of two cy values" landed
+// labels on top of tile content, because a rotated tile's own reach past
+// its center is PENT_W/2 (its footprint swaps width/height under
+// rotate(90|270deg)), not PENT_H/2 — same class of mistake as the
+// original render-orientation bug, just for label placement instead of
+// tiling.
+function rowBoundsContaining(index) {
+  let start = 0;
+  for (const end of ALL_ROW_ENDS) {
+    if (index < end) return [start, end];
+    start = end;
+  }
+  return [start, ALL_SLOTS.length];
+}
+function verticalHalfExtent(rot) {
+  return (rot === 90 || rot === 270) ? PENT_W / 2 : PENT_H / 2;
+}
+// The real bottom/top edge of ALL_SLOTS[start..end), accounting for each
+// tile's own rotation — not just its center's cy.
+function zoneBottomTop(start, end) {
+  let bottom = -Infinity, top = Infinity;
+  for (let i = start; i < end; i++) {
+    const s = slotPxAt(i);
+    const half = verticalHalfExtent(s.rot);
+    bottom = Math.max(bottom, s.y + half);
+    top = Math.min(top, s.y - half);
+  }
+  return { bottom, top };
+}
 // Container width: wide enough for the widest row actually placed in it,
 // plus one full pentagon's width so a tile centered at the band's edge
 // doesn't get half-clipped. On a narrow viewport this can exceed the
@@ -253,18 +310,22 @@ function roundUpToRow(n) {
 // scroll shelf instead of clipping tiles outright.
 const HIVE_WIDTH = Math.ceil(2 * ALL_BAND * PENT_EDGE + PENT_W);
 
-function pentSlotPx({ cx, cy, rot }) {
+function pentSlotPx({ cx, cy, rot }, extraY = 0) {
   // Direct mapping — PENT_PATCH's own (cx,cy,rot) are already in screen
-  // convention (the 180°-rotation baked in above).
-  return { x: cx * PENT_EDGE, y: cy * PENT_EDGE, rot };
+  // convention (the 180°-rotation baked in above). extraY is a plain
+  // additional offset in the same units, positive meaning further down
+  // the screen — see zoneShift above.
+  return { x: cx * PENT_EDGE, y: (cy + extraY) * PENT_EDGE, rot };
 }
 function slotPxAt(index) {
-  return pentSlotPx(ALL_SLOTS[index]);
+  return pentSlotPx(ALL_SLOTS[index], zoneShift(index));
 }
 // How far below the container's top edge the tiling's own y=0 line sits —
 // sized so the highest thing drawn (ALL_SLOTS[0], the topmost row) clears
-// the container. Baked directly into pentTransform's translate() below.
-const TOP_CLEARANCE = Math.ceil(PENT_H / 2 - slotPxAt(0).y);
+// the container, with LABEL_HEADROOM to spare for the "Ecosystem" label
+// above it. Baked directly into pentTransform's translate() below.
+const LABEL_HEADROOM = 16;
+const TOP_CLEARANCE = Math.ceil(-zoneBottomTop(0, ECOSYSTEM_COUNT).top + LABEL_HEADROOM);
 
 function pentTransform(slotPx) {
   return `transform:translate(-50%,-50%) translate(${slotPx.x}px,${slotPx.y + TOP_CLEARANCE}px) rotate(${slotPx.rot}deg);`;
@@ -408,10 +469,26 @@ export async function renderDesktop() {
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
+  // Labels sit inside .bento-hive, in the same raw (pre-TOP_CLEARANCE)
+  // coordinate space as every pentagon above, via the same helper — so
+  // they bob with the levitation animation exactly like the tiles do.
+  // "Ecosystem" sits above the pushed-up first zone; "Insights" and
+  // "Matches" each sit in the deliberate gap zoneShift opens at that
+  // zone's boundary — the real gap between one zone's own bottom edge and
+  // the next zone's own top edge (zoneBottomTop, not a naive midpoint of
+  // two tile centers — see its own comment for why that overlapped).
+  const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
+  const ecoExtent = zoneBottomTop(0, ECOSYSTEM_COUNT);
+  const insightsExtent = zoneBottomTop(ECOSYSTEM_COUNT, TOOL_COUNT);
+  const [matchesRowStart, matchesRowEnd] = rowBoundsContaining(TOOL_COUNT);
+  const matchesExtent = zoneBottomTop(matchesRowStart, matchesRowEnd);
+  const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ecoExtent.top - 10)}">Ecosystem</span>`;
+  const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ecoExtent.bottom + insightsExtent.top) / 2)}">Insights</span>`;
+  const matchesLabel = `<span class="bento-section-label" style="${labelTransform((insightsExtent.bottom + matchesExtent.top) / 2)}">Matches</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${cells.join('')}</div></div>
+      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div></div>
       ${manifestoHtml}
     </div>`;
 }
