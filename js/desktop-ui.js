@@ -209,7 +209,14 @@ const PENT_PATCH = generatePentagonPatch(13).map((p) => ({
 // for a notch to open onto in the first place. Verified with the same
 // flood-fill test at prefixes of 7/15/30/60 tiles (0 holes every time)
 // and by eye against a real Cairo-tile photo.
-const ALL_BAND = 3.6;
+// Halved from the original 3.6 — same tiling, same TOOL_COUNT split,
+// just a narrower vertical band (roughly half as many tiles per row, so
+// about half the container width) since the wider strip had more tiles
+// across than wanted. Doesn't touch anything else: PENT_PATCH, the row
+// grouping, the flood-fill-verified no-gap guarantee (a subset of the
+// same continuous run is still gap-free, band width or not — only how
+// far its own left/right edge can jag).
+const ALL_BAND = 1.4;
 const ALL_SLOTS = PENT_PATCH
   .filter((p) => Math.abs(p.cx) <= ALL_BAND && p.cy > -1)
   .sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx));
