@@ -83,6 +83,14 @@ function readSecretCode(dlg) {
   return dlg.querySelector('#secretCode').value.trim();
 }
 
+// Placeholder for a future paid-visibility boost — not built yet. Shown
+// disabled, on every editor (like yourMineFieldHtml/secretCodeFieldHtml),
+// so the shape of what's coming is visible without pretending it already
+// does something.
+function advertiseButtonHtml() {
+  return `<button type="button" class="btn ghost" disabled style="width:100%;margin:2px 0 10px">Advertise (soon)</button>`;
+}
+
 // There's no "Start searching" button (see identity-ui.js) — saving a
 // profile that has something to search on goes live automatically the
 // first time, and just rebroadcasts the fresh keywords to whoever's
@@ -113,6 +121,7 @@ export function editProfileFlow(ns, id) {
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
       ${secretCodeFieldHtml(profile)}
+      ${advertiseButtonHtml()}
       <label>Category / title</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Languages (comma separated)</label>
@@ -166,6 +175,7 @@ export function editEmploymentProfileFlow(id) {
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
       ${secretCodeFieldHtml(profile)}
+      ${advertiseButtonHtml()}
       <label>${isCandidate ? 'Desired position / title' : 'Position title'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Country</label>
@@ -273,6 +283,7 @@ export function editOutdoorProfileFlow(id) {
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
       ${secretCodeFieldHtml(profile)}
+      ${advertiseButtonHtml()}
       <label>${isOrganizer ? 'Activity theme — anything, freely chosen' : 'What kind of activity are you looking for?'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Sunrise hike, beach volleyball, board game night">
       <label>Country</label>
@@ -359,6 +370,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
       ${secretCodeFieldHtml(profile)}
+      ${advertiseButtonHtml()}
       <label>${isSupply ? 'What you offer — category' : 'What you need — category'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Web development">
       <label>Country</label>
@@ -469,6 +481,7 @@ export function editAddressProfileFlow(ns, id) {
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
       ${secretCodeFieldHtml(profile)}
+      ${advertiseButtonHtml()}
       <p style="font-size:11.5px;color:var(--low);margin:-6px 0 4px">
         Look it up on <a href="${cfg.url}" target="_blank" rel="noopener">the ${cfg.label} app ↗</a> first if you don't have it handy.
       </p>
