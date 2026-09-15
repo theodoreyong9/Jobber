@@ -32,11 +32,27 @@ button{cursor:pointer;}
 a{color:var(--agent);}
 :focus-visible{outline:2px solid var(--agent); outline-offset:2px;}
 
+/* Fixed to the viewport (not scoped inside .bureau/.bento-hive) so it
+   always covers the full screen regardless of how tall the Bureau's own
+   identity strip scrolls — see background-ui.js's header comment for why
+   it can't just live inside renderDesktop's own HTML instead (.bento-hive's
+   will-change:transform would make a nested fixed element track the hive,
+   not the viewport). Hidden (opacity:0) outside the Bureau itself —
+   render.js toggles .visible to match state.view — so workspace panels
+   keep their plain --bg backdrop. z-index:0 with .app above it at
+   z-index:1 keeps it under every real screen regardless of paint order. */
+.bureau-backdrop{
+  position:fixed; inset:0; z-index:0;
+  background-size:cover; background-position:center; background-repeat:no-repeat;
+  opacity:0; transition:opacity .25s ease; pointer-events:none;
+}
+.bureau-backdrop.visible{ opacity:1; }
+
 /* 100dvh tracks the mobile browser's real visible viewport (100vh doesn't —
    it's sized for the chrome-collapsed state, so the page became taller than
    what's actually on screen and could scroll as a whole); kept as a
    fallback for browsers without dvh support. */
-.app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+.app{ position:relative; z-index:1; display:flex; flex-direction:column; height:100vh; height:100dvh; }
 
 /* ---------- MODE BAR — a compact bottom bar, pinned in place with
    position:fixed so it can never be scrolled out of view (flexbox
@@ -370,6 +386,17 @@ a{color:var(--agent);}
 .settings-panel .row b{ color:var(--mid); font-weight:500; font-family:var(--font-mono); }
 .backup-actions{ display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
 .backup-actions .btn{ flex:1; min-width:0; padding:6px 4px; font-size:10.5px; }
+
+/* Background picker modal (background-ui.js) — each swatch previews its
+   own preset directly via inline background, so there's nothing to keep
+   in sync with the JS-side PRESETS list. */
+.bg-swatches{ display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+.bg-swatch{
+  aspect-ratio:4/3; border-radius:var(--radius-s); border:1px solid var(--border);
+  display:flex; align-items:flex-end; padding:6px; background-size:cover; background-position:center;
+  color:#fff; font-size:10.5px; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,.6);
+}
+.bg-swatch-none{ background:var(--panel-raised); color:var(--mid); align-items:center; justify-content:center; text-shadow:none; }
 
 /* ---------- MAIN ---------- */
 .main{ display:flex; flex-direction:column; min-width:0; flex:1; min-height:0; }
