@@ -35,6 +35,9 @@ export async function getProfile(identityId) {
     // Seeker who leaves it blank falls back to sourceText's normal
     // keyword matching instead).
     addressType: '', exactAddress: '',
+    // Universal, every namespace (see secretCodeFieldHtml) — an escape
+    // hatch from every other matching field, not specific to one mode.
+    secretCode: '',
   };
 }
 
@@ -61,6 +64,23 @@ function yourMineFieldHtml(profile) {
 }
 function readYourMineUrl(dlg) {
   return dlg.querySelector('#yourMineUrl').value.trim();
+}
+
+// The one field that overrides every other field in every match form —
+// see matching.secretCodesMatch. Present on every editor (like
+// yourMineFieldHtml) rather than one mode's own: two people can agree to
+// find each other directly regardless of which namespace they're in.
+// There's no "create" vs "enter" distinction in the field itself — both
+// sides just type the same agreed-on value, whoever thought of it first.
+function secretCodeFieldHtml(profile) {
+  return `<label>Secret code (optional)</label>
+    <input type="text" id="secretCode" value="${profile.secretCode || ''}" placeholder="Agree on this with someone directly">
+    <p style="font-size:11px;color:var(--low);margin:-6px 0 4px">
+      If you both enter the exact same code, you match each other instantly — no matter what else is filled in above.
+    </p>`;
+}
+function readSecretCode(dlg) {
+  return dlg.querySelector('#secretCode').value.trim();
 }
 
 // There's no "Start searching" button (see identity-ui.js) — saving a
@@ -92,6 +112,7 @@ export function editProfileFlow(ns, id) {
     openModal('Edit profile', `
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
+      ${secretCodeFieldHtml(profile)}
       <label>Category / title</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Languages (comma separated)</label>
@@ -117,6 +138,7 @@ export function editProfileFlow(ns, id) {
         await saveNameIfChanged(id, dlg);
         const sourceText = dlg.querySelector('#src').value;
         const yourMineUrl = readYourMineUrl(dlg);
+        const secretCode = readSecretCode(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const languages = dlg.querySelector('#langs').value.split(',').map((s) => s.trim()).filter(Boolean);
         const availableNow = dlg.querySelector('#avail').checked;
@@ -124,7 +146,7 @@ export function editProfileFlow(ns, id) {
         const lookingForText = isDating ? dlg.querySelector('#looking').value : '';
         const searchTokens = isDating ? matching.tokenize(lookingForText) : [];
         await db.put('profiles', {
-          identityId: id.identityId, sourceText, yourMineUrl, category, languages, availableNow,
+          identityId: id.identityId, sourceText, yourMineUrl, secretCode, category, languages, availableNow,
           tokens, aiTokens: profile.aiTokens || [], lookingForText, searchTokens,
           updatedAt: Date.now(),
         });
@@ -143,6 +165,7 @@ export function editEmploymentProfileFlow(id) {
     const common = `
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
+      ${secretCodeFieldHtml(profile)}
       <label>${isCandidate ? 'Desired position / title' : 'Position title'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Backend Engineer">
       <label>Country</label>
@@ -177,6 +200,7 @@ export function editEmploymentProfileFlow(id) {
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
         const yourMineUrl = readYourMineUrl(dlg);
+        const secretCode = readSecretCode(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -209,7 +233,7 @@ export function editEmploymentProfileFlow(id) {
           if (file) toast(`Extracted ${tokens.length} keywords from ${file.name}${earliestYear ? `, earliest year ${earliestYear}` : ''}`);
 
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, coverLetterText, availableNow,
+            ...profile, category, country, city, yourMineUrl, secretCode, coverLetterText, availableNow,
             cvFileName, cvExtractedText, tokens, earliestYear,
             updatedAt: Date.now(),
           });
@@ -220,7 +244,7 @@ export function editEmploymentProfileFlow(id) {
           const seniorityMax = dlg.querySelector('#senMax').value.trim();
           const tokens = matching.tokenize(jobPostingText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, jobPostingText, tokens,
+            ...profile, category, country, city, yourMineUrl, secretCode, jobPostingText, tokens,
             seniorityMin: seniorityMin ? parseInt(seniorityMin, 10) : null,
             seniorityMax: seniorityMax ? parseInt(seniorityMax, 10) : null,
             updatedAt: Date.now(),
@@ -248,6 +272,7 @@ export function editOutdoorProfileFlow(id) {
     const common = `
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
+      ${secretCodeFieldHtml(profile)}
       <label>${isOrganizer ? 'Activity theme — anything, freely chosen' : 'What kind of activity are you looking for?'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Sunrise hike, beach volleyball, board game night">
       <label>Country</label>
@@ -284,6 +309,7 @@ export function editOutdoorProfileFlow(id) {
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
         const yourMineUrl = readYourMineUrl(dlg);
+        const secretCode = readSecretCode(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -296,7 +322,7 @@ export function editOutdoorProfileFlow(id) {
           const limit = dlg.querySelector('#limit').value.trim();
           const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, sourceText, availableNow, tokens,
+            ...profile, category, country, city, yourMineUrl, secretCode, sourceText, availableNow, tokens,
             contactType, contactValue,
             participantLimit: limit ? parseInt(limit, 10) : null,
             updatedAt: Date.now(),
@@ -306,7 +332,7 @@ export function editOutdoorProfileFlow(id) {
           const sourceText = dlg.querySelector('#interests').value;
           const tokens = matching.tokenize(sourceText, category);
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, sourceText, availableNow, tokens,
+            ...profile, category, country, city, yourMineUrl, secretCode, sourceText, availableNow, tokens,
             updatedAt: Date.now(),
           });
           await autoSearchOnSave('outdoor', id, tokens);
@@ -332,6 +358,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
     const common = `
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
+      ${secretCodeFieldHtml(profile)}
       <label>${isSupply ? 'What you offer — category' : 'What you need — category'}</label>
       <input type="text" id="cat" value="${profile.category || ''}" placeholder="e.g. Web development">
       <label>Country</label>
@@ -368,6 +395,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
         const yourMineUrl = readYourMineUrl(dlg);
+        const secretCode = readSecretCode(dlg);
         const category = dlg.querySelector('#cat').value.trim();
         const country = dlg.querySelector('#country').value.trim();
         const city = dlg.querySelector('#city').value.trim();
@@ -393,7 +421,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
           }
           const tokens = matching.tokenize([desc, cvExtractedText].filter(Boolean).join(' '), category);
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, sourceText: desc, tokens,
+            ...profile, category, country, city, yourMineUrl, secretCode, sourceText: desc, tokens,
             cvFileName, cvExtractedText, rate: rate ? parseFloat(rate) : null, availableNow,
             professionalEmail,
             updatedAt: Date.now(),
@@ -404,7 +432,7 @@ export function editSupplyDemandProfileFlow(ns, id) {
           const budgetMax = dlg.querySelector('#budgetMax').value.trim();
           const tokens = matching.tokenize(desc, category);
           await db.put('profiles', {
-            ...profile, category, country, city, yourMineUrl, sourceText: desc, tokens,
+            ...profile, category, country, city, yourMineUrl, secretCode, sourceText: desc, tokens,
             budgetMin: budgetMin ? parseFloat(budgetMin) : null,
             budgetMax: budgetMax ? parseFloat(budgetMax) : null,
             updatedAt: Date.now(),
@@ -440,6 +468,7 @@ export function editAddressProfileFlow(ns, id) {
     openModal(`Edit profile — ${roleLabel(ns, id.role)}`, `
       ${nameFieldHtml(id)}
       ${yourMineFieldHtml(profile)}
+      ${secretCodeFieldHtml(profile)}
       <p style="font-size:11.5px;color:var(--low);margin:-6px 0 4px">
         Look it up on <a href="${cfg.url}" target="_blank" rel="noopener">the ${cfg.label} app ↗</a> first if you don't have it handy.
       </p>
@@ -454,12 +483,13 @@ export function editAddressProfileFlow(ns, id) {
       onSubmit: async (dlg) => {
         await saveNameIfChanged(id, dlg);
         const yourMineUrl = readYourMineUrl(dlg);
+        const secretCode = readSecretCode(dlg);
         const addressType = dlg.querySelector('#addrType').value;
         const exactAddress = dlg.querySelector('#exactAddr').value.trim();
         const sourceText = dlg.querySelector('#desc').value;
         const tokens = matching.tokenize(sourceText, addressType);
         await db.put('profiles', {
-          ...profile, yourMineUrl, addressType, exactAddress, sourceText, tokens,
+          ...profile, yourMineUrl, secretCode, addressType, exactAddress, sourceText, tokens,
           updatedAt: Date.now(),
         });
         await autoSearchOnSave(ns, id, tokens);
