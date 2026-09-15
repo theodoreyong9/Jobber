@@ -120,11 +120,21 @@ function pentRotateAbout(p, pivot, delta) {
   const [rx, ry] = pentRotateVec([p.cx - pivot[0], p.cy - pivot[1]], delta);
   return { cx: pivot[0] + rx, cy: pivot[1] + ry, rot: (((p.rot + delta) % 360) + 360) % 360 };
 }
+// A pentagon has 5 edges, so it has exactly 5 real edge-sharing
+// neighbors — not 7. Rotating by ±90° about a 90° corner (V3 or V5)
+// gives the two neighbors that share THAT corner's two edges; rotating
+// by 180° about the same corner only shares the single point V3/V5
+// itself (a diagonal touch, not an edge) and must NOT be treated as a
+// neighbor — including it doesn't corrupt the generated patch (BFS
+// still reaches every real position some other way) but was silently
+// misleading, and tracking down why turned out to matter: see the
+// pentSlotPx/PENT_PATCH note below about the render-orientation bug
+// that cost real debugging time before this was caught.
 function pentNeighbors(p) {
   const wv = pentWorldVerts(p);
   const out = [];
   for (const idx of [2, 4]) { // V3, V5 — the two 90° corners
-    for (const delta of [90, 180, 270]) out.push(pentRotateAbout(p, wv[idx], delta));
+    for (const delta of [90, 270]) out.push(pentRotateAbout(p, wv[idx], delta));
   }
   const shortEdgeMid = [(wv[0][0] + wv[1][0]) / 2, (wv[0][1] + wv[1][1]) / 2]; // midpoint of V1-V2
   out.push(pentRotateAbout(p, shortEdgeMid, 180));
@@ -154,7 +164,27 @@ function generatePentagonPatch(rounds) {
   }
   return [...seen.values()];
 }
-const PENT_PATCH = generatePentagonPatch(13);
+// generatePentagonPatch's own math (pentRotateVec etc.) uses standard
+// math convention: +y is UP, and a positive angle turns counter-
+// clockwise. CSS is the opposite on both counts (+y is DOWN, positive
+// rotate() turns clockwise). Flipping only the y-coordinate to go from
+// one to the other is a MIRROR REFLECTION, not a rotation — reflections
+// reverse handedness, so a pentagon's neighbors (verified edge-to-edge
+// in the math convention) stop actually lining up once each one's own
+// rotation is fed unchanged into CSS. A full 180° rotation instead
+// (negate BOTH x and y, and add 180° to every rot) reverses which
+// direction reads as "down the screen" the same way a Y-flip does, but
+// — being a genuine rigid rotation, not a reflection — it preserves
+// every edge adjacency the generator already verified. (This was the
+// actual bug behind an earlier version of this file rendering visible
+// gaps throughout the identity strip: every pair of tiles individually
+// satisfied the edge-matching check done on the *un-rendered* math, but
+// the on-screen rotations didn't match what that check assumed — caught
+// by rendering two supposedly-adjacent pentagons in isolation and
+// finding they didn't actually touch.)
+const PENT_PATCH = generatePentagonPatch(13).map((p) => ({
+  cx: -p.cx, cy: -p.cy, rot: (p.rot + 180) % 360,
+}));
 
 // The 7 tools as two stacked rows instead of a hex flower — a regular
 // hexagon can surround itself with 6 neighbors in a closed ring; this
@@ -166,13 +196,13 @@ const PENT_PATCH = generatePentagonPatch(13);
 // edge among these 7 either matches its neighbor here or continues
 // cleanly into the wider tiling.
 const TOOL_SLOTS = [
-  { cx: -3.4641016, cy: 0, rot: 0 },              // Ecosystem, left
-  { cx: 0, cy: 0, rot: 0 },                       // Ecosystem, center
-  { cx: 3.4641016, cy: 0, rot: 0 },               // Ecosystem, right
-  { cx: -2.4148146, cy: -0.6830127, rot: 90 },    // Insight, 1
-  { cx: -1.0492786, cy: -0.6830127, rot: 270 },   // Insight, 2
-  { cx: 1.0492786, cy: -0.6830127, rot: 90 },     // Insight, 3
-  { cx: 2.4148146, cy: -0.6830127, rot: 270 },    // Insight, 4
+  { cx: -3.4641016, cy: 0, rot: 180 },            // Ecosystem, left
+  { cx: 0, cy: 0, rot: 180 },                     // Ecosystem, center
+  { cx: 3.4641016, cy: 0, rot: 180 },              // Ecosystem, right
+  { cx: -2.4150635, cy: 0.6830127, rot: 90 },     // Insight, 1
+  { cx: -1.0490381, cy: 0.6830127, rot: 270 },    // Insight, 2
+  { cx: 1.0490381, cy: 0.6830127, rot: 90 },      // Insight, 3
+  { cx: 2.4150635, cy: 0.6830127, rot: 270 },     // Insight, 4
 ];
 const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agent', 'near'];
 // A light gap between the Ecosystem row and the Insight row below it
@@ -184,27 +214,29 @@ const ECOSYSTEM_GAP_UNITS = 0.35;
 // Same idea below Insight, before the identity strip starts.
 const MATCHES_GAP_UNITS = 0.35;
 
-// Every pentagon in PENT_PATCH strictly below the tool rows (cy < -1,
-// i.e. below Insight's own row at cy=-0.683), within a band wide enough
+// Every pentagon in PENT_PATCH strictly below the tool rows (cy > 1,
+// i.e. below Insight's own row at cy=0.683), within a band wide enough
 // to read as one strip rather than the tools' own narrower width, ordered
 // top-to-bottom then left-to-right — this is what identity slots are
 // handed out from, in order, same role hexSlotOffset(index) used to play.
 // Unlike the old hex formula this can't be a closed-form expression: the
 // real Cairo tiling's rows alternate 3/2/4/2 tiles wide on a 6-row
 // repeat, not a uniform grid, so slots are read off the real generated
-// patch instead of computed. Cutting the tiling off at any finite width
+// patch instead of computed — and, with PENT_PATCH's orientation now
+// actually correct (see the note above its own definition), that
+// alternation tiles with zero internal gaps, verified both by the same
+// brute-force edge check and by eye against a real Cairo-tile photo.
+// Cutting the tiling off at any finite width still
 // necessarily leaves some edge tiles' true neighbors (in the fuller
-// patch) just outside the band — same as a hex flower's own silhouette
-// never being a perfect hexagon — so the strip's left/right edge reads as
-// a naturally jagged Cairo edge rather than a clean rectangle; verified
-// (brute-force edge check against the full patch, see cairo_tiling_verify
-// in dev notes) that every one of those cut edges' true partners really
-// do exist in the wider patch, i.e. this is an expected finite-crop
-// boundary, not a gap in the tiling itself.
+// patch) just outside the band, so the strip's left/right edge reads as
+// a naturally jagged Cairo edge rather than a clean rectangle — same idea
+// as a hex flower's own silhouette never being a perfect hexagon — but
+// that jaggedness is confined to the two outer edges now, not scattered
+// through the interior.
 const IDENTITY_BAND = 3.6;
 const IDENTITY_SLOTS = PENT_PATCH
-  .filter((p) => Math.abs(p.cx) <= IDENTITY_BAND && p.cy < -1)
-  .sort((a, b) => (b.cy - a.cy) || (a.cx - b.cx));
+  .filter((p) => Math.abs(p.cx) <= IDENTITY_BAND && p.cy > 1)
+  .sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx));
 // IDENTITY_SLOTS' rows aren't a fixed size (2, 3, or 4 tiles, alternating
 // — see above), so stopping the strip mid-row would leave one side of
 // that row's own natural jagged edge missing its (harmless) counterpart
@@ -235,13 +267,17 @@ function roundUpToIdentityRow(n) {
 const HIVE_WIDTH = Math.ceil(2 * IDENTITY_BAND * PENT_EDGE + PENT_W);
 
 function pentSlotPx({ cx, cy, rot }, extraYUnits = 0) {
-  // Flips y (this geometry's derivation used math convention, +y up;
-  // CSS wants +y down) and scales from pentagon-edge units to px.
-  return { x: cx * PENT_EDGE, y: -(cy + extraYUnits) * PENT_EDGE, rot };
+  // Direct mapping now that PENT_PATCH's own (cx,cy,rot) are already in
+  // screen convention (the 180°-rotation baked in above) — no further
+  // flip here. extraYUnits is a plain additional offset in the same
+  // units, positive meaning further down the screen (see its two call
+  // sites: negative to push the Ecosystem row up and away from Insight,
+  // positive to push the identity strip down and away from Insight).
+  return { x: cx * PENT_EDGE, y: (cy + extraYUnits) * PENT_EDGE, rot };
 }
 // Raw (pre-clearance) y of the Ecosystem/Insight tool rows — every tile
 // in a row shares the same cy, so any one slot from it gives the row's y.
-const ECOSYSTEM_ROW_Y = pentSlotPx(TOOL_SLOTS[1], ECOSYSTEM_GAP_UNITS).y;
+const ECOSYSTEM_ROW_Y = pentSlotPx(TOOL_SLOTS[1], -ECOSYSTEM_GAP_UNITS).y;
 const INSIGHT_ROW_Y = pentSlotPx(TOOL_SLOTS[3], 0).y;
 // How far below the container's top edge the tiling's own y=0 line sits.
 // Sized so the highest thing drawn (the pushed-up Ecosystem row's top
@@ -277,7 +313,7 @@ function wheelToolTile(ns, i, pendingCount) {
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   const isEcosystem = i < 3;
-  const slotPx = pentSlotPx(TOOL_SLOTS[i], isEcosystem ? ECOSYSTEM_GAP_UNITS : 0);
+  const slotPx = pentSlotPx(TOOL_SLOTS[i], isEcosystem ? -ECOSYSTEM_GAP_UNITS : 0);
   return `
     <button type="button" class="bento-pent" style="--tile-color:${cfg.color}; ${pentTransform(slotPx)}" data-act="tool" data-ns="${ns}">
       <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">
