@@ -9,7 +9,7 @@
 // Reaches identity-ui.js directly (safe, one-directional: identity-ui.js
 // has no dependency back on this file).
 
-import { state, NAMESPACES, NS_CONFIG, NAMESPACE_GROUPS, setActiveNamespace } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, setActiveNamespace } from './state.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { openModal } from './ui-kit.js';
 import { countPendingNotifications } from './messages-ui.js';
@@ -26,12 +26,6 @@ import { openBackgroundPicker } from './background-ui.js';
 const NO_IDENTITY_KINDS = ['near', 'agent', 'messages', 'external', 'info'];
 const CREATABLE = NAMESPACES.filter((ns) => !NO_IDENTITY_KINDS.includes(NS_CONFIG[ns].kind));
 
-function groupsOf(list) {
-  return NAMESPACE_GROUPS
-    .map((g) => ({ label: g.label, namespaces: g.namespaces.filter((ns) => list.includes(ns)) }))
-    .filter((g) => g.namespaces.length);
-}
-
 export function goToDesktop() {
   state.view = 'desktop';
   state.render.all();
@@ -42,23 +36,6 @@ export function goToDesktop() {
 // into a workspace (there's no separate back button in the topbar).
 document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 
-// `badge` is either a notification count (number) or a status tag like
-// "cooking" (string) — visually distinct (a number is a red count pill,
-// a label is an amber tag) since they mean different things. Used by the
-// "New identity" mode-picker modal only now — the Bureau itself renders
-// its own bento tiles below.
-function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
-  const cfg = NS_CONFIG[ns];
-  const isLabel = typeof badge === 'string';
-  const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
-  return `
-    <button type="button" class="desktop-tile" style="--tile-color:${cfg.color}" ${dataAttrs}>
-      ${badge ? `<span class="desktop-tile-badge${isLabel ? ' desktop-tile-badge-label' : ''}">${badgeText}</span>` : ''}
-      <span class="desktop-tile-glyph">${cfg.icon}</span>
-      <span class="desktop-tile-label">${label}</span>
-      ${sub ? `<span class="desktop-tile-sub">${sub}</span>` : ''}
-    </button>`;
-}
 
 // Still being built out — flagged on the Bureau so it's clear these
 // aren't finished features yet. Pricing counts too: only one of its five
@@ -641,17 +618,70 @@ function bindBackgroundLongPress() {
   bureau.addEventListener('contextmenu', (e) => { if (!isRealControl(e.target)) e.preventDefault(); });
 }
 
+// A small, standalone pentagon "honeycomb" for the New identity picker —
+// reuses ALL_SLOTS[1..9) as-is (skipping only the very first slot)
+// rather than inventing new coordinates: that 8-tile run is already part
+// of the same flood-fill-verified, gap-free continuous tiling the whole
+// Bureau uses (see ALL_SLOTS above), with row widths 2,1,2,1,2 — three
+// "wide" (2-tile) rows bulging at the top, middle, and bottom, each
+// pinched from the next by a single tile. This is the closest real,
+// zero-gap analogue to "3 top / 2 middle / 3 bottom": checked directly
+// against every one of a pentagon's 5 real edges, the longest run of
+// mutually-adjacent same-row tiles this tiling ever produces is 2, never
+// 3 — a literal row of 3 touching pentagons doesn't exist in it.
+const PICKER_EDGE = 52;
+const PICKER_W = PICKER_EDGE * SQRT3;
+const PICKER_H = PICKER_EDGE * (SQRT3 + 1) / 2;
+const PICKER_SLOTS = ALL_SLOTS.slice(1, 9);
+
+function pentHalfExtents(rot, edge) {
+  const w = edge * SQRT3, h = edge * (SQRT3 + 1) / 2;
+  return (rot === 90 || rot === 270) ? { x: h / 2, y: w / 2 } : { x: w / 2, y: h / 2 };
+}
+
+// Lays PICKER_SLOTS out in local (0,0)-origin pixels, sized to exactly
+// fit their own bounding box — this picker has no surrounding Bureau
+// coordinate space to share, unlike pentSlotPx/TOP_CLEARANCE above.
+function buildPickerLayout() {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const raw = PICKER_SLOTS.map((p) => {
+    const x = p.cx * PICKER_EDGE, y = p.cy * PICKER_EDGE;
+    const half = pentHalfExtents(p.rot, PICKER_EDGE);
+    minX = Math.min(minX, x - half.x); maxX = Math.max(maxX, x + half.x);
+    minY = Math.min(minY, y - half.y); maxY = Math.max(maxY, y + half.y);
+    return { x, y, rot: p.rot };
+  });
+  return {
+    width: Math.ceil(maxX - minX),
+    height: Math.ceil(maxY - minY),
+    items: raw.map((s) => ({ x: s.x - minX, y: s.y - minY, rot: s.rot })),
+  };
+}
+
+function pentPickerTile(ns, item) {
+  const cfg = NS_CONFIG[ns];
+  return `
+    <button type="button" class="mode-pent" data-ns="${ns}"
+      style="--tile-color:${cfg.color}; width:${PICKER_W}px; height:${PICKER_H}px; left:${item.x}px; top:${item.y}px; transform:translate(-50%,-50%) rotate(${item.rot}deg);">
+      <span class="mode-pent-face" style="transform:rotate(${-item.rot}deg);">
+        <span class="mode-pent-icon">${cfg.icon}</span>
+        <span class="mode-pent-label">${cfg.label}</span>
+      </span>
+    </button>`;
+}
+
+function pentModePickerHtml(namespaces) {
+  const { items, width, height } = buildPickerLayout();
+  const n = Math.min(namespaces.length, items.length);
+  const tiles = namespaces.slice(0, n).map((ns, i) => pentPickerTile(ns, items[i])).join('');
+  return `<div class="mode-pent-grid" style="width:${width}px; height:${height}px;">${tiles}</div>`;
+}
+
 function pickModeThenCreateIdentity() {
-  const dlg = openModal('New identity — choose a mode', groupsOf(CREATABLE).map((g) => `
-    <div class="mode-picker-group">
-      <div class="mode-picker-group-label">${g.label}</div>
-      <div class="desktop-grid">
-        ${g.namespaces.map((ns) => tileHtml(ns, { label: NS_CONFIG[ns].label, dataAttrs: `data-ns="${ns}"` })).join('')}
-      </div>
-    </div>`).join(''), {
+  const dlg = openModal('New identity — choose a mode', pentModePickerHtml(CREATABLE), {
     noSubmit: true,
     onOpen: (d) => {
-      d.querySelectorAll('.desktop-tile').forEach((btn) => {
+      d.querySelectorAll('.mode-pent').forEach((btn) => {
         btn.addEventListener('click', () => {
           const ns = btn.dataset.ns;
           d.close();
