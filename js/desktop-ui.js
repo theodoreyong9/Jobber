@@ -14,6 +14,7 @@ import { createIdentityFlow } from './identity-ui.js';
 import { openModal } from './ui-kit.js';
 import { countPendingNotifications } from './messages-ui.js';
 import * as credibility from './credibility.js';
+import { openBackgroundPicker } from './background-ui.js';
 
 // Namespaces an identity actually gets created in. Near has no identity of
 // its own (see near-ui.js), Agent cross-references your *other* identities
@@ -581,6 +582,47 @@ export function bindDesktopEvents() {
     });
   });
   ws.querySelectorAll('[data-act="new"]').forEach((btn) => btn.addEventListener('click', pickModeThenCreateIdentity));
+  bindBackgroundLongPress();
+}
+
+// Long-press anywhere on the Bureau that isn't an actual control (a tile,
+// a link, a form field) opens the background picker — the same gesture a
+// phone's own home screen uses to change its wallpaper. Without this, a
+// long-press on mobile just triggered the browser's native text-selection
+// callout over whatever was underneath the finger (background-ui.js's
+// #bureauBackdrop itself is pointer-events:none, so the touch always
+// lands on .bureau or one of its non-interactive children) — .bureau's
+// own user-select:none (style.css) stops that callout from appearing at
+// all, and this is what the gesture actually *does* instead.
+// Pointer events (not touchstart/mousedown separately) cover touch, pen,
+// and mouse in one listener; the move-tolerance check tells a genuine
+// long-press apart from the start of a scroll swipe.
+const LONG_PRESS_MS = 550;
+const LONG_PRESS_MOVE_TOLERANCE = 10;
+function bindBackgroundLongPress() {
+  const bureau = document.querySelector('.bureau');
+  if (!bureau) return;
+  let timer = null;
+  let startX = 0;
+  let startY = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const isRealControl = (target) => target.closest('button, a, input, textarea, select');
+  bureau.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (isRealControl(e.target)) return;
+    startX = e.clientX; startY = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      if (!document.querySelector('dialog.modal[open]')) openBackgroundPicker();
+    }, LONG_PRESS_MS);
+  });
+  bureau.addEventListener('pointermove', (e) => {
+    if (timer && (Math.abs(e.clientX - startX) > LONG_PRESS_MOVE_TOLERANCE || Math.abs(e.clientY - startY) > LONG_PRESS_MOVE_TOLERANCE)) cancel();
+  });
+  bureau.addEventListener('pointerup', cancel);
+  bureau.addEventListener('pointercancel', cancel);
+  bureau.addEventListener('contextmenu', (e) => { if (!isRealControl(e.target)) e.preventDefault(); });
 }
 
 function pickModeThenCreateIdentity() {
