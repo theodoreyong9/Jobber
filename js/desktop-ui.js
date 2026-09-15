@@ -84,9 +84,13 @@ const COOKING = ['creator', 'wallet', 'agent', 'pricing'];
 // Together these cover all 5 edges (the 90°-corner rule covers the 4
 // edges touching V3/V5; the short-edge rule covers the 5th).
 const SQRT3 = Math.sqrt(3);
-const PENT_EDGE = 84; // px — length of one long edge; the one tunable size knob
-const PENT_W = PENT_EDGE * SQRT3; // ≈145.5px
-const PENT_H = PENT_EDGE * (SQRT3 + 1) / 2; // ≈114.8px
+// px — length of one long edge; the one tunable size knob. Sized so the
+// widest row (the identity band, ±IDENTITY_BAND below) stays inside a
+// normal portrait phone width with no horizontal scrolling — see
+// HIVE_WIDTH below, which this directly determines.
+const PENT_EDGE = 40;
+const PENT_W = PENT_EDGE * SQRT3; // ≈69.3px
+const PENT_H = PENT_EDGE * (SQRT3 + 1) / 2; // ≈54.6px
 // V1..V5, centered on the pentagon's own bounding-box center — which is
 // also where CSS rotate() pivots by default (transform-origin:50% 50%),
 // so a plain `rotate(Ndeg)` reproduces exactly the rotations the tiling
@@ -288,7 +292,7 @@ const INSIGHT_ROW_Y = pentSlotPx(TOOL_SLOTS[3], 0).y;
 // ~28px short of the tallest hex it actually needed to clear — folding
 // the clearance into one JS constant instead of two independently-tuned
 // numbers removes that whole class of drift).
-const LABEL_HEADROOM = 22;
+const LABEL_HEADROOM = 12;
 const TOP_CLEARANCE = Math.ceil(PENT_H / 2 - ECOSYSTEM_ROW_Y + LABEL_HEADROOM);
 
 function pentTransform(slotPx) {
@@ -447,7 +451,7 @@ export async function renderDesktop() {
   // against the row below it; "Matchs" in the MATCHES_GAP_UNITS gap
   // before the identity strip starts.
   const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
-  const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ECOSYSTEM_ROW_Y - PENT_H / 2 - 10)}">Ecosystem</span>`;
+  const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ECOSYSTEM_ROW_Y - PENT_H / 2 - 6)}">Ecosystem</span>`;
   const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ECOSYSTEM_ROW_Y + INSIGHT_ROW_Y) / 2)}">Insights</span>`;
   const matchesLabel = `<span class="bento-section-label" style="${labelTransform((INSIGHT_ROW_Y + identitySlotPx(0).y) / 2)}">Matchs</span>`;
 
