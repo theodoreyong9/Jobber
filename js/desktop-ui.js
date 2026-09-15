@@ -231,18 +231,18 @@ const ECOSYSTEM_COUNT = 3;
 // zone by a uniform amount (never just some of a zone's tiles), so every
 // zone stays internally gap-free (verified the same flood-fill way as the
 // rest of this file) and only the two boundaries themselves open up, on
-// purpose, with clean edges on both sides — enough room for a label.
-// Sized well above what a naive "row spacing" guess would give: a tile
+// purpose, with clean edges on both sides — just enough room for a label,
+// not more. A naive "row spacing" guess undershoots this badly: a tile
 // rotated 90°/270° reaches PENT_W/2 from its own center, not PENT_H/2
 // (its footprint swaps width/height under that rotation), and PENT_W is
-// bigger than PENT_H — a gap that only cleared PENT_H/2 on each side
-// still let two rotated tiles' real edges overlap by a wide margin,
-// which is exactly what put a label on top of a tile the first time this
-// was tried. 1.15 units clears that overlap plus real margin, verified
-// against zoneBottomTop's actual (rotation-aware) edges below, not just
-// eyeballed.
-const ECOSYSTEM_GAP_UNITS = 1.15;
-const MATCHES_GAP_UNITS = 1.15;
+// bigger than PENT_H — a gap sized off PENT_H/2 alone still let two
+// rotated tiles' real edges overlap, putting a label on top of a tile the
+// first time this was tried. 1.1 units clears that overlap and leaves
+// ~16px, sized to .bento-section-label's own font-size — a single text
+// line, not a wide empty band — verified against zoneBottomTop's actual
+// (rotation-aware) edges below, not eyeballed.
+const ECOSYSTEM_GAP_UNITS = 1.1;
+const MATCHES_GAP_UNITS = 1.1;
 function zoneShift(index) {
   if (index < ECOSYSTEM_COUNT) return -ECOSYSTEM_GAP_UNITS;
   if (index < TOOL_COUNT) return 0;
