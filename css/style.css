@@ -457,6 +457,7 @@ h2.section-title{ font-family:var(--font-head); font-size:15px; font-weight:600;
 .chiprow{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
 .chip{ font-size:10.5px; color:var(--mid); border:1px solid var(--border); border-radius:20px; padding:2px 8px; }
 .chip.ai{ color:var(--agent); border-color:rgba(89,201,184,.4); }
+.chip.mono{ font-family:var(--font-mono); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 .results{ display:flex; flex-direction:column; gap:8px; }
 .card{ border:1px solid var(--border); border-radius:var(--radius-m); background:var(--panel); padding:12px 14px; }
