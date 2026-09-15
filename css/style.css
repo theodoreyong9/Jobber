@@ -177,11 +177,6 @@ a{color:var(--agent);}
   .bento-hive{ animation:none; }
 }
 .bento-hive .bento-pent{ top:0; left:50%; }
-.bento-section-label{
-  position:absolute; top:0; left:50%; z-index:1; pointer-events:none;
-  font-size:7px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
-  color:var(--low); white-space:nowrap;
-}
 .bento-pent{
   position:absolute; width:69.28px; height:54.64px; z-index:1;
   clip-path:polygon(28.8675% 0%, 71.1325% 0%, 100% 63.3975%, 50% 100%, 0% 63.3975%);
