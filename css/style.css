@@ -179,11 +179,11 @@ a{color:var(--agent);}
 .bento-hive .bento-pent{ top:0; left:50%; }
 .bento-section-label{
   position:absolute; top:0; left:50%; z-index:1; pointer-events:none;
-  font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.08em;
+  font-size:7px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
   color:var(--low); white-space:nowrap;
 }
 .bento-pent{
-  position:absolute; width:145.49px; height:114.75px; z-index:1;
+  position:absolute; width:69.28px; height:54.64px; z-index:1;
   clip-path:polygon(28.8675% 0%, 71.1325% 0%, 100% 63.3975%, 50% 100%, 0% 63.3975%);
   border:none; cursor:pointer; font-family:inherit; color:var(--hi); padding:0;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);
@@ -207,7 +207,7 @@ a{color:var(--agent);}
    every one of the tiling's 4 orientations. */
 .bento-pent-face{
   position:absolute; inset:0;
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.5px;
 }
 /* The emoji as a faint tilted watermark tucked in the bottom-right
    corner — the same treatment as .product-bg-icon's oversized rotated
@@ -224,11 +224,11 @@ a{color:var(--agent);}
    backwards from what's wanted here. */
 .bento-pent-bg-icon{
   position:absolute; z-index:0; pointer-events:none; line-height:1;
-  right:10px; bottom:2px; font-size:38px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
+  right:4px; bottom:1px; font-size:18px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
 }
-.bento-pent-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:12.5px; line-height:1.15; text-align:center; padding:0 10px; color:#000; }
+.bento-pent-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:6.6px; line-height:1.1; text-align:center; padding:0 4px; color:#000; }
 .bento-pent-badge{
-  position:absolute; top:14%; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap;
+  position:absolute; top:9%; left:50%; transform:translateX(-50%) scale(.62); transform-origin:top center; z-index:3; white-space:nowrap;
   font-size:7px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 6px; border-radius:20px;
 }
 .bento-pent-badge.label{ background:rgba(13,17,20,.65); color:var(--tile-color); backdrop-filter:blur(6px); }
@@ -243,7 +243,7 @@ a{color:var(--agent);}
    limitation, but at low enough opacity it isn't visible) is what keeps
    these tiles looking like the rest of the tiling. */
 .bento-id-tile{
-  padding:6px; text-align:center; color:var(--hi);
+  padding:3px; text-align:center; color:var(--hi);
   background:
     radial-gradient(140% 140% at 30% 15%,
       #fff 0%,
@@ -251,34 +251,38 @@ a{color:var(--agent);}
       var(--tile-color, var(--border)) 58%,
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
 }
-.bento-id-dot{ position:absolute; top:14%; right:22%; width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 2px rgba(111,191,115,.2); z-index:2; }
-.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:13.5px; line-height:1.2; color:#000; }
-.bento-id-sub{ position:relative; z-index:1; font-size:8px; color:rgba(237,239,241,.55); }
+.bento-id-dot{ position:absolute; top:10%; right:18%; width:5px; height:5px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 1.5px rgba(111,191,115,.2); z-index:2; }
+.bento-id-name{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:6.8px; line-height:1.1; color:#000; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.bento-id-sub{ position:relative; z-index:1; font-size:5.5px; color:rgba(237,239,241,.55); }
 
 /* Solid fills, not a border — box-shadow:inset draws along the element's
    rectangular box, not its clip-path shape, so on a hexagon it only ever
    shows on the flat top/bottom edges (the one place the rectangle and the
    hex boundary coincide) and leaves the slanted sides invisible. A plain
-   panel-toned fill reads as a real (if quiet) hex cell instead. */
+   panel-toned fill reads as a real (if quiet) hex cell instead — needs to
+   be a real step up from --bg (not just --panel, which sits close enough
+   to --bg in this dark palette that an empty slot was reading as a hole
+   in the tiling rather than an actual tile) so every filler still visibly
+   *is* a pentagon, not a gap. */
 .bento-id-empty, .bento-id-new{
   color:var(--low); font-family:inherit;
-  background:var(--panel);
+  background:color-mix(in srgb, var(--panel-raised) 100%, white 6%);
 }
-.bento-id-new{ cursor:pointer; font-size:18px; }
-.bento-id-new:hover{ color:var(--mid); background:var(--panel-raised); }
+.bento-id-new{ cursor:pointer; font-size:9px; }
+.bento-id-new:hover{ color:var(--mid); background:color-mix(in srgb, var(--panel-raised) 100%, white 14%); }
 
 /* The tile that follows your identity slots while there's still a palier
    left to reach (see credibility.js's IDENTITY_PALIERS) — a fraction plus
    a thin fill bar rather than a bare number, since "42" alone says
    nothing without the target it's climbing toward. */
 .bento-id-score{
-  padding:6px; gap:3px;
+  padding:3px; gap:1.5px;
   background:var(--panel-raised);
 }
-.bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:14px; color:var(--hi); }
-.bento-score-slash{ font-weight:600; font-size:10px; color:var(--low); }
-.bento-score-label{ font-size:8px; text-transform:uppercase; letter-spacing:.05em; color:var(--low); }
-.bento-score-bar{ width:70%; height:3px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
+.bento-score-frac{ font-family:var(--font-head); font-weight:700; font-size:7px; color:var(--hi); }
+.bento-score-slash{ font-weight:600; font-size:5.5px; color:var(--low); }
+.bento-score-label{ font-size:4.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--low); }
+.bento-score-bar{ width:70%; height:2px; border-radius:2px; background:var(--border-soft); overflow:hidden; }
 .bento-score-fill{ display:block; height:100%; background:var(--ok); }
 
 .bento-badge-cooking{
