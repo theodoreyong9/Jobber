@@ -130,7 +130,14 @@ a{color:var(--agent);}
    usual side/top padding so the tiles can sit truly edge-to-edge; see
    render.js. ---------- */
 .workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
-.bureau{ width:100%; position:relative; }
+/* No selectable text anywhere on the Bureau (it's a home screen, not a
+   reading surface) — without this, a long-press meant to open the
+   background picker (see background-ui.js's openBackgroundPicker and
+   desktop-ui.js's bindBackgroundLongPress) instead triggers the mobile
+   browser's own text-selection callout over whatever's underneath the
+   finger, which looks broken and eats the gesture before the long-press
+   timer ever fires. */
+.bureau{ width:100%; position:relative; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
 /* .workspace-bureau zeroes .workspace's own side/top/bottom padding (see
    above) so the pentagon tiles can sit edge-to-edge — .bento-hive restores
    its own bottom clearance for that reason, and since this comes after it,
