@@ -232,17 +232,29 @@ const ECOSYSTEM_COUNT = 3;
 // zone stays internally gap-free (verified the same flood-fill way as the
 // rest of this file) and only the two boundaries themselves open up, on
 // purpose, with clean edges on both sides — just enough room for a label,
-// not more. A naive "row spacing" guess undershoots this badly: a tile
-// rotated 90°/270° reaches PENT_W/2 from its own center, not PENT_H/2
-// (its footprint swaps width/height under that rotation), and PENT_W is
-// bigger than PENT_H — a gap sized off PENT_H/2 alone still let two
-// rotated tiles' real edges overlap, putting a label on top of a tile the
-// first time this was tried. 1.1 units clears that overlap and leaves
-// ~16px, sized to .bento-section-label's own font-size — a single text
-// line, not a wide empty band — verified against zoneBottomTop's actual
-// (rotation-aware) edges below, not eyeballed.
-const ECOSYSTEM_GAP_UNITS = 1.1;
-const MATCHES_GAP_UNITS = 1.1;
+// not more.
+// Sizing this off the WORST-CASE tile anywhere in the zone's *whole*
+// width (a 90°/270°-rotated tile reaches PENT_W/2 from its own center,
+// not PENT_H/2 — its footprint swaps width/height under that rotation,
+// and PENT_W > PENT_H) is what an earlier version of this file did, and
+// it's safe but wildly conservative: that worst-case tile can sit far off
+// to the side of where the label actually renders (cx=0, a ~65-90px-wide
+// strip — see LABEL_HALF_WIDTH below). A first attempt at fixing that
+// checked the gap at cx=0 ONLY and found it exactly 0 at rest (proving
+// the tiling touches edge-to-edge with zero gap and zero overlap right
+// where the label sits) — true, but incomplete: a label isn't a single
+// point, it's a flat rectangle, and the tiling's boundary right next to
+// that point is a diagonal seam, not a flat one (a 90°/270°-rotated
+// tile's inward-pointing vertex cuts back toward center as the seam
+// continues) — so the two off-center tiles flanking the center tile
+// reach further into the gap than the center tile alone does, right at
+// the label's own left/right edges. Confirmed by rendering it: at 0.25
+// units the label's own text visibly overlapped those flanking tiles'
+// corners, not the center tile. zoneEdgeAcrossLabel below samples the
+// real edge across the label's actual width instead of one point, so
+// this constant is sized against what the label really touches.
+const ECOSYSTEM_GAP_UNITS = 0.55;
+const MATCHES_GAP_UNITS = 0.55;
 function zoneShift(index) {
   if (index < ECOSYSTEM_COUNT) return -ECOSYSTEM_GAP_UNITS;
   if (index < TOOL_COUNT) return 0;
@@ -272,27 +284,15 @@ function roundUpToRow(n) {
   for (const end of ALL_ROW_ENDS) if (end >= n) return end;
   return ALL_SLOTS.length;
 }
-// [start, end) of the row containing `index`, reusing the same row
-// boundaries — used to find a zone-boundary label's real vertical gap
-// (see zoneBottomTop below): a naive "midpoint of two cy values" landed
-// labels on top of tile content, because a rotated tile's own reach past
-// its center is PENT_W/2 (its footprint swaps width/height under
-// rotate(90|270deg)), not PENT_H/2 — same class of mistake as the
-// original render-orientation bug, just for label placement instead of
-// tiling.
-function rowBoundsContaining(index) {
-  let start = 0;
-  for (const end of ALL_ROW_ENDS) {
-    if (index < end) return [start, end];
-    start = end;
-  }
-  return [start, ALL_SLOTS.length];
-}
 function verticalHalfExtent(rot) {
   return (rot === 90 || rot === 270) ? PENT_W / 2 : PENT_H / 2;
 }
 // The real bottom/top edge of ALL_SLOTS[start..end), accounting for each
-// tile's own rotation — not just its center's cy.
+// tile's own rotation — not just its center's cy. This is the WORST CASE
+// over the zone's whole width, which is what TOP_CLEARANCE below actually
+// needs (no tile anywhere in the row may clip the container's top edge) —
+// but see the note above ECOSYSTEM_GAP_UNITS for why it's the wrong tool
+// for sizing a label's own gap, since the label only ever sits at cx=0.
 function zoneBottomTop(start, end) {
   let bottom = -Infinity, top = Infinity;
   for (let i = start; i < end; i++) {
@@ -302,6 +302,70 @@ function zoneBottomTop(start, end) {
     top = Math.min(top, s.y - half);
   }
   return { bottom, top };
+}
+// A pentagon's rendered vertices in the same px space as slotPxAt — the
+// exact points CSS's own translate()+rotate() puts PENT_LOCAL's corners
+// at, since PENT_LOCAL*PENT_EDGE is precisely the un-rotated box the
+// clip-path is drawn from (see hole_detector.mjs, which draws these same
+// vertices on a canvas and flood-fills it to verify no real gaps).
+function pentWorldVertsPx(slotPx) {
+  return PENT_LOCAL.map(([lx, ly]) => {
+    const [rx, ry] = pentRotateVec([lx * PENT_EDGE, ly * PENT_EDGE], slotPx.rot);
+    return [slotPx.x + rx, slotPx.y + ry];
+  });
+}
+// Where a polygon's own boundary crosses the vertical line at `x`, if it
+// does at all (a tile off to the side of x may not cross it — the Cairo
+// tiling's own jag means that's normal, not a bug; see zoneEdgeNearCenter).
+function yRangeAtX(verts, x) {
+  const ys = [];
+  for (let i = 0; i < verts.length; i++) {
+    const [x1, y1] = verts[i];
+    const [x2, y2] = verts[(i + 1) % verts.length];
+    if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
+      ys.push(x1 === x2 ? y1 : y1 + ((x - x1) / (x2 - x1)) * (y2 - y1));
+    }
+  }
+  return ys.length ? { top: Math.min(...ys), bottom: Math.max(...ys) } : null;
+}
+// Half the width a section label actually renders at (left:50%, so it's
+// centered on cx=0) — ".bento-section-label"'s own 12.25px/600/uppercase/
+// .06em-tracking text measures ~64-90px wide depending on the word; this
+// covers the widest of them ("Ecosystem") with a few px to spare.
+const LABEL_HALF_WIDTH = 35;
+// The real bottom/top edge of ALL_SLOTS[start..end) across the label's
+// actual width (cx in [-LABEL_HALF_WIDTH, LABEL_HALF_WIDTH]), not just its
+// center point — see the comment above ECOSYSTEM_GAP_UNITS for why a
+// single point misses the off-center tiles that actually crowd the
+// label's edges. Worst case (max bottom / min top) over that strip, since
+// the label itself is a flat rectangle that has to clear all of it at once.
+function zoneEdgeAcrossLabel(start, end) {
+  let bottom = -Infinity, top = Infinity;
+  const SAMPLES = 14;
+  for (let i = start; i < end; i++) {
+    const verts = pentWorldVertsPx(slotPxAt(i));
+    for (let k = 0; k <= SAMPLES; k++) {
+      const x = -LABEL_HALF_WIDTH + (2 * LABEL_HALF_WIDTH * k) / SAMPLES;
+      const r = yRangeAtX(verts, x);
+      if (r) { bottom = Math.max(bottom, r.bottom); top = Math.min(top, r.top); }
+    }
+  }
+  return { bottom, top };
+}
+// Same, but for a zone whose very first row might not itself reach the
+// label's width (e.g. the identity strip's first row after the tools: a
+// 2-wide row sitting entirely off to the sides, with the row *below* it
+// filling in the middle — the tiling's own normal jag). Extends row by
+// row, using the same row boundaries as roundUpToRow, until it finds real
+// material under the label to measure against.
+function zoneEdgeAcrossLabelFrom(start) {
+  let end = roundUpToRow(start + 1);
+  let edge = zoneEdgeAcrossLabel(start, end);
+  while (edge.top === Infinity && end < ALL_SLOTS.length) {
+    end = roundUpToRow(end + 1);
+    edge = zoneEdgeAcrossLabel(start, end);
+  }
+  return edge;
 }
 // Container width: wide enough for the widest row actually placed in it,
 // plus one full pentagon's width so a tile centered at the band's edge
@@ -475,13 +539,14 @@ export async function renderDesktop() {
   // "Ecosystem" sits above the pushed-up first zone; "Insights" and
   // "Matches" each sit in the deliberate gap zoneShift opens at that
   // zone's boundary — the real gap between one zone's own bottom edge and
-  // the next zone's own top edge (zoneBottomTop, not a naive midpoint of
-  // two tile centers — see its own comment for why that overlapped).
+  // the next zone's own top edge, measured across the label's own width
+  // (zoneEdgeAcrossLabel/zoneEdgeAcrossLabelFrom — see the comment above
+  // ECOSYSTEM_GAP_UNITS for why a naive midpoint, a whole-row bounding
+  // box, or even a single center point all get this wrong).
   const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
-  const ecoExtent = zoneBottomTop(0, ECOSYSTEM_COUNT);
-  const insightsExtent = zoneBottomTop(ECOSYSTEM_COUNT, TOOL_COUNT);
-  const [matchesRowStart, matchesRowEnd] = rowBoundsContaining(TOOL_COUNT);
-  const matchesExtent = zoneBottomTop(matchesRowStart, matchesRowEnd);
+  const ecoExtent = zoneEdgeAcrossLabel(0, ECOSYSTEM_COUNT);
+  const insightsExtent = zoneEdgeAcrossLabel(ECOSYSTEM_COUNT, TOOL_COUNT);
+  const matchesExtent = zoneEdgeAcrossLabelFrom(TOOL_COUNT);
   const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ecoExtent.top - 10)}">Ecosystem</span>`;
   const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ecoExtent.bottom + insightsExtent.top) / 2)}">Insights</span>`;
   const matchesLabel = `<span class="bento-section-label" style="${labelTransform((insightsExtent.bottom + matchesExtent.top) / 2)}">Matches</span>`;
