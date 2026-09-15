@@ -207,8 +207,8 @@ a{color:var(--agent);}
   background:
     radial-gradient(135% 135% at 30% 15%,
       #fff 0%,
-      color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 16%,
-      var(--tile-color, var(--border)) 55%,
+      color-mix(in srgb, var(--tile-color, var(--border)) 82%, white 18%) 7%,
+      var(--tile-color, var(--border)) 45%,
       color-mix(in srgb, var(--tile-color, var(--border)) 70%, black 30%) 100%);
   transition:filter .12s ease;
 }
@@ -240,7 +240,7 @@ a{color:var(--agent);}
    backwards from what's wanted here. */
 .bento-pent-bg-icon{
   position:absolute; z-index:0; pointer-events:none; line-height:1;
-  right:7px; bottom:1.75px; font-size:31.5px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
+  right:10px; bottom:8px; font-size:48px; opacity:.28; transform:rotate(-14deg); filter:saturate(130%);
 }
 .bento-pent-label{ position:relative; z-index:1; font-family:var(--font-head); font-weight:700; font-size:11.5px; line-height:1.1; text-align:center; padding:0 7px; color:#000; }
 .bento-pent-badge{
