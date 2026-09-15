@@ -175,40 +175,45 @@ function generatePentagonPatch(rounds) {
 // one to the other is a MIRROR REFLECTION, not a rotation — reflections
 // reverse handedness, so a pentagon's neighbors (verified edge-to-edge
 // in the math convention) stop actually lining up once each one's own
-// rotation is fed unchanged into CSS. A full 180° rotation instead
-// (negate BOTH x and y, and add 180° to every rot) reverses which
-// direction reads as "down the screen" the same way a Y-flip does, but
-// — being a genuine rigid rotation, not a reflection — it preserves
-// every edge adjacency the generator already verified. (This was the
-// actual bug behind an earlier version of this file rendering visible
-// gaps throughout the identity strip: every pair of tiles individually
-// satisfied the edge-matching check done on the *un-rendered* math, but
-// the on-screen rotations didn't match what that check assumed — caught
-// by rendering two supposedly-adjacent pentagons in isolation and
-// finding they didn't actually touch.)
+// rotation is fed unchanged into CSS. A rigid rotation instead (rotate
+// BOTH the position and the rot by the same angle) reorients the same
+// way a flip does, but — being a genuine rotation, not a reflection —
+// it preserves every edge adjacency the generator already verified.
+// (This was the actual bug behind an earlier version of this file
+// rendering visible gaps throughout the identity strip: every pair of
+// tiles individually satisfied the edge-matching check done on the
+// *un-rendered* math, but the on-screen rotations didn't match what
+// that check assumed — caught by rendering two supposedly-adjacent
+// pentagons in isolation and finding they didn't actually touch.)
+// Rotating by 90° here rather than 180°: both are equally valid rigid
+// rotations of the same verified tiling (any rotation angle preserves
+// every adjacency), but which one lands a clean small tool cluster near
+// the origin, and which axis reads as the identity strip's "row" vs
+// "column", depends on where the seed pentagon sits in the tiling's
+// repeat unit — checked both by brute-force search rather than assumed.
 const PENT_PATCH = generatePentagonPatch(13).map((p) => ({
-  cx: -p.cx, cy: -p.cy, rot: (p.rot + 180) % 360,
+  cx: -p.cy, cy: p.cx, rot: (p.rot + 90) % 360,
 }));
 
 // The 7 tools as two stacked rows instead of a hex flower — a regular
 // hexagon can surround itself with 6 neighbors in a closed ring; this
 // pentagon can't (see the tiling notes above), so there's no equivalent
-// single-tile-in-the-middle shape for exactly 7. A 3-tile row (Ecosystem)
-// directly above a 4-tile row (Insight) is the most compact arrangement
-// that actually occurs in the real tiling with no gaps between them —
-// verified the same way as the rest of this geometry, by checking every
-// edge among these 7 either matches its neighbor here or continues
-// cleanly into the wider tiling.
+// single-tile-in-the-middle shape for exactly 7. A 2-tile row directly
+// above a 5-tile row is the compact arrangement this particular
+// rotation's tiling actually produces near the origin with no gaps
+// between them — verified the same way as the rest of this geometry, by
+// checking every edge among these 7 either matches its neighbor here or
+// continues cleanly into the wider tiling.
 const TOOL_SLOTS = [
-  { cx: -3.4641016, cy: 0, rot: 180 },            // Ecosystem, left
-  { cx: 0, cy: 0, rot: 180 },                     // Ecosystem, center
-  { cx: 3.4641016, cy: 0, rot: 180 },              // Ecosystem, right
-  { cx: -2.4150635, cy: 0.6830127, rot: 90 },     // Insight, 1
-  { cx: -1.0490381, cy: 0.6830127, rot: 270 },    // Insight, 2
-  { cx: 1.0490381, cy: 0.6830127, rot: 90 },      // Insight, 3
-  { cx: 2.4150635, cy: 0.6830127, rot: 270 },     // Insight, 4
+  { cx: -1.0490381, cy: -0.6830127, rot: 180 },   // upper row, left
+  { cx: 2.4150635, cy: -0.6830127, rot: 180 },    // upper row, right
+  { cx: -3.4641016, cy: 0, rot: 90 },             // lower row, 1
+  { cx: -2.0980762, cy: 0, rot: 270 },            // lower row, 2
+  { cx: 0, cy: 0, rot: 90 },                      // lower row, 3 (center)
+  { cx: 1.3660254, cy: 0, rot: 270 },             // lower row, 4
+  { cx: 3.4641016, cy: 0, rot: 90 },              // lower row, 5
 ];
-const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agent', 'near'];
+const TOOL_ORDER = ['wallet', 'creator', 'tribute', 'pricing', 'messages', 'agent', 'near'];
 // A light gap between the Ecosystem row and the Insight row below it
 // (pure visual padding, same idea as the old hex layout's zone gaps) —
 // applied to the Ecosystem row's y only, so it stays flush with itself
@@ -216,7 +221,7 @@ const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agen
 // added directly to cy before scaling to px.
 const ECOSYSTEM_GAP_UNITS = 0.35;
 // Same idea below Insight, before the identity strip starts.
-const MATCHES_GAP_UNITS = 0.35;
+const MATCHES_GAP_UNITS = 0.55;
 
 // Every pentagon in PENT_PATCH strictly below the tool rows (cy > 1,
 // i.e. below Insight's own row at cy=0.683), within a band wide enough
@@ -281,8 +286,8 @@ function pentSlotPx({ cx, cy, rot }, extraYUnits = 0) {
 }
 // Raw (pre-clearance) y of the Ecosystem/Insight tool rows — every tile
 // in a row shares the same cy, so any one slot from it gives the row's y.
-const ECOSYSTEM_ROW_Y = pentSlotPx(TOOL_SLOTS[1], -ECOSYSTEM_GAP_UNITS).y;
-const INSIGHT_ROW_Y = pentSlotPx(TOOL_SLOTS[3], 0).y;
+const ECOSYSTEM_ROW_Y = pentSlotPx(TOOL_SLOTS[0], -ECOSYSTEM_GAP_UNITS).y;
+const INSIGHT_ROW_Y = pentSlotPx(TOOL_SLOTS[2], 0).y;
 // How far below the container's top edge the tiling's own y=0 line sits.
 // Sized so the highest thing drawn (the pushed-up Ecosystem row's top
 // edge) clears the container, with LABEL_HEADROOM to spare for its own
@@ -316,7 +321,7 @@ function wheelToolTile(ns, i, pendingCount) {
   const badge = ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0);
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
-  const isEcosystem = i < 3;
+  const isEcosystem = i < 2;
   const slotPx = pentSlotPx(TOOL_SLOTS[i], isEcosystem ? -ECOSYSTEM_GAP_UNITS : 0);
   return `
     <button type="button" class="bento-pent" style="--tile-color:${cfg.color}; ${pentTransform(slotPx)}" data-act="tool" data-ns="${ns}">
@@ -442,22 +447,25 @@ export async function renderDesktop() {
 
   const pendingCount = countPendingNotifications();
   const tools = TOOL_ORDER.map((ns, i) => wheelToolTile(ns, i, pendingCount)).join('');
-  // All three labels live inside .bento-hive, positioned in the same raw
+  // Both labels live inside .bento-hive, positioned in the same raw
   // (pre-TOP_CLEARANCE) coordinate space as every pentagon above, via the
   // same helper — so they bob with the levitation animation exactly like
   // the tiles do, instead of sitting outside it as a static element that
   // would visibly detach on every float cycle. "Ecosystem" sits just
-  // above the pushed-up top row; "Insights" in the gap that push opens
-  // against the row below it; "Matchs" in the MATCHES_GAP_UNITS gap
-  // before the identity strip starts.
+  // above the pushed-up top row; "Matchs" in the MATCHES_GAP_UNITS gap
+  // before the identity strip starts. No middle label between the two
+  // tool rows this time: unlike the old 3-over-4 split, this rotation's
+  // 2-over-5 rows interlock tightly enough (the wide row's own apexes
+  // reach up well into the narrow row's territory — that's what tiling
+  // with no gap actually looks like here) that there's no clear space
+  // between them for a label to sit without overlapping a tile.
   const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
   const ecosystemLabel = `<span class="bento-section-label" style="${labelTransform(ECOSYSTEM_ROW_Y - PENT_H / 2 - 6)}">Ecosystem</span>`;
-  const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ECOSYSTEM_ROW_Y + INSIGHT_ROW_Y) / 2)}">Insights</span>`;
-  const matchesLabel = `<span class="bento-section-label" style="${labelTransform((INSIGHT_ROW_Y + identitySlotPx(0).y) / 2)}">Matchs</span>`;
+  const matchesLabel = `<span class="bento-section-label" style="${labelTransform((INSIGHT_ROW_Y + PENT_H / 2 + identitySlotPx(0).y - PENT_H / 2) / 2)}">Matchs</span>`;
 
   return `
     <div class="bureau">
-      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div></div>
+      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${matchesLabel}${cells.join('')}</div></div>
       ${manifestoHtml}
     </div>`;
 }
