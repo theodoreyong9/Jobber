@@ -14,6 +14,7 @@
 </head>
 <body>
 
+<div class="bureau-backdrop" id="bureauBackdrop" aria-hidden="true"></div>
 <div class="app">
   <div class="main">
     <header class="topbar">
@@ -45,6 +46,7 @@
           <div class="row"><span>Backend</span><b>none</b></div>
           <div class="row"><span>Protocol</span><b>v0.4</b></div>
           <div class="row"><span>Local footprint</span><b id="usageStat">…</b></div>
+          <div class="row"><span>Bureau background</span><button class="btn small ghost" id="chooseBureauBg" title="Pick a background image or color for the Bureau">Choose…</button></div>
           <div class="backup-actions">
             <button class="btn small ghost" id="exportBackup" title="Download everything (identities, profiles, blocklist, Intelligence projects) as one JSON file">Export backup</button>
             <button class="btn small ghost" id="importBackup" title="Restore from a previously exported backup file">Import backup</button>
