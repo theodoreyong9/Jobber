@@ -30,6 +30,11 @@ export async function getProfile(identityId) {
     // request/consent flow like Employment's cover letter): the whole
     // point of posting an activity is to be reachable about it.
     contactType: 'email', contactValue: '', participantLimit: null,
+    // AIWA/YourMine-specific (see editAddressProfileFlow) — addressType is
+    // one of NS_CONFIG[ns].addressTypes; exactAddress is optional (a
+    // Seeker who leaves it blank falls back to sourceText's normal
+    // keyword matching instead).
+    addressType: '', exactAddress: '',
   };
 }
 
@@ -414,6 +419,58 @@ export function editSupplyDemandProfileFlow(ns, id) {
   });
 }
 
+// AIWA/YourMine profile editor. Both roles get the same fields — unlike
+// Outdoor/Business's organizer-vs-participant split, there's no separate
+// shape per role here, just which side of the same address the text
+// describes. This supports both matching styles at once rather than
+// making you pick a mode: fill in the exact address if you already know
+// it (a Seeker who does only ever sees holders of that exact value — see
+// renderClassicWorkspace's requiredExactAddress in discovery-ui.js), and
+// the free-text description always gets tokenized too, so the namespace's
+// normal keyword-overlap matching (matching.matchTokens, the same
+// baseline every twoSided namespace already gets) still works whenever
+// neither side knows the exact value yet.
+export function editAddressProfileFlow(ns, id) {
+  const cfg = NS_CONFIG[ns];
+  const isAddressHolder = id.role === cfg.roles[0].key;
+  getProfile(id.identityId).then((profile) => {
+    const typeOptions = cfg.addressTypes
+      .map((t) => `<option value="${t}" ${profile.addressType === t ? 'selected' : ''}>${t}</option>`)
+      .join('');
+    openModal(`Edit profile — ${roleLabel(ns, id.role)}`, `
+      ${nameFieldHtml(id)}
+      ${yourMineFieldHtml(profile)}
+      <p style="font-size:11.5px;color:var(--low);margin:-6px 0 4px">
+        Look it up on <a href="${cfg.url}" target="_blank" rel="noopener">the ${cfg.label} app ↗</a> first if you don't have it handy.
+      </p>
+      <label>Type</label>
+      <select id="addrType">${typeOptions}</select>
+      <label>Exact address (optional) — ${isAddressHolder ? 'only Seekers who type this exact value will find you' : 'leave blank to be matched by keyword instead'}</label>
+      <input type="text" id="exactAddr" value="${profile.exactAddress || ''}" placeholder="Paste the exact value">
+      <label>${isAddressHolder ? 'Describe this address — used for keyword matching, and shown to Seekers as-is' : 'What are you looking for? — matched by keyword unless you entered an exact address above'}</label>
+      <textarea id="desc" placeholder="${isAddressHolder ? 'What it’s for, how it’s used…' : 'e.g. a devnet wallet for tips, a minimalist theme…'}">${profile.sourceText || ''}</textarea>
+    `, {
+      submitLabel: 'Save profile',
+      onSubmit: async (dlg) => {
+        await saveNameIfChanged(id, dlg);
+        const yourMineUrl = readYourMineUrl(dlg);
+        const addressType = dlg.querySelector('#addrType').value;
+        const exactAddress = dlg.querySelector('#exactAddr').value.trim();
+        const sourceText = dlg.querySelector('#desc').value;
+        const tokens = matching.tokenize(sourceText, addressType);
+        await db.put('profiles', {
+          ...profile, yourMineUrl, addressType, exactAddress, sourceText, tokens,
+          updatedAt: Date.now(),
+        });
+        await autoSearchOnSave(ns, id, tokens);
+        toast('Profile saved locally');
+        state.render.workspace();
+        state.render.topbar();
+      },
+    });
+  });
+}
+
 // The caller (discovery-ui.js's click handler) drives the progress UI
 // directly on the button itself — this function stays pure logic plus
 // storage, no toast spam for every progress tick. Returns null for the
@@ -439,5 +496,6 @@ export function openProfileEditor(ns, id) {
   if (ns === 'employment') editEmploymentProfileFlow(id);
   else if (ns === 'outdoor') editOutdoorProfileFlow(id);
   else if (ns === 'business') editSupplyDemandProfileFlow(ns, id);
+  else if (ns === 'wallet' || ns === 'creator') editAddressProfileFlow(ns, id);
   else editProfileFlow(ns, id);
 }
