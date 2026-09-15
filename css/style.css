@@ -149,6 +149,11 @@ a{color:var(--agent);}
   padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom));
 }
 .bureau-manifesto-rule{ width:36px; height:3px; margin:0 auto 20px; border-radius:2px; background:var(--accent); }
+.bureau-manifesto-title{
+  font-family:var(--font-head); font-weight:700; font-size:11.5px;
+  text-transform:uppercase; letter-spacing:.08em; color:var(--accent);
+  margin:0 0 14px;
+}
 .bureau-manifesto-lead{
   font-family:var(--font-head); font-weight:600; font-size:18px; line-height:1.45;
   letter-spacing:-.01em; color:var(--hi); margin:0 0 10px;
