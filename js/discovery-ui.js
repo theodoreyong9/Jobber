@@ -34,6 +34,11 @@ async function buildDiscoveryPayload(ns, id, profile) {
     aiTokens: profile.aiTokens.slice(0, 30),
     languages: profile.languages,
     availableNow: profile.availableNow,
+    // Unconditional, unlike every other field below this point — either
+    // side of any namespace can set one (see profiles.js's
+    // secretCodeFieldHtml), and it overrides all of them once both sides
+    // agree on the same value (see hardFilter/scoreAgainstPeer).
+    secretCode: profile.secretCode,
   };
   // Near mode's opt-in location is a device-level fact, not owned by any
   // one namespace's profile — it piggybacks on whichever discovery
@@ -206,7 +211,14 @@ export async function toggleSearchLive(ns, identityId) {
 state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar calls this indirectly
 state.handlers.rebroadcastDiscovery = rebroadcastDiscovery; // same reason — the enrich control lives in the topbar now
 
-export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) {
+export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p, mySecretCode = null) {
+  // Overrides everything below, the same escape hatch as hardFilter's own
+  // (see matching.secretCodesMatch) — a shared secret code means this
+  // peer isn't just eligible, it's THE match, full score, regardless of
+  // what matching.matchTokens would otherwise have said.
+  if (matching.secretCodesMatch(mySecretCode, p.secretCode)) {
+    return { score: 100, engineVersion: matching.MATCHING_ENGINE_VERSION, matchedKeywords: [], missingRequired: [], secretCodeMatch: true };
+  }
   const peerTokens = [...(p.tokens || []), ...(p.aiTokens || [])]; // tokens/aiTokens travel separately on the wire now — see buildDiscoveryPayload
   if (cfg.kind === 'reciprocal') {
     const forward = matching.matchTokens(myLookingForTokens, peerTokens);   // does their profile fit what I want
@@ -217,6 +229,7 @@ export function scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) {
 }
 
 export function explainMatch(cfg, match) {
+  if (match.secretCodeMatch) return { pos: ['Secret code match — you agreed on this directly.'], neg: [] };
   return cfg.kind === 'reciprocal'
     ? {
         pos: [
@@ -235,16 +248,19 @@ export function explainMatch(cfg, match) {
 // Merged straight into the same results list as real peers (see
 // renderClassicWorkspace): no separate "local" treatment, no badge, same
 // card, same actions — an identity is an identity.
-async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
+async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens, mySecretCode) {
   if (cfg.kind === 'research') return [];
   const wantRole = cfg.kind === 'twoSided' ? complementaryRole(ns, id.role) : null;
   const candidates = state.identitiesByNs[ns].filter((other) =>
-    other.identityId !== id.identityId && other.active && !state.blocked[ns].has(other.identityId) &&
-    (cfg.kind !== 'twoSided' || other.role === wantRole)
+    other.identityId !== id.identityId && other.active && !state.blocked[ns].has(other.identityId)
   );
   const out = [];
   for (const other of candidates) {
     const p2 = await getProfile(other.identityId);
+    // A shared secret code bypasses the role filter too, same as the real
+    // peer path's hardFilter — otherwise same-browser testing couldn't
+    // even exercise the one case (two same-role identities) it's for.
+    if (cfg.kind === 'twoSided' && other.role !== wantRole && !matching.secretCodesMatch(mySecretCode, p2.secretCode)) continue;
     const peerLike = {
       sender: other.identityId, displayName: other.displayName, category: p2.category,
       tokens: p2.tokens, aiTokens: p2.aiTokens, searchTokens: p2.searchTokens,
@@ -254,9 +270,9 @@ async function localTestMatches(ns, cfg, id, myTokens, myLookingForTokens) {
       postingText: p2.jobPostingText || p2.sourceText, photoDataUrl: p2.photoDataUrl,
       languages: p2.languages, availableNow: p2.availableNow,
       contactType: p2.contactType, contactValue: p2.contactValue, participantLimit: p2.participantLimit,
-      addressType: p2.addressType, exactAddress: p2.exactAddress,
+      addressType: p2.addressType, exactAddress: p2.exactAddress, secretCode: p2.secretCode,
     };
-    const match = scoreAgainstPeer(cfg, myTokens, myLookingForTokens, peerLike);
+    const match = scoreAgainstPeer(cfg, myTokens, myLookingForTokens, peerLike, mySecretCode);
     out.push({ ...peerLike, match });
   }
   return out.sort((a, b) => b.match.score - a.match.score);
@@ -276,7 +292,10 @@ export async function renderClassicWorkspace(ns) {
     .filter((p) => now - (p.lastSeen || 0) < PEER_TTL_MS)
     .filter((p) => !state.blocked[ns].has(p.sender));
 
-  const hardConstraints = { requiredLanguages: profile.languages };
+  // Unconditional (every namespace, every role) and set before
+  // requiredRole below — hardFilter checks it first and, when it matches,
+  // bypasses requiredRole along with everything else.
+  const hardConstraints = { requiredLanguages: profile.languages, mySecretCode: profile.secretCode };
   if (cfg.kind === 'twoSided') hardConstraints.requiredRole = complementaryRole(ns, id.role);
   const softConstraints = { preferredCategory: profile.category };
   const isSupplySide = cfg.kind === 'twoSided' && id.role === cfg.roles[0].key;
@@ -322,7 +341,7 @@ export async function renderClassicWorkspace(ns) {
     softConstraints,
   });
 
-  const scoredRemote = cascade.pool.map((p) => ({ ...p, match: scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p) }));
+  const scoredRemote = cascade.pool.map((p) => ({ ...p, match: scoreAgainstPeer(cfg, myTokens, myLookingForTokens, p, profile.secretCode) }));
 
   // Anyone matching from the same browser (a second identity you created
   // yourself, in this tab or another) is scored exactly the same way and
@@ -331,7 +350,7 @@ export async function renderClassicWorkspace(ns) {
   // still just a peer, discovered like any other. Trying to chat with one
   // hits the same "not currently connected" path a real peer who went
   // offline would.
-  const scored = [...scoredRemote, ...await localTestMatches(ns, cfg, id, myTokens, myLookingForTokens)]
+  const scored = [...scoredRemote, ...await localTestMatches(ns, cfg, id, myTokens, myLookingForTokens, profile.secretCode)]
     .sort((a, b) => b.match.score - a.match.score);
 
   // Credibility is a completely separate question from Match (see
