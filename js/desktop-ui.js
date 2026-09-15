@@ -476,11 +476,13 @@ function pentScoreTile(score, palier, index) {
 // static, plain-flow content, deliberately outside .bento-hive so it
 // doesn't inherit the levitation animation or the pentagon coordinate
 // system (there's nothing to align it to; it's prose, not a tile).
+const MANIFESTO_TITLE = 'An interplanetary operating architecture for digital human opportunities';
 const MANIFESTO_LEAD = 'A world without accounts, where everyone owns their identity and connects directly with anyone, anywhere, for anything.';
 const MANIFESTO_SUB = 'A world that doesn’t disappear when the network does.';
 const manifestoHtml = `
   <div class="bureau-manifesto">
     <div class="bureau-manifesto-rule"></div>
+    <p class="bureau-manifesto-title">${MANIFESTO_TITLE}</p>
     <p class="bureau-manifesto-lead">${MANIFESTO_LEAD}</p>
     <p class="bureau-manifesto-sub">${MANIFESTO_SUB}</p>
   </div>`;
