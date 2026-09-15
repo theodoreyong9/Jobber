@@ -13,20 +13,6 @@ import * as db from './db.js';
 
 export const NAMESPACES = ['employment', 'business', 'outdoor', 'dating', 'info', 'research', 'near', 'agent', 'messages', 'creator', 'wallet', 'tribute', 'pricing'];
 
-// Purely a display grouping for the Bureau (desktop-ui.js) — every other
-// consumer of NAMESPACES (app.js's boot loop, render.js, etc.) still just
-// wants the flat list, so this doesn't replace it. Four clusters: the
-// actual P2P matching namespaces, the cross-cutting tools that read what
-// those already discovered, AIWA/YourMine's own address matching plus
-// Tribute's link out to the rest of this portfolio, and info about
-// Jobber itself.
-export const NAMESPACE_GROUPS = [
-  { label: 'Match', namespaces: ['employment', 'business', 'outdoor', 'dating', 'info'] },
-  { label: 'Insight', namespaces: ['research', 'near', 'agent', 'messages'] },
-  { label: 'Ecosystem', namespaces: ['creator', 'wallet', 'tribute'] },
-  { label: 'About', namespaces: ['pricing'] },
-];
-
 // "twoSided" namespaces match role A against role B (never A-A or B-B).
 // "reciprocal" (dating) matches each identity's *search* against the
 // other's *profile*, in both directions — a real match needs both sides
