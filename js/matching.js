@@ -119,6 +119,21 @@ export function extractEarliestYear(text) {
   return matches.length ? Math.min(...matches) : null;
 }
 
+// A shared secret code, agreed on with someone directly (in person, by
+// phone, however) rather than declared through a profile — see
+// profiles.js's secretCodeFieldHtml. Trimmed and case-folded so a stray
+// space or shift key doesn't silently defeat what's meant to be an easy,
+// deliberate handshake, not a precise cryptographic secret. An empty code
+// on either side never counts as a match — otherwise two people who both
+// left it blank would "match" by default, which defeats the point.
+export function normalizeSecretCode(code) {
+  return (code || '').trim().toLowerCase();
+}
+export function secretCodesMatch(mine, theirs) {
+  const a = normalizeSecretCode(mine);
+  return !!a && a === normalizeSecretCode(theirs);
+}
+
 export function matchTokens(myTokens, theirTokens, requiredTokens = []) {
   const mySet = new Set(myTokens);
   const theirSet = new Set(theirTokens);
