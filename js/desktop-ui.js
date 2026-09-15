@@ -63,7 +63,12 @@ function tileHtml(ns, { label, sub = '', dataAttrs, badge = 0 }) {
 // Still being built out — flagged on the Bureau so it's clear these
 // aren't finished features yet. Pricing counts too: only one of its five
 // tiers is real (see pricing-ui.js) — the rest of that page is "Soon".
-const COOKING = ['agent', 'pricing'];
+// AIWA/YourMine got real address-matching (see NS_CONFIG.wallet/creator
+// and editAddressProfileFlow), but the badge stays: matching against
+// AIWA_chain/YourMine's actual on-chain/published addresses is still
+// untested against those real apps, not just against Jobber's own
+// simulated local-test matches.
+const COOKING = ['agent', 'pricing', 'wallet', 'creator'];
 
 // --- Cairo pentagon tiling geometry -------------------------------------
 // A regular hexagon tiles the plane on its own; a regular pentagon
