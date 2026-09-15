@@ -29,6 +29,15 @@ export function hardFilter(peers, constraints = {}) {
     }
     if (constraints.requireAvailableNow && !p.availableNow) return false;
 
+    // AIWA/YourMine: a Seeker who already knows the exact address they're
+    // after (see profiles.js's editAddressProfileFlow) only wants to see
+    // that address's holder — leaving it unset falls back to every other
+    // namespace's baseline keyword-overlap matching instead.
+    if (constraints.requiredExactAddress) {
+      const theirs = (p.exactAddress || '').trim().toLowerCase();
+      if (theirs !== constraints.requiredExactAddress) return false;
+    }
+
     // Employment-style seniority range, checked in whichever direction
     // applies: a recruiter's declared range is checked against the peer's
     // earliest-CV-year; a candidate's own earliest year is checked against
