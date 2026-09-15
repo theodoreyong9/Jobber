@@ -16,6 +16,7 @@ import * as identity from './identity.js';
 import * as llm from './llm.js';
 import * as research from './research.js';
 import * as backup from './backup.js';
+import { loadBureauBackground, openBackgroundPicker } from './background-ui.js';
 import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace, ensureIdentityState } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
@@ -172,6 +173,8 @@ async function boot() {
   registerServiceWorker();
   reportWebGPU();
   registerBackupButtons();
+  document.getElementById('chooseBureauBg')?.addEventListener('click', openBackgroundPicker);
+  loadBureauBackground();
 
   // Resume Search Live / research connection automatically if they were on
   // last time — "search live" isn't meant to reset itself just because the
