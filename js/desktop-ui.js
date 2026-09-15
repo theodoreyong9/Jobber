@@ -88,9 +88,9 @@ const SQRT3 = Math.sqrt(3);
 // widest row (the band, ±ALL_BAND below) stays inside a normal portrait
 // phone width with no horizontal scrolling — see HIVE_WIDTH below, which
 // this directly determines.
-const PENT_EDGE = 56;
-const PENT_W = PENT_EDGE * SQRT3; // ≈97.0px
-const PENT_H = PENT_EDGE * (SQRT3 + 1) / 2; // ≈76.5px
+const PENT_EDGE = 70;
+const PENT_W = PENT_EDGE * SQRT3; // ≈121.2px
+const PENT_H = PENT_EDGE * (SQRT3 + 1) / 2; // ≈95.6px
 // V1..V5, centered on the pentagon's own bounding-box center — which is
 // also where CSS rotate() pivots by default (transform-origin:50% 50%),
 // so a plain `rotate(Ndeg)` reproduces exactly the rotations the tiling
