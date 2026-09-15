@@ -7,6 +7,8 @@
 //        -> budget cap
 //        -> handed to matching.js
 
+import * as matching from './matching.js';
+
 export const DEFAULT_BUDGETS = {
   maxDiscovered: 2000,
   maxPreFiltered: 500,
@@ -19,6 +21,15 @@ export function levelZero(peerMetas, myNamespace, protocolVersion) {
 
 export function hardFilter(peers, constraints = {}) {
   return peers.filter((p) => {
+    // A secret code both sides agreed on directly overrides every other
+    // filter below — role, language, distance, availability, seniority,
+    // rate, exact address, all of it. This is the one deliberate escape
+    // hatch in the whole matching pipeline: two people who already know
+    // they want to find each other shouldn't have to also happen to
+    // declare compatible profiles first. See matching.secretCodesMatch —
+    // an empty code on either side never counts as a match.
+    if (matching.secretCodesMatch(constraints.mySecretCode, p.secretCode)) return true;
+
     if (constraints.requiredRole && p.role !== constraints.requiredRole) return false;
     if (constraints.requiredLanguages && constraints.requiredLanguages.length) {
       const langs = p.languages || [];
