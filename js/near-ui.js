@@ -57,7 +57,7 @@ export async function renderNearWorkspace() {
                   <div class="top">
                     <span class="avatar" style="background:${NS_CONFIG[p.ns].color}">📍</span>
                     <div class="info">
-                      <div class="name">${NS_CONFIG[p.ns].label} — ${p.sender.slice(0, 10)}…</div>
+                      <div class="name">${NS_CONFIG[p.ns].label} — ${p.displayName || `${p.sender.slice(0, 10)}…`}</div>
                       <div class="role">${p.category || 'No category declared'}</div>
                       <div class="meta"><span class="chip">${p.distanceKm.toFixed(1)} km away</span></div>
                     </div>
