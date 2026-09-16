@@ -44,8 +44,12 @@ document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 // and editAddressProfileFlow), but the badge stays: matching against
 // AIWA_chain/YourMine's actual on-chain/published addresses is still
 // untested against those real apps, not just against Jobber's own
-// simulated local-test matches.
-const COOKING = ['agent', 'pricing', 'wallet', 'creator'];
+// simulated local-test matches. Research (Intelligence) has no tool
+// wheel tile of its own (not in TOOL_ORDER) but is still creatable, so
+// it only ever shows this badge on the mode picker and its own identity
+// tiles (see COOKING's other two call sites below) -- appearing here
+// doesn't put it on a wheel tile that doesn't exist.
+const COOKING = ['agent', 'pricing', 'wallet', 'creator', 'research'];
 
 // --- Cairo pentagon tiling geometry -------------------------------------
 // A regular hexagon tiles the plane on its own; a regular pentagon
@@ -412,6 +416,7 @@ function pentIdTile(ns, id, isLive, index) {
   return `
     <button type="button" class="bento-pent bento-id-tile" style="--tile-color:${cfg.color}; ${pentTransform(slotPx)}" data-act="open" data-ns="${ns}" data-id="${id.identityId}">
       <span class="bento-pent-face" style="${pentFaceStyle(slotPx.rot)}">
+        ${COOKING.includes(ns) ? '<span class="bento-pent-badge label">cooking</span>' : ''}
         ${isLive ? '<span class="bento-id-dot" title="Live"></span>' : ''}
         <span class="bento-pent-bg-icon">${cfg.icon}</span>
         <span class="bento-id-name">${id.displayName}</span>
@@ -664,6 +669,7 @@ function pentPickerTile(ns, item) {
     <button type="button" class="mode-pent" data-ns="${ns}"
       style="--tile-color:${cfg.color}; width:${PICKER_W}px; height:${PICKER_H}px; left:${item.x}px; top:${item.y}px; transform:translate(-50%,-50%) rotate(${item.rot}deg);">
       <span class="mode-pent-face" style="transform:rotate(${-item.rot}deg);">
+        ${COOKING.includes(ns) ? '<span class="bento-pent-badge label">cooking</span>' : ''}
         <span class="mode-pent-icon">${cfg.icon}</span>
         <span class="mode-pent-label">${cfg.label}</span>
       </span>
