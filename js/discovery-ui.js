@@ -15,7 +15,7 @@ import { openModal, toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { getProfile } from './profiles.js';
 import {
-  closeConversation, proposeMeetingFlow, respondMeeting, requestDocument, shareDocument, declineDocument,
+  closeConversation, proposeMeetingFlow, respondMeeting, requestDocument,
   loadConversation, listConversations, persistMessage, requestChat, respondChat, sendChatMessage,
   renderChatPanel, proposeAttachment, respondAttachmentOffer,
 } from './conversations.js';
@@ -136,6 +136,21 @@ function findLiveIdentityForOffer(ns, offerId) {
   return null;
 }
 
+// Same idea for a document's CV bytes, which arrive separately from the
+// document_offer that describes them (see conversations.js's shareDocument)
+// — matched by the original request's id, which the outgoing/received entry
+// keeps regardless of which of those two states it's in when the blob lands.
+function findPendingDocByRequestId(ns, requestId) {
+  for (const myIdentityId of state.searchLive[ns] || []) {
+    for (const [theirIdentityId, byDoc] of state.pendingDocs[ns].get(myIdentityId) || []) {
+      for (const [docType, d] of byDoc) {
+        if (d.requestId === requestId) return { myIdentityId, theirIdentityId, docType, byDoc };
+      }
+    }
+  }
+  return null;
+}
+
 // Connects or disconnects Search Live for one identity in a namespace
 // (as opposed to toggling from whatever its current state happens to be)
 // — this is what both the manual toggle and the auto-resume-on-boot path
@@ -164,6 +179,13 @@ export async function setSearchLive(ns, identityId, desired) {
         onMessage: (msg, peerId) => state.handlers.incomingMessage(ns, msg, peerId),
         onBlob: (blob, peerId, metadata) => {
           const theirIdentityId = state.peerToIdentity[ns].get(peerId) || peerId;
+          if (metadata.doc === 'cv') {
+            const found = findPendingDocByRequestId(ns, metadata.docRequestId);
+            if (!found) return; // no live identity of mine is still waiting on this request
+            found.byDoc.set(found.docType, { ...found.byDoc.get(found.docType), cvUrl: URL.createObjectURL(blob) });
+            state.render.workspace();
+            return;
+          }
           if (metadata.forMessageId) {
             // Bytes catching up to a metadata record that arrived earlier
             // via conversation resync — attach to that exact record
@@ -423,7 +445,7 @@ export async function renderClassicWorkspace(ns) {
     const cred = credibilityBySender.get(p.sender); // null = never observed at all, distinct from a real, low score
     const chat = state.pendingChats[ns].get(id.identityId).get(p.sender);
     const meeting = state.pendingMeetings[ns].get(id.identityId).get(p.sender);
-    const doc = state.pendingDocs[ns].get(id.identityId).get(p.sender);
+    const docsByType = state.pendingDocs[ns].get(id.identityId).get(p.sender) || new Map();
     const meetingHtml = meeting ? `
         <div class="meeting-banner">
           ${meeting.status === 'incoming'
@@ -434,18 +456,24 @@ export async function renderClassicWorkspace(ns) {
               ? `Meeting confirmed: <b>${meeting.when}</b>`
               : `Meeting proposed, awaiting reply: <b>${meeting.when}</b>`}
         </div>` : '';
-    const docHtml = doc ? `
-        <div class="meeting-banner">
-          ${doc.status === 'incoming'
-            ? `They requested your ${doc.doc.replace('_', ' ')}.
-               <button class="btn small primary doc-share" data-doc="${doc.doc}">Share</button>
-               <button class="btn small doc-decline">Decline</button>`
-            : doc.status === 'outgoing'
-              ? `Requested their ${doc.doc.replace('_', ' ')}, awaiting reply…`
-              : doc.status === 'shared'
-                ? `You shared your ${doc.doc.replace('_', ' ')}.`
-                : `Received their ${doc.doc.replace('_', ' ')}: <button class="btn small ghost view-doc">View</button>`}
-        </div>` : '';
+    // Auto-fulfilled once requested — see conversations.js's shareDocument
+    // and message-router.js's document_request handling. No Share/Decline
+    // banner anymore: the accepted chat is already the consent, so this is
+    // just a button whose state reflects the request/response in flight.
+    function docActionHtml(docType, label) {
+      const d = docsByType.get(docType);
+      if (!d) return `<button class="btn small ghost request-doc" data-doc="${docType}">Download ${label}</button>`;
+      if (d.status === 'outgoing') return `<button class="btn small" disabled>Requesting ${label}…</button>`;
+      if (docType === 'cv') {
+        return d.cvUrl
+          ? `<a class="btn small primary" href="${d.cvUrl}" download="${d.name || 'cv'}">Download ${label}</a>`
+          : `<button class="btn small" disabled>Receiving ${label}…</button>`;
+      }
+      return `<button class="btn small ghost view-doc" data-doc="${docType}">View ${label}</button>`;
+    }
+    const docsHtml = (ns === 'employment' && id.role === 'recruiter' && chat && chat.status === 'accepted')
+      ? `${docActionHtml('cv', 'CV')}${docActionHtml('cover_letter', 'cover letter')}`
+      : '';
     // Employment/Business are the odd ones out: postingText travels from
     // the DEMAND side there (a job ad/mission request, public unlike a
     // CV), so the supply-side viewer (candidate/offer) is who should see
@@ -490,7 +518,6 @@ export async function renderClassicWorkspace(ns) {
           </div>
           ${postingPreview}
           ${meetingHtml}
-          ${docHtml}
           <div class="actions">
             <button class="btn ghost toggle-expl">Why these scores</button>
             ${chat && chat.status === 'incoming'
@@ -502,7 +529,7 @@ export async function renderClassicWorkspace(ns) {
                   : canInitiateChat(ns, id.role)
                     ? `<button class="btn primary request-chat">Start conversation</button>`
                     : `<span style="font-size:11.5px;color:var(--low);align-self:center">They can reach out to start a conversation</span>`}
-            ${ns === 'employment' && id.role === 'recruiter' && !doc ? `<button class="btn ghost request-doc" data-doc="cover_letter">Request cover letter</button>` : ''}
+            ${docsHtml}
           </div>
         </div>`;
   }
@@ -584,19 +611,14 @@ export function bindClassicEvents(ns) {
     btn.addEventListener('click', () => closeConversation(ns, id, btn.dataset.identity));
   });
   ws.querySelectorAll('.request-doc').forEach((btn) => {
-    btn.addEventListener('click', () => requestDocument(ns, id, btn.closest('.card').dataset.identity, btn.dataset.doc));
-  });
-  ws.querySelectorAll('.doc-share').forEach((btn) => {
-    btn.addEventListener('click', () => shareDocument(ns, id, btn.closest('.card').dataset.identity, btn.dataset.doc));
-  });
-  ws.querySelectorAll('.doc-decline').forEach((btn) => {
-    btn.addEventListener('click', () => declineDocument(ns, id.identityId, btn.closest('.card').dataset.identity));
+    btn.addEventListener('click', () => requestDocument(ns, id.identityId, btn.closest('.card').dataset.identity, btn.dataset.doc));
   });
   ws.querySelectorAll('.view-doc').forEach((btn) => {
     btn.addEventListener('click', () => {
       const theirIdentityId = btn.closest('.card').dataset.identity;
-      const doc = state.pendingDocs[ns].get(id.identityId).get(theirIdentityId);
-      openModal(doc.doc.replace('_', ' '), `<div style="white-space:pre-wrap;font-size:13px;color:var(--hi)">${doc.text}</div>`, { submitLabel: 'Close' });
+      const docType = btn.dataset.doc;
+      const d = state.pendingDocs[ns].get(id.identityId).get(theirIdentityId)?.get(docType);
+      openModal(docType.replace('_', ' '), `<div style="white-space:pre-wrap;font-size:13px;color:var(--hi)">${d.text}</div>`, { submitLabel: 'Close' });
     });
   });
   ws.querySelectorAll('.conv-open').forEach((btn) => {
