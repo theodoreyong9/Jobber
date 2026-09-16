@@ -10,14 +10,13 @@ import * as discovery from './discovery.js';
 import * as matching from './matching.js';
 import * as credibility from './credibility.js';
 import { PROTOCOL_VERSION } from './protocol.js';
-import { state, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole, canInitiateChat } from './state.js';
+import { state, NAMESPACES, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole, canInitiateChat, setActiveNamespace } from './state.js';
 import { toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { getProfile } from './profiles.js';
 import {
-  closeConversation, proposeMeetingFlow, respondMeeting, renderDocumentButtonsHtml, bindDocumentButtons,
-  loadConversation, listConversations, persistMessage, requestChat, respondChat, sendChatMessage,
-  renderChatPanel, proposeAttachment, respondAttachmentOffer,
+  proposeMeetingFlow, respondMeeting, renderDocumentButtonsHtml, bindDocumentButtons,
+  persistMessage, requestChat, respondChat,
 } from './conversations.js';
 
 // Shared by the onPeerJoin handshake below and rebroadcastDiscovery — one
@@ -238,6 +237,32 @@ export async function setSearchLive(ns, identityId, desired) {
 
 export async function toggleSearchLive(ns, identityId) {
   await setSearchLive(ns, identityId, !state.searchLive[ns]?.has(identityId));
+}
+
+// Confirmed by reading the pinned @trystero-p2p/core@0.25.4 source directly
+// (its utils.mjs): the relay WebSocket's own reconnect logic backs off
+// exponentially and, once that backoff period reaches ~60s, gives up and
+// marks itself permanently closed — no further reconnect attempts, ever,
+// for the rest of the page's lifetime. That's the actual mechanism behind
+// "I have to reload the page before the other side sees me again": a relay
+// connection quietly dies (very commonly from a mobile tab being
+// backgrounded, or any sustained network blip) and Trystero itself never
+// tries it again. The only thing that creates a fresh socket is a brand new
+// room join — so this leaves every live identity's room and rejoins it,
+// exactly what a page reload does for the P2P layer, without losing any
+// other app state (identities/profiles/discovered peers are untouched).
+// Bypasses setSearchLive's own `false` path deliberately: that path also
+// clears state.discovered once the last identity in a namespace stops,
+// which would wipe an already-healthy discovered-peers list just because
+// this ran — not desired for an internal connectivity refresh.
+export async function cycleLiveRooms() {
+  for (const ns of NAMESPACES) {
+    const live = state.searchLive[ns];
+    if (!(live instanceof Set) || live.size === 0) continue;
+    const ids = [...live];
+    for (const identityId of ids) p2p.leaveIdentityFromRoom(ns, identityId);
+    for (const identityId of ids) await setSearchLive(ns, identityId, true);
+  }
 }
 state.handlers.toggleSearchLive = toggleSearchLive; // identity-ui.js's topbar calls this indirectly
 state.handlers.rebroadcastDiscovery = rebroadcastDiscovery; // same reason — the enrich control lives in the topbar now
@@ -509,7 +534,7 @@ export async function renderClassicWorkspace(ns) {
             ${chat && chat.status === 'incoming'
               ? `<button class="btn primary respond-yes">Accept chat</button><button class="btn respond-no">Decline</button>`
               : chat && chat.status === 'accepted'
-                ? `<button class="btn primary open-chat">Open chat</button><button class="btn ghost propose-meeting">Propose meeting</button>`
+                ? `<button class="btn primary open-chat">Open in Messages</button><button class="btn ghost propose-meeting">Propose meeting</button>`
                 : chat && chat.status === 'outgoing'
                   ? `<button class="btn" disabled>Request sent…</button>`
                   : canInitiateChat(ns, id.role)
@@ -524,31 +549,7 @@ export async function renderClassicWorkspace(ns) {
     ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Create a complementary identity — in this browser or a real second device — and it'll show up here.</div>`
     : scored.map((p) => renderCard(p)).join('');
 
-  const chatPeer = state.openChatWith[ns].get(id.identityId);
-  if (chatPeer) await loadConversation(ns, id.identityId, chatPeer); // defensive — most entry points already hydrate before opening
-  const chatHtml = chatPeer ? renderChatPanel(ns, id, chatPeer) : '';
-
-  const conversations = await listConversations(ns, id.identityId);
-  const conversationsHtml = conversations.length ? `
-    <div class="panel">
-      <div class="k">Conversations</div>
-      ${conversations.map((c) => {
-        const online = state.identityToPeer[ns].has(c.counterpart);
-        const preview = c.kind === 'attachment' ? `📎 ${c.name}` : (c.text || '').slice(0, 60);
-        return `
-          <div class="agree-row">
-            <span class="k2">
-              <span class="online-dot ${online ? 'on' : ''}" style="margin-right:6px"></span>
-              ${c.counterpart.slice(0, 10)}… — ${preview}
-            </span>
-            <button class="btn small ghost conv-open" data-identity="${c.counterpart}">Open</button>
-          </div>`;
-      }).join('')}
-    </div>` : '';
-
   return `
-    ${chatHtml}
-    ${!chatPeer ? conversationsHtml : ''}
     <div class="funnel">${funnelHtml}</div>
     <div class="results">${resultsHtml}</div>
   `;
@@ -576,12 +577,16 @@ export function bindClassicEvents(ns) {
   ws.querySelectorAll('.respond-no').forEach((btn) => {
     btn.addEventListener('click', () => respondChat(ns, id, btn.closest('.card').dataset.identity, false));
   });
+  // The conversation itself lives only in Messages now (see messages-ui.js) —
+  // this just hands off to it, focused on the right one, rather than
+  // re-rendering the thread inline here too.
   ws.querySelectorAll('.open-chat').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       const theirIdentityId = btn.closest('.card').dataset.identity;
-      await loadConversation(ns, id.identityId, theirIdentityId);
-      state.openChatWith[ns].set(id.identityId, theirIdentityId);
-      state.render.workspace();
+      state.messagesOpenConversation = { ns, myId: id.identityId, theirId: theirIdentityId };
+      setActiveNamespace('messages');
+      state.view = 'workspace';
+      state.render.all();
     });
   });
   ws.querySelectorAll('.propose-meeting').forEach((btn) => {
@@ -593,36 +598,5 @@ export function bindClassicEvents(ns) {
   ws.querySelectorAll('.meeting-no').forEach((btn) => {
     btn.addEventListener('click', () => respondMeeting(ns, id, btn.closest('.card').dataset.identity, false));
   });
-  ws.querySelectorAll('.close-conversation').forEach((btn) => {
-    btn.addEventListener('click', () => closeConversation(ns, id, btn.dataset.identity));
-  });
   bindDocumentButtons(ns, id.identityId);
-  ws.querySelectorAll('.conv-open').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await loadConversation(ns, id.identityId, btn.dataset.identity);
-      state.openChatWith[ns].set(id.identityId, btn.dataset.identity);
-      state.render.workspace();
-    });
-  });
-  ws.querySelector('#closeChat')?.addEventListener('click', () => { state.openChatWith[ns].set(id.identityId, null); state.render.workspace(); });
-  ws.querySelectorAll('.attach-accept').forEach((btn) => {
-    btn.addEventListener('click', () => respondAttachmentOffer(ns, id, btn.dataset.offer, true));
-  });
-  ws.querySelectorAll('.attach-decline').forEach((btn) => {
-    btn.addEventListener('click', () => respondAttachmentOffer(ns, id, btn.dataset.offer, false));
-  });
-
-  const sendBtn = ws.querySelector('#chatSend');
-  if (sendBtn) {
-    const input = ws.querySelector('#chatInput');
-    const fire = () => { sendChatMessage(ns, id, state.openChatWith[ns].get(id.identityId), input.value); input.value = ''; };
-    sendBtn.addEventListener('click', fire);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') fire(); });
-    ws.querySelector('#chatFile')?.addEventListener('change', (e) => {
-      const f = e.target.files[0];
-      if (f) proposeAttachment(ns, id, state.openChatWith[ns].get(id.identityId), f);
-    });
-    const log = ws.querySelector('#chatLog');
-    if (log) log.scrollTop = log.scrollHeight;
-  }
 }
