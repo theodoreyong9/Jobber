@@ -140,7 +140,6 @@ async function boot() {
     state.identityToPeer[ns] = new Map();
     state.peerToIdentity[ns] = new Map();
     state.loadedConversations[ns] = new Map();
-    state.blocked[ns] = new Set((await db.getAll('blocklist')).filter((b) => b.compoundId.startsWith(ns + ':')).map((b) => b.blockedIdentityId));
     for (const id of state.identitiesByNs[ns]) ensureIdentityState(ns, id.identityId);
   }
   state.researchProjects = await research.listProjects();

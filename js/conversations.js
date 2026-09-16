@@ -1,8 +1,8 @@
 // conversations.js — everything that happens once two identities have
-// found each other: blocking, meeting proposals, document requests
-// (cover letters), chat itself (persisted, identity-keyed, offline-queued),
-// and attachments (real offer/accept handshake, no bytes move without
-// consent). See state.js's header comment for why this file doesn't import
+// found each other: meeting proposals, document requests (cover letters),
+// chat itself (persisted, identity-keyed, offline-queued), and attachments
+// (real offer/accept handshake, no bytes move without consent). See
+// state.js's header comment for why this file doesn't import
 // discovery-ui.js or research-ui.js even though it's called from both.
 //
 // Every relationship here is keyed by *both* sides' identity now, not just
@@ -20,27 +20,6 @@ import * as credibility from './credibility.js';
 import { state, canInitiateChat, resolveLiveIdentity } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { getProfile } from './profiles.js';
-
-/* ---- Blocklist (spec §48 — local only, no global enforcement) -------- */
-/* ---- Namespace-wide by design: blocking someone is "I don't want to  -*/
-/* ---- hear from them", not a decision one of my personas makes alone. -*/
-
-export async function blockPeer(ns, blockedIdentityId, displayNameHint) {
-  const compoundId = `${ns}:${blockedIdentityId}`;
-  await db.put('blocklist', { compoundId, namespace: ns, blockedIdentityId, displayNameHint, blockedAt: Date.now() });
-  state.blocked[ns].add(blockedIdentityId);
-  for (const [peerId, meta] of state.discovered[ns].entries()) {
-    if (meta.sender === blockedIdentityId) state.discovered[ns].delete(peerId);
-  }
-  toast(`Blocked ${blockedIdentityId.slice(0, 10)}… locally`);
-  state.render.workspace();
-}
-
-export async function unblockPeer(ns, blockedIdentityId) {
-  await db.del('blocklist', `${ns}:${blockedIdentityId}`);
-  state.blocked[ns].delete(blockedIdentityId);
-  state.render.workspace();
-}
 
 /* ---- Meetings ---------------------------------------------------------- */
 
@@ -275,6 +254,24 @@ export function respondChat(ns, id, theirIdentityId, accept) {
   }
 }
 
+// The one way to disengage now that there's no separate Block mechanism:
+// accepting a chat was the real consent, so ending it is just as
+// reversible as never having accepted it in the first place — the other
+// side can always send a fresh chat_request later, which is exactly as
+// declinable as the first one was. Reuses chat_decline (no new wire type)
+// since "close an accepted chat" and "decline a pending one" both reduce
+// to the same thing on the receiving end: drop the pendingChats entry —
+// see message-router.js's own chat_decline handling for how it tells the
+// two apart for its toast message.
+export function closeConversation(ns, id, theirIdentityId) {
+  const peerId = state.identityToPeer[ns].get(theirIdentityId);
+  if (peerId) p2p.getRoom(ns).send('chat_decline', id.identityId, {}, peerId, undefined, theirIdentityId);
+  state.pendingChats[ns].get(id.identityId).delete(theirIdentityId);
+  if (state.openChatWith[ns].get(id.identityId) === theirIdentityId) state.openChatWith[ns].set(id.identityId, null);
+  toast('Conversation closed');
+  state.render.workspace();
+}
+
 // The canonical id for this logical message is generated here and put in
 // both the local record and the wire payload, so both sides end up storing
 // the same messageId for the same message — required for resync's "diff
@@ -329,6 +326,7 @@ export function renderChatPanel(ns, id, theirIdentityId) {
           <button class="btn small ghost" id="closeChat" style="margin-right:8px">← Back</button>
           Conversation with ${theirIdentityId.slice(0, 10)}…
           ${connected ? '' : '<span style="color:var(--low);font-weight:400;margin-left:8px">· offline, showing history</span>'}
+          <button class="btn small ghost close-conversation" data-identity="${theirIdentityId}" style="margin-left:auto">Close conversation</button>
         </div>
         ${offersHtml}
         <div class="chat-log" id="chatLog">

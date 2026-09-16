@@ -24,8 +24,6 @@ const RELATIONSHIP_MESSAGE_TYPES = new Set([
 ]);
 
 export function handleIncomingMessage(ns, msg, peerId) {
-  if (state.blocked[ns]?.has(msg.sender)) return; // local blocklist — silently drop
-
   // Keep the identity<->live-peer mapping fresh from every message we see,
   // so chat/meetings/documents can be keyed by stable identity while still
   // being able to resolve who to actually send to right now.
@@ -157,8 +155,15 @@ export function handleIncomingMessage(ns, msg, peerId) {
         state.render.workspace();
       });
     } else {
+      // The same wire message (chat_decline) now covers two cases: declining
+      // a pending request, and closing a chat that was already accepted
+      // (conversations.js's closeConversation) — distinguished only by
+      // what `pending` was before this arrived, since the message itself
+      // carries no extra flag for it.
+      const wasAccepted = pending?.status === 'accepted';
       state.pendingChats[ns].get(myIdentityId).delete(msg.sender);
-      toast('Chat request declined');
+      if (state.openChatWith[ns].get(myIdentityId) === msg.sender) state.openChatWith[ns].set(myIdentityId, null);
+      toast(wasAccepted ? 'Conversation closed' : 'Chat request declined');
       state.render.workspace();
     }
   } else if (msg.type === 'chat_message') {

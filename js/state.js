@@ -163,12 +163,16 @@ export const PEER_TTL_MS = 10 * 60 * 1000; // spec §101 — stale discovery ent
 // `peerToIdentity` describe the wire itself (which remote peers exist,
 // and their live peerId) — one shared physical P2P connection per
 // namespace, true regardless of how many of *my* identities are live on
-// it, so these stay namespace-scoped. `blocked` is a namespace-wide
-// decision by design (blocking someone is "I don't want to hear from
-// them", not "this one persona of mine doesn't"). Everything else here
-// is genuinely about *my* side of a specific relationship with someone,
-// so once more than one of my identities can be live in the same
-// namespace at once, each needs its own bucket — see `ensureIdentityState`.
+// it, so these stay namespace-scoped. Everything else here is genuinely
+// about *my* side of a specific relationship with someone, so once more
+// than one of my identities can be live in the same namespace at once,
+// each needs its own bucket — see `ensureIdentityState`.
+// There used to be a namespace-wide `blocked` set here too. Removed by
+// design, not an oversight: the only real consent gate is accepting or
+// declining a chat request in the first place — an accepted chat can
+// always be closed (conversations.js's closeConversation) the same way
+// a pending one can be declined, so a separate, harder-to-reverse block
+// mechanism had no real job left to do.
 export const state = {
   // 'desktop' shows the Bureau (every identity you've created, across every
   // namespace, as one tile each) — that's what you land on. 'workspace'
@@ -188,7 +192,6 @@ export const state = {
   pendingMeetings: {},      // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, when, note}))
   pendingDocs: {},          // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, doc, text?}))
   pendingAttachmentOffers: {}, // namespace -> Map(myIdentityId -> Map(offerId -> {status, name, size, type, theirIdentityId, file?}))
-  blocked: {},              // namespace -> Set(identityId)
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
   loadedConversations: {},  // namespace -> Map(myIdentityId -> Set(theirIdentityId)) already hydrated from IndexedDB
