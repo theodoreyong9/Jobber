@@ -356,6 +356,12 @@ export async function sendChatMessage(ns, id, theirIdentityId, text) {
 export function renderChatPanel(ns, id, theirIdentityId) {
   const log = state.chatLog[ns].get(id.identityId).get(theirIdentityId) || [];
   const connected = state.identityToPeer[ns].has(theirIdentityId);
+  // Same lookup discovery-ui.js's own cards and messages-ui.js's inbox use
+  // (see buildDiscoveryPayload) — falls back to the truncated id when
+  // discovery has forgotten this relationship (TTL-expired, or a resynced
+  // conversation with someone never actually re-discovered this session).
+  const theirMeta = [...(state.discovered[ns]?.values() || [])].find((p) => p.sender === theirIdentityId);
+  const theirName = theirMeta?.displayName || `${theirIdentityId.slice(0, 10)}…`;
   const bubble = (m) => {
     const queued = m.from === 'me' && m.delivered === false ? ' <span style="opacity:.6;font-size:10px">· queued</span>' : '';
     return m.kind === 'attachment'
@@ -381,7 +387,7 @@ export function renderChatPanel(ns, id, theirIdentityId) {
       <div class="chat">
         <div class="chat-head">
           <button class="btn small ghost" id="closeChat" style="margin-right:8px">← Back</button>
-          Conversation with ${theirIdentityId.slice(0, 10)}…
+          Conversation with ${theirName}
           ${connected ? '' : '<span style="color:var(--low);font-weight:400;margin-left:8px">· offline, showing history</span>'}
           <button class="btn small ghost close-conversation" data-identity="${theirIdentityId}" style="margin-left:auto">Close conversation</button>
         </div>

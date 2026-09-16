@@ -115,12 +115,21 @@ function asIdentitySuffix(ns, myId) {
   return myIdentitiesOf(ns).length > 1 ? ` (as ${findIdentity(ns, myId)?.displayName || myId.slice(0, 8)})` : '';
 }
 
+// The peer's own name only ever travels on their discovery broadcast (see
+// discovery-ui.js's buildDiscoveryPayload) — falls back to the truncated
+// identityId for a relationship discovery has since forgotten about (a very
+// old conversation, TTL-expired) rather than failing to render at all.
+function theirDisplayName(ns, theirId) {
+  const meta = [...(state.discovered[ns]?.values() || [])].find((p) => p.sender === theirId);
+  return meta?.displayName || `${theirId.slice(0, 10)}…`;
+}
+
 function pendingRowHtml(p) {
   return `
     <div class="agree-row">
       <span class="k2">
         <span class="role-badge" style="margin-right:6px">${NS_CONFIG[p.ns].label}${asIdentitySuffix(p.ns, p.myId)}</span>
-        ${p.theirId.slice(0, 10)}… ${p.label}
+        ${theirDisplayName(p.ns, p.theirId)} ${p.label}
       </span>
       <span style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn small primary msg-accept" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-offer="${p.offerId || ''}">Accept</button>
@@ -138,7 +147,7 @@ function conversationRowHtml(c) {
       <span class="k2">
         <span class="online-dot ${online ? 'on' : ''}" style="margin-right:6px"></span>
         <span class="role-badge" style="margin-right:6px">${NS_CONFIG[c.ns].label}${asIdentitySuffix(c.ns, c.myId)}</span>
-        ${c.counterpart.slice(0, 10)}… — ${preview}
+        ${theirDisplayName(c.ns, c.counterpart)} — ${preview}
         ${unread ? `<span class="unread-badge">${unread > 9 ? '9+' : unread}</span>` : ''}
       </span>
       <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-my="${c.myId}" data-their="${c.counterpart}">Open</button>
