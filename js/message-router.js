@@ -9,7 +9,7 @@ import * as research from './research.js';
 import * as credibility from './credibility.js';
 import { state, resolveLiveIdentity } from './state.js';
 import { toast } from './ui-kit.js';
-import { flushOutbox, loadConversation, persistMessage, requestConversationSync, handleConversationSyncRequest, handleConversationSyncResponse } from './conversations.js';
+import { flushOutbox, loadConversation, persistMessage, requestConversationSync, handleConversationSyncRequest, handleConversationSyncResponse, shareDocument } from './conversations.js';
 import {
   handleResearchSyncRequest, handleResearchSyncResponse, handleResearchJoinRequest,
   handleResearchJoinAccept, handleResearchJoinDecline, handleResearchProjectUpdate,
@@ -90,16 +90,21 @@ export function handleIncomingMessage(ns, msg, peerId) {
       state.render.workspace();
     }
   } else if (msg.type === 'document_request') {
-    state.pendingDocs[ns].get(myIdentityId).set(msg.sender, { status: 'incoming', doc: msg.payload.doc, requestId: msg.messageId });
-    toast(`${msg.sender.slice(0, 6)}… requested your ${msg.payload.doc.replace('_', ' ')}`);
-    state.render.workspace();
+    // Auto-fulfilled, no incoming approval step: an accepted chat is
+    // already the consent (see conversations.js's chat_accept/closeConversation
+    // comment) — a request from anyone else is just silently ignored rather
+    // than surfaced as something to approve or decline.
+    const chat = state.pendingChats[ns].get(myIdentityId)?.get(msg.sender);
+    if (chat?.status === 'accepted') shareDocument(ns, myIdentityId, msg.sender, msg.payload.doc, msg.messageId);
   } else if (msg.type === 'document_offer') {
-    const pending = state.pendingDocs[ns].get(myIdentityId).get(msg.sender);
+    const byDoc = state.pendingDocs[ns].get(myIdentityId).get(msg.sender) || new Map();
+    const pending = byDoc.get(msg.payload.doc);
     if (msg.correlationId && pending?.requestId && msg.correlationId !== pending.requestId) {
       console.warn('[jobber] stale document offer ignored (correlationId mismatch)', msg);
       return;
     }
-    state.pendingDocs[ns].get(myIdentityId).set(msg.sender, { status: 'received', doc: msg.payload.doc, text: msg.payload.text });
+    byDoc.set(msg.payload.doc, { ...pending, status: 'received', text: msg.payload.text, name: msg.payload.name, size: msg.payload.size });
+    state.pendingDocs[ns].get(myIdentityId).set(msg.sender, byDoc);
     toast(`Received ${msg.payload.doc.replace('_', ' ')}`);
     credibility.recordEvent(ns, msg.sender, credibility.EVENT.DOCUMENT_SHARED, `document:${msg.correlationId}`).then(() => state.render.workspace());
   } else if (msg.type === 'attachment_offer') {
