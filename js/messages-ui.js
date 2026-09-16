@@ -1,9 +1,11 @@
 // messages-ui.js — the centralized inbox: every pending request (chat,
-// meeting, document, attachment) and every ongoing conversation, across
-// every mode, in one place. Messages has no identity of its own — like
-// Near and Agent, it just reads state your other identities already
-// accumulated (see state.js's header for why cross-cutting tools reach
-// into per-namespace state directly instead of duplicating it).
+// meeting, attachment — document requests auto-fulfill now, see
+// conversations.js's shareDocument, so they never sit here waiting on a
+// response) and every ongoing conversation, across every mode, in one
+// place. Messages has no identity of its own — like Near and Agent, it
+// just reads state your other identities already accumulated (see
+// state.js's header for why cross-cutting tools reach into per-namespace
+// state directly instead of duplicating it).
 //
 // Deliberately doesn't reimplement the chat panel itself: "Open" on a
 // conversation jumps you into that namespace's own workspace, where
@@ -13,7 +15,7 @@
 
 import { state, NAMESPACES, NS_CONFIG, setActiveNamespace } from './state.js';
 import {
-  respondChat, respondMeeting, shareDocument, declineDocument, respondAttachmentOffer,
+  respondChat, respondMeeting, respondAttachmentOffer,
   listConversations, loadConversation,
 } from './conversations.js';
 
@@ -49,9 +51,6 @@ export function gatherPending() {
       for (const [theirId, m] of state.pendingMeetings[ns]?.get(myId) || []) {
         if (m.status === 'incoming') items.push({ ns, myId, theirId, type: 'meeting', label: `proposed a meeting: ${m.when}${m.note ? ' — ' + m.note : ''}` });
       }
-      for (const [theirId, d] of state.pendingDocs[ns]?.get(myId) || []) {
-        if (d.status === 'incoming') items.push({ ns, myId, theirId, type: 'document', doc: d.doc, label: `requested your ${d.doc.replace('_', ' ')}` });
-      }
       for (const [offerId, a] of state.pendingAttachmentOffers[ns]?.get(myId) || []) {
         if (a.status === 'incoming') items.push({ ns, myId, theirId: a.theirIdentityId, offerId, type: 'attachment', label: `wants to send you a file: ${a.name}` });
       }
@@ -82,7 +81,6 @@ function asIdentitySuffix(ns, myId) {
 }
 
 function pendingRowHtml(p) {
-  const acceptLabel = p.type === 'document' ? 'Share' : 'Accept';
   return `
     <div class="agree-row">
       <span class="k2">
@@ -90,7 +88,7 @@ function pendingRowHtml(p) {
         ${p.theirId.slice(0, 10)}… ${p.label}
       </span>
       <span style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn small primary msg-accept" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-doc="${p.doc || ''}" data-offer="${p.offerId || ''}">${acceptLabel}</button>
+        <button class="btn small primary msg-accept" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-offer="${p.offerId || ''}">Accept</button>
         <button class="btn small ghost msg-decline" data-ns="${p.ns}" data-my="${p.myId}" data-their="${p.theirId}" data-type="${p.type}" data-offer="${p.offerId || ''}">Decline</button>
       </span>
     </div>`;
@@ -136,7 +134,7 @@ export function bindMessagesEvents() {
 
   ws.querySelectorAll('.msg-accept').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const { ns, my, their, type, doc, offer } = btn.dataset;
+      const { ns, my, their, type, offer } = btn.dataset;
       const id = findIdentity(ns, my);
       if (type === 'chat') {
         respondChat(ns, id, their, true);
@@ -149,8 +147,6 @@ export function bindMessagesEvents() {
         state.render.all();
       } else if (type === 'meeting') {
         respondMeeting(ns, id, their, true);
-      } else if (type === 'document') {
-        shareDocument(ns, id, their, doc);
       } else if (type === 'attachment') {
         respondAttachmentOffer(ns, id, offer, true);
       }
@@ -163,7 +159,6 @@ export function bindMessagesEvents() {
       const id = findIdentity(ns, my);
       if (type === 'chat') respondChat(ns, id, their, false);
       else if (type === 'meeting') respondMeeting(ns, id, their, false);
-      else if (type === 'document') declineDocument(ns, my, their);
       else if (type === 'attachment') respondAttachmentOffer(ns, id, offer, false);
     });
   });
