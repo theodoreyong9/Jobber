@@ -190,7 +190,7 @@ export const state = {
   openChatWith: {},         // namespace -> Map(myIdentityId -> theirIdentityId | null)
   chatLog: {},              // namespace -> Map(myIdentityId -> Map(theirIdentityId -> [{from,text,ts,kind}])) — hydrated from IndexedDB, see persistMessage/loadConversation
   pendingMeetings: {},      // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, when, note}))
-  pendingDocs: {},          // namespace -> Map(myIdentityId -> Map(theirIdentityId -> {status, doc, text?}))
+  pendingDocs: {},          // namespace -> Map(myIdentityId -> Map(theirIdentityId -> Map(docType -> {status, requestId, text?, name?, size?, cvUrl?})))
   pendingAttachmentOffers: {}, // namespace -> Map(myIdentityId -> Map(offerId -> {status, name, size, type, theirIdentityId, file?}))
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
