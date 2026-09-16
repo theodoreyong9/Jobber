@@ -1,6 +1,7 @@
 // conversations.js — everything that happens once two identities have
-// found each other: meeting proposals, document requests (cover letters),
-// chat itself (persisted, identity-keyed, offline-queued), and attachments
+// found each other: meeting proposals, document requests (CV + cover
+// letter), chat itself (persisted, identity-keyed, offline-queued), and
+// attachments
 // (real offer/accept handshake, no bytes move without consent). See
 // state.js's header comment for why this file doesn't import
 // discovery-ui.js or research-ui.js even though it's called from both.
@@ -57,32 +58,47 @@ export function respondMeeting(ns, id, theirIdentityId, accept) {
   }
 }
 
-/* ---- Document request/offer (Employment cover letter, spec-adjacent) -- */
+/* ---- Document request/offer (Employment CV + cover letter) ------------ */
+/* ---- Auto-fulfilled: an accepted chat is already the consent (see    -- */
+/* ---- state.js's canInitiateChat/chat_accept) — there's no separate    -- */
+/* ---- per-document Share/Decline step anymore, see message-router.js's -- */
+/* ---- 'document_request' case for the actual gate. Both my identity's  -- */
+/* ---- own outgoing requests AND a peer's incoming offers land in the   -- */
+/* ---- same Map, keyed by doc type ('cv' | 'cover_letter'), since a     -- */
+/* ---- recruiter can be waiting on both at once.                        -- */
 
-export function requestDocument(ns, id, theirIdentityId, doc) {
+export function requestDocument(ns, myIdentityId, theirIdentityId, doc) {
   const peerId = state.identityToPeer[ns].get(theirIdentityId);
   if (!peerId) { toast('This peer is not currently connected.'); return; }
-  const msg = p2p.getRoom(ns).send('document_request', id.identityId, { doc }, peerId, undefined, theirIdentityId);
-  state.pendingDocs[ns].get(id.identityId).set(theirIdentityId, { status: 'outgoing', doc, requestId: msg.messageId });
+  const msg = p2p.getRoom(ns).send('document_request', myIdentityId, { doc }, peerId, undefined, theirIdentityId);
+  const byDoc = state.pendingDocs[ns].get(myIdentityId).get(theirIdentityId) || new Map();
+  byDoc.set(doc, { status: 'outgoing', requestId: msg.messageId });
+  state.pendingDocs[ns].get(myIdentityId).set(theirIdentityId, byDoc);
   state.render.workspace();
 }
 
-export async function shareDocument(ns, id, theirIdentityId, doc) {
-  const profile = await getProfile(id.identityId);
-  const text = doc === 'cover_letter' ? profile.coverLetterText : '';
-  if (!text) { toast('Nothing to share yet — write it in your profile first.'); return; }
+// Called automatically on the holder's side once message-router.js confirms
+// the requester is someone we've actually accepted a chat with — no user
+// interaction here at all. `doc === 'cv'` sends the retained original file
+// as bytes (see p2p.js's sendBlob / discovery-ui.js's onBlob for the other
+// half); anything else (cover_letter) is plain text and travels inline in
+// the document_offer itself. A document that was never written/uploaded is
+// just quietly not sent — nothing to decline, the requester's button simply
+// never resolves.
+export async function shareDocument(ns, myIdentityId, theirIdentityId, doc, requestId) {
+  const profile = await getProfile(myIdentityId);
   const peerId = state.identityToPeer[ns].get(theirIdentityId);
-  if (!peerId) { toast('This peer is no longer connected.'); return; }
-  const requestId = state.pendingDocs[ns].get(id.identityId).get(theirIdentityId)?.requestId;
-  p2p.getRoom(ns).send('document_offer', id.identityId, { doc, text }, peerId, requestId, theirIdentityId);
-  state.pendingDocs[ns].get(id.identityId).set(theirIdentityId, { status: 'shared', doc });
+  if (!peerId) return;
+  const room = p2p.getRoom(ns);
+  if (doc === 'cv') {
+    if (!profile.cvFile) return;
+    room.send('document_offer', myIdentityId, { doc, name: profile.cvFileName, size: profile.cvFile.size }, peerId, requestId, theirIdentityId);
+    room.sendBlob(profile.cvFile, peerId, { doc: 'cv', docRequestId: requestId, name: profile.cvFileName, size: profile.cvFile.size, type: profile.cvFile.type });
+  } else {
+    if (!profile.coverLetterText) return;
+    room.send('document_offer', myIdentityId, { doc, text: profile.coverLetterText }, peerId, requestId, theirIdentityId);
+  }
   await credibility.recordEvent(ns, theirIdentityId, credibility.EVENT.DOCUMENT_SHARED, `document:${requestId}`);
-  state.render.workspace();
-}
-
-export function declineDocument(ns, myIdentityId, theirIdentityId) {
-  state.pendingDocs[ns].get(myIdentityId).delete(theirIdentityId);
-  state.render.workspace();
 }
 
 /* ---- Chat persistence: messages survive reload, keyed by both my ----- */
