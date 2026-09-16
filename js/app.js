@@ -20,7 +20,7 @@ import { loadBureauBackground, openBackgroundPicker } from './background-ui.js';
 import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace, ensureIdentityState } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
-import { setSearchLive, rebroadcastDiscovery } from './discovery-ui.js';
+import { setSearchLive, rebroadcastDiscovery, cycleLiveRooms } from './discovery-ui.js';
 import { setResearchConnected } from './research-ui.js';
 import { renderAll, renderWorkspace, refreshUsageStat } from './render.js';
 import './message-router.js'; // side effect: registers state.handlers.incomingMessage
@@ -167,6 +167,21 @@ async function boot() {
       for (const identityId of live) rebroadcastDiscovery(ns, identityId);
     }
   }, 45_000);
+
+  // Rebroadcasting above only helps once the underlying relay connection is
+  // actually alive — it isn't always. See discovery-ui.js's cycleLiveRooms
+  // for the confirmed root cause (Trystero's relay socket permanently gives
+  // up reconnecting after ~60s of backoff) and why a full leave+rejoin is
+  // the only real fix. Two triggers: a periodic safety net for a sustained
+  // network blip while the tab stays foregrounded, and — the much more
+  // common real-world case — right when a backgrounded tab (the browser
+  // throttles/suspends timers like this one while hidden, so the interval
+  // alone wouldn't even fire reliably there) becomes visible again, since
+  // that's the single most likely moment the relay socket already died.
+  setInterval(cycleLiveRooms, 180_000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') cycleLiveRooms();
+  });
 
   // Which namespace to land on. "Nothing active anywhere" always wins,
   // regardless of any remembered last-active preference — that preference
