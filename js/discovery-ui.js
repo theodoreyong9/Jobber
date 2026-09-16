@@ -11,11 +11,11 @@ import * as matching from './matching.js';
 import * as credibility from './credibility.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 import { state, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole, canInitiateChat } from './state.js';
-import { openModal, toast } from './ui-kit.js';
+import { toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { getProfile } from './profiles.js';
 import {
-  closeConversation, proposeMeetingFlow, respondMeeting, requestDocument,
+  closeConversation, proposeMeetingFlow, respondMeeting, renderDocumentButtonsHtml, bindDocumentButtons,
   loadConversation, listConversations, persistMessage, requestChat, respondChat, sendChatMessage,
   renderChatPanel, proposeAttachment, respondAttachmentOffer,
 } from './conversations.js';
@@ -445,7 +445,6 @@ export async function renderClassicWorkspace(ns) {
     const cred = credibilityBySender.get(p.sender); // null = never observed at all, distinct from a real, low score
     const chat = state.pendingChats[ns].get(id.identityId).get(p.sender);
     const meeting = state.pendingMeetings[ns].get(id.identityId).get(p.sender);
-    const docsByType = state.pendingDocs[ns].get(id.identityId).get(p.sender) || new Map();
     const meetingHtml = meeting ? `
         <div class="meeting-banner">
           ${meeting.status === 'incoming'
@@ -460,20 +459,7 @@ export async function renderClassicWorkspace(ns) {
     // and message-router.js's document_request handling. No Share/Decline
     // banner anymore: the accepted chat is already the consent, so this is
     // just a button whose state reflects the request/response in flight.
-    function docActionHtml(docType, label) {
-      const d = docsByType.get(docType);
-      if (!d) return `<button class="btn small ghost request-doc" data-doc="${docType}">Download ${label}</button>`;
-      if (d.status === 'outgoing') return `<button class="btn small" disabled>Requesting ${label}…</button>`;
-      if (docType === 'cv') {
-        return d.cvUrl
-          ? `<a class="btn small primary" href="${d.cvUrl}" download="${d.name || 'cv'}">Download ${label}</a>`
-          : `<button class="btn small" disabled>Receiving ${label}…</button>`;
-      }
-      return `<button class="btn small ghost view-doc" data-doc="${docType}">View ${label}</button>`;
-    }
-    const docsHtml = (ns === 'employment' && id.role === 'recruiter' && chat && chat.status === 'accepted')
-      ? `${docActionHtml('cv', 'CV')}${docActionHtml('cover_letter', 'cover letter')}`
-      : '';
+    const docsHtml = (chat && chat.status === 'accepted') ? renderDocumentButtonsHtml(ns, id.identityId, id.role, p.sender) : '';
     // Employment/Business are the odd ones out: postingText travels from
     // the DEMAND side there (a job ad/mission request, public unlike a
     // CV), so the supply-side viewer (candidate/offer) is who should see
@@ -610,17 +596,7 @@ export function bindClassicEvents(ns) {
   ws.querySelectorAll('.close-conversation').forEach((btn) => {
     btn.addEventListener('click', () => closeConversation(ns, id, btn.dataset.identity));
   });
-  ws.querySelectorAll('.request-doc').forEach((btn) => {
-    btn.addEventListener('click', () => requestDocument(ns, id.identityId, btn.closest('.card').dataset.identity, btn.dataset.doc));
-  });
-  ws.querySelectorAll('.view-doc').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const theirIdentityId = btn.closest('.card').dataset.identity;
-      const docType = btn.dataset.doc;
-      const d = state.pendingDocs[ns].get(id.identityId).get(theirIdentityId)?.get(docType);
-      openModal(docType.replace('_', ' '), `<div style="white-space:pre-wrap;font-size:13px;color:var(--hi)">${d.text}</div>`, { submitLabel: 'Close' });
-    });
-  });
+  bindDocumentButtons(ns, id.identityId);
   ws.querySelectorAll('.conv-open').forEach((btn) => {
     btn.addEventListener('click', async () => {
       await loadConversation(ns, id.identityId, btn.dataset.identity);
