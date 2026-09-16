@@ -15,7 +15,7 @@ import { openModal, toast } from './ui-kit.js';
 import { createIdentityFlow } from './identity-ui.js';
 import { getProfile } from './profiles.js';
 import {
-  blockPeer, proposeMeetingFlow, respondMeeting, requestDocument, shareDocument, declineDocument,
+  blockPeer, unblockPeer, proposeMeetingFlow, respondMeeting, requestDocument, shareDocument, declineDocument,
   loadConversation, listConversations, persistMessage, requestChat, respondChat, sendChatMessage,
   renderChatPanel, proposeAttachment, respondAttachmentOffer,
 } from './conversations.js';
@@ -25,6 +25,15 @@ import {
 async function buildDiscoveryPayload(ns, id, profile) {
   const cfg = NS_CONFIG[ns];
   const payload = {
+    // Without this, a real remote peer's card had nothing but its
+    // identityId to show (renderCard's own fallback is
+    // `${p.sender.slice(0, 10)}…`) — displayName was never on the wire at
+    // all, only ever present for same-browser localTestMatches (which
+    // builds its peerLike straight from the local identity record). Every
+    // discovery-carrying send (onPeerJoin's initial one and
+    // rebroadcastDiscovery's periodic one) picks up a rename automatically
+    // since both re-read the profile/identity fresh each time.
+    displayName: id.displayName,
     category: profile.category,
     // Sent as two separate fields, not merged — losing the CPU/AI
     // distinction on the wire would make it impossible for a receiver (in
@@ -526,12 +535,51 @@ export async function renderClassicWorkspace(ns) {
       }).join('')}
     </div>` : '';
 
+  // Blocking (see conversations.js's blockPeer) hides someone from
+  // discovery entirely, so there's no card left to put an "Unblock"
+  // button on the way there was one to Block in the first place — this
+  // link is the only way back (openBlockedListFlow below). Hidden when
+  // nobody's blocked, rather than a permanent zero-count line.
+  const blockedCount = state.blocked[ns]?.size || 0;
+  const blockedLinkHtml = blockedCount
+    ? `<div style="text-align:right;margin-bottom:8px"><button type="button" class="btn small ghost manage-blocked">Blocked (${blockedCount})</button></div>`
+    : '';
+
   return `
     ${chatHtml}
     ${!chatPeer ? conversationsHtml : ''}
+    ${blockedLinkHtml}
     <div class="funnel">${funnelHtml}</div>
     <div class="results">${resultsHtml}</div>
   `;
+}
+
+// The only way to reverse a Block (unblockPeer already existed but had no
+// UI calling it) — lists everyone blocked in this namespace with a button
+// to undo it, since the discovery card they'd otherwise click "Unblock"
+// on doesn't exist anymore.
+async function openBlockedListFlow(ns) {
+  const rows = (await db.getAll('blocklist')).filter((b) => b.namespace === ns);
+  const listHtml = rows.length
+    ? rows.map((r) => `
+        <div class="agree-row">
+          <span class="k2">${r.displayNameHint || r.blockedIdentityId.slice(0, 10) + '…'}</span>
+          <button type="button" class="btn small ghost unblock-peer" data-id="${r.blockedIdentityId}">Unblock</button>
+        </div>`).join('')
+    : `<p style="font-size:12.5px;color:var(--low)">Nobody blocked here.</p>`;
+  openModal(`Blocked — ${NS_CONFIG[ns].label}`, listHtml, {
+    noSubmit: true,
+    onOpen: (d) => {
+      d.querySelectorAll('.unblock-peer').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          await unblockPeer(ns, btn.dataset.id);
+          toast('Unblocked');
+          d.close();
+          state.render.workspace();
+        });
+      });
+    },
+  });
 }
 
 export function bindClassicEvents(ns) {
@@ -577,8 +625,10 @@ export function bindClassicEvents(ns) {
     btn.addEventListener('click', () => {
       const card = btn.closest('.card');
       blockPeer(ns, card.dataset.identity, card.querySelector('.name')?.textContent);
+      state.render.workspace();
     });
   });
+  ws.querySelector('.manage-blocked')?.addEventListener('click', () => openBlockedListFlow(ns));
   ws.querySelectorAll('.request-doc').forEach((btn) => {
     btn.addEventListener('click', () => requestDocument(ns, id, btn.closest('.card').dataset.identity, btn.dataset.doc));
   });
