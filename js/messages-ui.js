@@ -7,16 +7,19 @@
 // state.js's header for why cross-cutting tools reach into per-namespace
 // state directly instead of duplicating it).
 //
-// Deliberately doesn't reimplement the chat panel itself: "Open" on a
-// conversation jumps you into that namespace's own workspace, where
-// discovery-ui.js's existing chat UI (and all its handling of
-// offline-queueing, attachments, resync, …) already works. Centralizing
-// here is about *finding* the conversation, not re-rendering it twice.
+// Reimplements the chat panel inline (via conversations.js's own
+// renderChatPanel/sendChatMessage/proposeAttachment — the exact same
+// functions discovery-ui.js's per-namespace workspace uses) instead of
+// jumping you into that namespace's own workspace: the whole point of a
+// centralized inbox is not needing to go find the conversation somewhere
+// else. See state.js's messagesOpenConversation for the one piece of
+// state that makes this possible without duplicating openChatWith.
 
-import { state, NAMESPACES, NS_CONFIG, setActiveNamespace } from './state.js';
+import { state, NAMESPACES, NS_CONFIG } from './state.js';
 import {
   respondChat, respondMeeting, respondAttachmentOffer,
-  listConversations, loadConversation,
+  listConversations, loadConversation, renderChatPanel, sendChatMessage, proposeAttachment,
+  closeConversation, renderDocumentButtonsHtml, bindDocumentButtons,
 } from './conversations.js';
 
 // Only namespaces where the generic chat/meeting/document/attachment
@@ -108,7 +111,47 @@ function conversationRowHtml(c) {
     </div>`;
 }
 
+// The counterpart's own "profile content" — everything about them we've
+// actually learned, without leaving Messages to go look at their card in
+// the namespace's own workspace. Discovery broadcast fields cover the
+// general case (name, category, location, whatever text they've chosen to
+// share publicly); Employment's CV/cover letter buttons (see
+// conversations.js's renderDocumentButtonsHtml) are the one namespace with
+// content that's gated behind chat acceptance rather than broadcast openly.
+function counterpartProfileHtml(ns, myIdentityId, myRole, theirIdentityId) {
+  const meta = [...(state.discovered[ns]?.values() || [])].find((p) => p.sender === theirIdentityId);
+  const location = meta ? [meta.city, meta.country].filter(Boolean).join(', ') : '';
+  const docsHtml = renderDocumentButtonsHtml(ns, myIdentityId, myRole, theirIdentityId);
+  if (!meta && !docsHtml) return '';
+  return `
+    <div class="panel" style="margin-bottom:12px">
+      <div class="k">${NS_CONFIG[ns].label} profile</div>
+      ${meta ? `
+        <div style="font-weight:600;margin-top:4px">${meta.displayName || theirIdentityId.slice(0, 10) + '…'}</div>
+        <div style="font-size:12.5px;color:var(--mid)">${meta.category || 'No category declared'}${location ? ' — ' + location : ''}</div>
+        ${meta.postingText ? `<div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:8px">${meta.postingText}</div>` : ''}
+      ` : ''}
+      ${docsHtml ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:${meta ? '10px' : '4px'}">${docsHtml}</div>` : ''}
+    </div>`;
+}
+
 export async function renderMessagesWorkspace() {
+  const focus = state.messagesOpenConversation;
+  if (focus) {
+    const id = findIdentity(focus.ns, focus.myId);
+    if (id) {
+      await loadConversation(focus.ns, focus.myId, focus.theirId);
+      state.openChatWith[focus.ns].set(focus.myId, focus.theirId);
+      return `
+        <h2 class="section-title">Messages</h2>
+        <button class="btn small ghost" id="messagesBack" style="margin:10px 0">← Back to Messages</button>
+        ${counterpartProfileHtml(focus.ns, focus.myId, id.role, focus.theirId)}
+        ${renderChatPanel(focus.ns, id, focus.theirId)}
+      `;
+    }
+    state.messagesOpenConversation = null; // stale (identity retired/deleted since) — fall through to the list
+  }
+
   const pending = gatherPending();
   const conversations = await gatherConversations();
 
@@ -139,12 +182,9 @@ export function bindMessagesEvents() {
       if (type === 'chat') {
         respondChat(ns, id, their, true);
         // Accepting is clearly meant to lead into the conversation, not
-        // just clear the notification — jump straight into it, viewing it
-        // as whichever of my identities actually received the request.
-        setActiveNamespace(ns);
-        state.activeIdentityId[ns] = my;
-        state.view = 'workspace';
-        state.render.all();
+        // just clear the notification — focus it right here, no navigating
+        // away to the namespace's own workspace.
+        state.messagesOpenConversation = { ns, myId: my, theirId: their };
       } else if (type === 'meeting') {
         respondMeeting(ns, id, their, true);
       } else if (type === 'attachment') {
@@ -166,11 +206,50 @@ export function bindMessagesEvents() {
   ws.querySelectorAll('.conv-jump').forEach((btn) => {
     btn.addEventListener('click', () => {
       const { ns, my, their } = btn.dataset;
-      setActiveNamespace(ns);
-      state.activeIdentityId[ns] = my;
-      state.openChatWith[ns].set(my, their);
-      state.view = 'workspace';
-      loadConversation(ns, my, their).then(() => state.render.all());
+      state.messagesOpenConversation = { ns, myId: my, theirId: their };
+      state.render.workspace();
     });
   });
+
+  if (!state.messagesOpenConversation) return;
+  const { ns, myId, theirId } = state.messagesOpenConversation;
+  const id = findIdentity(ns, myId);
+  if (!id) return;
+
+  ws.querySelector('#messagesBack')?.addEventListener('click', () => {
+    state.messagesOpenConversation = null;
+    state.render.workspace();
+  });
+  // Distinct from "Close conversation" below: this just leaves the embedded
+  // panel and returns to the inbox list — the conversation itself stays
+  // accepted, same as discovery-ui.js's own #closeChat within its workspace.
+  ws.querySelector('#closeChat')?.addEventListener('click', () => {
+    state.messagesOpenConversation = null;
+    state.render.workspace();
+  });
+  ws.querySelector('.close-conversation')?.addEventListener('click', () => {
+    state.messagesOpenConversation = null;
+    closeConversation(ns, id, theirId);
+  });
+  bindDocumentButtons(ns, myId);
+  ws.querySelectorAll('.attach-accept').forEach((btn) => {
+    btn.addEventListener('click', () => respondAttachmentOffer(ns, id, btn.dataset.offer, true));
+  });
+  ws.querySelectorAll('.attach-decline').forEach((btn) => {
+    btn.addEventListener('click', () => respondAttachmentOffer(ns, id, btn.dataset.offer, false));
+  });
+
+  const sendBtn = ws.querySelector('#chatSend');
+  if (sendBtn) {
+    const input = ws.querySelector('#chatInput');
+    const fire = () => { sendChatMessage(ns, id, theirId, input.value); input.value = ''; };
+    sendBtn.addEventListener('click', fire);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') fire(); });
+    ws.querySelector('#chatFile')?.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (f) proposeAttachment(ns, id, theirId, f);
+    });
+    const log = ws.querySelector('#chatLog');
+    if (log) log.scrollTop = log.scrollHeight;
+  }
 }
