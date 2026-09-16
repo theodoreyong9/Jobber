@@ -20,7 +20,7 @@ import { loadBureauBackground, openBackgroundPicker } from './background-ui.js';
 import { state, NAMESPACES, NS_CONFIG, pickActiveIdentityId, pickActiveNamespace, ensureIdentityState } from './state.js';
 import { openModal, toast } from './ui-kit.js';
 import { renderTopbar } from './identity-ui.js';
-import { setSearchLive } from './discovery-ui.js';
+import { setSearchLive, rebroadcastDiscovery } from './discovery-ui.js';
 import { setResearchConnected } from './research-ui.js';
 import { renderAll, renderWorkspace, refreshUsageStat } from './render.js';
 import './message-router.js'; // side effect: registers state.handlers.incomingMessage
@@ -150,6 +150,23 @@ async function boot() {
   setInterval(() => {
     if (Object.values(state.searchLive).some((live) => (live instanceof Set ? live.size > 0 : !!live))) renderWorkspace();
   }, 30_000);
+
+  // Self-heals discovery over public-relay WebRTC signaling: the initial
+  // send (p2p.js's onPeerJoin handshake) is a single best-effort message,
+  // and a peer-join race or a dropped data-channel send before it's fully
+  // open can silently lose it — observed in practice as "discovered on one
+  // side but not the other" or "only shows up after a reload". A periodic
+  // re-broadcast to everyone already in the room (rebroadcastDiscovery,
+  // the same one a manual profile save already triggers) means a missed
+  // message heals itself within this interval instead of needing that
+  // reload.
+  setInterval(() => {
+    for (const ns of NAMESPACES) {
+      const live = state.searchLive[ns];
+      if (!(live instanceof Set)) continue; // Research's searchLive is a plain bool, not this model
+      for (const identityId of live) rebroadcastDiscovery(ns, identityId);
+    }
+  }, 45_000);
 
   // Which namespace to land on. "Nothing active anywhere" always wins,
   // regardless of any remembered last-active preference — that preference
