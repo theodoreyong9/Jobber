@@ -342,6 +342,10 @@ a{color:var(--agent);}
 
 .role-badge{ font-size:9.5px; color:var(--agent); border:1px solid rgba(89,201,184,.4); border-radius:20px; padding:0 6px; font-weight:500; }
 
+/* Unread message count in Messages' conversation list — see messages-ui.js's
+   unreadCountFor/conversationRowHtml. */
+.unread-badge{ font-size:10px; font-weight:700; color:#fff; background:var(--accent); border-radius:20px; padding:1px 7px; margin-left:8px; }
+
 /* Pricing's products (see products.js) — the same glass-tile language as
    the Bureau's bento tiles (color-tinted, blurred, the product's own
    emoji oversized in the background) instead of a plain bordered box,
