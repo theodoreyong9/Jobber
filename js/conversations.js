@@ -101,6 +101,41 @@ export async function shareDocument(ns, myIdentityId, theirIdentityId, doc, requ
   await credibility.recordEvent(ns, theirIdentityId, credibility.EVENT.DOCUMENT_SHARED, `document:${requestId}`);
 }
 
+// Shared between discovery-ui.js's own peer card and messages-ui.js's
+// embedded chat view — same buttons, same behavior, wherever a recruiter is
+// looking at a candidate they've got an accepted chat with. Each button
+// carries its own data-identity so the click handler below doesn't need to
+// know its container's markup (a `.card` in one place, nothing in the other).
+export function renderDocumentButtonsHtml(ns, myIdentityId, myRole, theirIdentityId) {
+  if (!(ns === 'employment' && myRole === 'recruiter')) return '';
+  const docsByType = state.pendingDocs[ns].get(myIdentityId)?.get(theirIdentityId) || new Map();
+  function docActionHtml(docType, label) {
+    const d = docsByType.get(docType);
+    if (!d) return `<button class="btn small ghost request-doc" data-identity="${theirIdentityId}" data-doc="${docType}">Download ${label}</button>`;
+    if (d.status === 'outgoing') return `<button class="btn small" disabled>Requesting ${label}…</button>`;
+    if (docType === 'cv') {
+      return d.cvUrl
+        ? `<a class="btn small primary" href="${d.cvUrl}" download="${d.name || 'cv'}">Download ${label}</a>`
+        : `<button class="btn small" disabled>Receiving ${label}…</button>`;
+    }
+    return `<button class="btn small ghost view-doc" data-identity="${theirIdentityId}" data-doc="${docType}">View ${label}</button>`;
+  }
+  return `${docActionHtml('cv', 'CV')}${docActionHtml('cover_letter', 'cover letter')}`;
+}
+
+export function bindDocumentButtons(ns, myIdentityId) {
+  const ws = document.getElementById('workspace');
+  ws.querySelectorAll('.request-doc').forEach((btn) => {
+    btn.addEventListener('click', () => requestDocument(ns, myIdentityId, btn.dataset.identity, btn.dataset.doc));
+  });
+  ws.querySelectorAll('.view-doc').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const d = state.pendingDocs[ns].get(myIdentityId).get(btn.dataset.identity)?.get(btn.dataset.doc);
+      openModal(btn.dataset.doc.replace('_', ' '), `<div style="white-space:pre-wrap;font-size:13px;color:var(--hi)">${d.text}</div>`, { submitLabel: 'Close' });
+    });
+  });
+}
+
 /* ---- Chat persistence: messages survive reload, keyed by both my ----- */
 /* ---- own identity and the other side's — not their ephemeral peer id. */
 
