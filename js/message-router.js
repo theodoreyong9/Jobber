@@ -181,6 +181,16 @@ export function handleIncomingMessage(ns, msg, peerId) {
     log.get(msg.sender).push(entry);
     state.loadedConversations[ns].get(myIdentityId).add(msg.sender); // avoid re-fetching and duplicating on next open
     persistMessage(ns, myIdentityId, msg.sender, entry);
+    // Only counts as unread if I'm not already looking at this exact
+    // conversation right now (in Messages' embedded view or the namespace's
+    // own workspace — both read/write the same openChatWith) — otherwise
+    // every message in an open chat would flash a notification for
+    // something already on screen. See conversations.js's loadConversation
+    // for where this gets cleared once the conversation is actually opened.
+    if (state.openChatWith[ns].get(myIdentityId) !== msg.sender) {
+      const unread = state.unreadMessages[ns].get(myIdentityId);
+      unread.set(msg.sender, (unread.get(msg.sender) || 0) + 1);
+    }
     state.render.workspace();
   } else if (msg.type === 'identity_retired') {
     // Re-key whatever credibility history *I've* built about them onto
