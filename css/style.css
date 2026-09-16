@@ -21,6 +21,15 @@
   --modebar-h:44px;
 }
 *{box-sizing:border-box; margin:0; padding:0;}
+/* No scrollbar chrome anywhere in the app, ever — .workspace, .feed,
+   .chat-log, dialog.modal, .parent-picker, .bento-hive-scroll (and
+   anything scrollable added later) all keep scrolling itself fully
+   functional (wheel, touch, keyboard, drag-select) via their own
+   overflow:auto/scroll; this only hides the browser's own scrollbar
+   drawn on top of it, cross-browser, without needing a matching rule
+   per scrollable class. */
+*{ scrollbar-width:none; -ms-overflow-style:none; }
+*::-webkit-scrollbar{ display:none; width:0; height:0; }
 html,body{height:100%;}
 body{
   background:var(--bg); color:var(--hi); font-family:var(--font-body);
