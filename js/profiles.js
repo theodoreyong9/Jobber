@@ -20,7 +20,7 @@ export async function getProfile(identityId) {
     yourMineUrl: '',
     // Employment-specific (see editEmploymentProfileFlow):
     country: '', city: '',
-    coverLetterText: '', cvFileName: '', cvExtractedText: '', earliestYear: null,
+    coverLetterText: '', cvFileName: '', cvExtractedText: '', cvFile: null, earliestYear: null,
     jobPostingText: '', seniorityMin: null, seniorityMax: null,
     // Business-specific (see editSupplyDemandProfileFlow):
     rate: null, budgetMin: null, budgetMax: null,
@@ -220,12 +220,19 @@ export function editEmploymentProfileFlow(id) {
           const availableNow = dlg.querySelector('#avail').checked;
           const file = dlg.querySelector('#cv').files[0];
 
-          let { cvFileName, cvExtractedText, earliestYear } = profile;
+          let { cvFileName, cvExtractedText, earliestYear, cvFile } = profile;
           if (file) {
             toast('Extracting text from ' + file.name + '…');
             try {
               cvExtractedText = await extract.extractText(file);
               cvFileName = file.name;
+              // The original file itself, kept as-is (IndexedDB stores
+              // Blobs/Files natively) — cvExtractedText is only ever used
+              // for keyword matching, but a connected recruiter can now
+              // download the real file (see conversations.js's
+              // requestDocument/shareDocument 'cv' case), not just its
+              // extracted text.
+              cvFile = file;
               earliestYear = matching.extractEarliestYear(cvExtractedText);
             } catch (e) {
               toast('Could not read that file: ' + e.message);
@@ -244,7 +251,7 @@ export function editEmploymentProfileFlow(id) {
 
           await db.put('profiles', {
             ...profile, category, country, city, yourMineUrl, secretCode, coverLetterText, availableNow,
-            cvFileName, cvExtractedText, tokens, earliestYear,
+            cvFileName, cvExtractedText, cvFile, tokens, earliestYear,
             updatedAt: Date.now(),
           });
           await autoSearchOnSave('employment', id, tokens);
