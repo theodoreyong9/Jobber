@@ -14,6 +14,13 @@
 // centralized inbox is not needing to go find the conversation somewhere
 // else. See state.js's messagesOpenConversation for the one piece of
 // state that makes this possible without duplicating openChatWith.
+//
+// Notifications: countPendingNotifications() (the Bureau tile's badge
+// number) covers both incoming requests and unread messages in already
+// -accepted conversations — see state.js's unreadMessages for how the
+// latter gets tracked, message-router.js's chat_message handling for where
+// it increments, and conversations.js's loadConversation for where it
+// clears once a conversation is actually opened.
 
 import { state, NAMESPACES, NS_CONFIG } from './state.js';
 import {
@@ -62,8 +69,25 @@ export function gatherPending() {
   return items;
 }
 
+function unreadCountFor(ns, myId, theirId) {
+  return state.unreadMessages[ns]?.get(myId)?.get(theirId) || 0;
+}
+
+function totalUnreadCount() {
+  let total = 0;
+  for (const ns of chatCapableNamespaces()) {
+    for (const my of myIdentitiesOf(ns)) {
+      for (const count of state.unreadMessages[ns]?.get(my.identityId)?.values() || []) total += count;
+    }
+  }
+  return total;
+}
+
+// Requests waiting on a yes/no plus unread messages in already-accepted
+// conversations — both are "something in Messages needs your attention",
+// so both count toward the one badge the Bureau's Messages tile shows.
 export function countPendingNotifications() {
-  return gatherPending().length;
+  return gatherPending().length + totalUnreadCount();
 }
 
 async function gatherConversations() {
@@ -73,7 +97,15 @@ async function gatherConversations() {
       for (const c of await listConversations(ns, my.identityId)) all.push({ ...c, ns, myId: my.identityId });
     }
   }
-  return all.sort((a, b) => b.ts - a.ts);
+  // Unread conversations float to the top as a group (most recent unread
+  // first), read ones follow by recency — same "what needs me" priority a
+  // real inbox uses, rather than a flat timestamp sort that could bury a
+  // new message under yesterday's already-read chatter.
+  return all.sort((a, b) => {
+    const bUnread = unreadCountFor(b.ns, b.myId, b.counterpart) > 0 ? 1 : 0;
+    const aUnread = unreadCountFor(a.ns, a.myId, a.counterpart) > 0 ? 1 : 0;
+    return bUnread - aUnread || b.ts - a.ts;
+  });
 }
 
 // "as <name>" only actually adds information once there's more than one
@@ -99,6 +131,7 @@ function pendingRowHtml(p) {
 
 function conversationRowHtml(c) {
   const online = state.identityToPeer[c.ns]?.has(c.counterpart);
+  const unread = unreadCountFor(c.ns, c.myId, c.counterpart);
   const preview = c.kind === 'attachment' ? `📎 ${c.name}` : (c.text || '').slice(0, 60);
   return `
     <div class="agree-row">
@@ -106,6 +139,7 @@ function conversationRowHtml(c) {
         <span class="online-dot ${online ? 'on' : ''}" style="margin-right:6px"></span>
         <span class="role-badge" style="margin-right:6px">${NS_CONFIG[c.ns].label}${asIdentitySuffix(c.ns, c.myId)}</span>
         ${c.counterpart.slice(0, 10)}… — ${preview}
+        ${unread ? `<span class="unread-badge">${unread > 9 ? '9+' : unread}</span>` : ''}
       </span>
       <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-my="${c.myId}" data-their="${c.counterpart}">Open</button>
     </div>`;
