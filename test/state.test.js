@@ -10,6 +10,7 @@ function resetNsState(ns) {
   state.pendingDocs[ns] = new Map();
   state.pendingAttachmentOffers[ns] = new Map();
   state.loadedConversations[ns] = new Map();
+  state.unreadMessages[ns] = new Map();
   state.searchLive[ns] = new Set();
 }
 
@@ -164,6 +165,7 @@ test('ensureIdentityState lazily creates every per-identity bucket, and is idemp
   assert.ok(state.pendingDocs['_test_ns_a'].get('ID1') instanceof Map);
   assert.ok(state.pendingAttachmentOffers['_test_ns_a'].get('ID1') instanceof Map);
   assert.ok(state.loadedConversations['_test_ns_a'].get('ID1') instanceof Set);
+  assert.ok(state.unreadMessages['_test_ns_a'].get('ID1') instanceof Map);
 });
 
 test('migrateIdentityState carries an identity\'s in-memory state to a new id on rotation, instead of resetting it', () => {

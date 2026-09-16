@@ -39,7 +39,7 @@ export const NS_CONFIG = {
   agent: { label: 'Agent', color: '#9B8AFB', kind: 'agent', icon: '🤖',
     hint: 'Cross-references what you offer and search for (across every namespace) against what everyone you\'ve already discovered offers and searches for — surfacing matches a single namespace\'s own matching would never see. Every finding says whether it needed AI-enriched keywords or was pure CPU.' },
   messages: { label: 'Messages', color: '#4DD0E1', kind: 'messages', icon: '💬',
-    hint: 'Every conversation and pending request (chat, meeting, document, file) across every mode, in one place — no identity of its own, it just reads what your other identities already have.' },
+    hint: 'Every conversation and pending request (chat, meeting, file) across every mode, in one place, with unread counts — no identity of its own, it just reads what your other identities already have.' },
 
   // Real matching namespaces (see editAddressProfileFlow in profiles.js):
   // one role ("Address") publishes an exact address, the other
@@ -195,6 +195,14 @@ export const state = {
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
   loadedConversations: {},  // namespace -> Map(myIdentityId -> Set(theirIdentityId)) already hydrated from IndexedDB
+  // Unread chat_message count per relationship — incremented by
+  // message-router.js whenever one arrives for a conversation that isn't
+  // the one currently open, cleared by conversations.js's loadConversation
+  // (called by every code path that's about to actually show a
+  // conversation to the user). Not persisted, same as every other
+  // relationship-shaped state here — a reload starts it fresh, same as
+  // pendingChats/pendingMeetings already do.
+  unreadMessages: {},       // namespace -> Map(myIdentityId -> Map(theirIdentityId -> count))
   // Which conversation Messages' own embedded chat view is showing right
   // now — {ns, myId, theirId} | null. Separate from openChatWith[ns] (which
   // stays the per-identity source of truth the actual chat-panel bindings
@@ -238,6 +246,7 @@ export function ensureIdentityState(ns, identityId) {
   if (!state.pendingDocs[ns].has(identityId)) state.pendingDocs[ns].set(identityId, new Map());
   if (!state.pendingAttachmentOffers[ns].has(identityId)) state.pendingAttachmentOffers[ns].set(identityId, new Map());
   if (!state.loadedConversations[ns].has(identityId)) state.loadedConversations[ns].set(identityId, new Set());
+  if (!state.unreadMessages[ns].has(identityId)) state.unreadMessages[ns].set(identityId, new Map());
 }
 
 // Every incoming P2P message that's about a specific relationship (as
@@ -269,7 +278,7 @@ export function resolveLiveIdentity(ns, targetIdentityId) {
 // the identity being rotated was actually live in the first place.
 export function migrateIdentityState(ns, oldIdentityId, newIdentityId) {
   ensureIdentityState(ns, newIdentityId);
-  for (const store of [state.pendingChats, state.chatLog, state.pendingMeetings, state.pendingDocs, state.pendingAttachmentOffers, state.loadedConversations]) {
+  for (const store of [state.pendingChats, state.chatLog, state.pendingMeetings, state.pendingDocs, state.pendingAttachmentOffers, state.loadedConversations, state.unreadMessages]) {
     if (store[ns].has(oldIdentityId)) store[ns].set(newIdentityId, store[ns].get(oldIdentityId));
     store[ns].delete(oldIdentityId);
   }
