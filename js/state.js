@@ -195,6 +195,13 @@ export const state = {
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
   loadedConversations: {},  // namespace -> Map(myIdentityId -> Set(theirIdentityId)) already hydrated from IndexedDB
+  // Which conversation Messages' own embedded chat view is showing right
+  // now — {ns, myId, theirId} | null. Separate from openChatWith[ns] (which
+  // stays the per-identity source of truth the actual chat-panel bindings
+  // read/write): Messages aggregates across every identity in every
+  // namespace, so it needs its own single "what am I looking at" pointer
+  // rather than guessing from whichever per-identity flag happens to be set.
+  messagesOpenConversation: null,
   researchProjects: [],
   activeProjectId: null,
   pendingJoinRequests: new Map(), // projectId -> [{identityId, displayName, skillMd, peerId}]
