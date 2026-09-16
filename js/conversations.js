@@ -159,6 +159,12 @@ export async function persistMessage(ns, myIdentityId, theirIdentityId, record) 
 }
 
 export async function loadConversation(ns, myIdentityId, theirIdentityId) {
+  // Every call site is "I'm about to actually show this conversation" —
+  // discovery-ui.js's own chat panel, Messages' embedded one, the accept-chat
+  // paths in both — so this is the one place that needs to clear whatever
+  // arrived while it was closed. See message-router.js's chat_message
+  // handling for where it gets set.
+  state.unreadMessages[ns].get(myIdentityId)?.delete(theirIdentityId);
   const loaded = state.loadedConversations[ns].get(myIdentityId);
   const log = state.chatLog[ns].get(myIdentityId);
   if (loaded.has(theirIdentityId)) return log.get(theirIdentityId) || [];
