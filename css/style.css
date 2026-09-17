@@ -601,3 +601,23 @@ dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
   .rgrid{ grid-template-columns:1fr; }
   .topbar{ flex-wrap:wrap; }
 }
+
+/* Bureau: hive-then-manifesto stacked top-to-bottom is right for a phone
+   (one column is all the width there is) but wastes most of a wide
+   screen either side of that one narrow, centered column — the manifesto
+   in particular ends up scrolled well below the fold, past however many
+   empty "+" identity slots the tiling pads out to (desktop-ui.js's own
+   targetSlots floor). Past this width there's reliably enough room for
+   the hive (a fixed HIVE_WIDTH regardless of identity count — the tiling
+   only ever grows taller, never wider, see desktop-ui.js) alongside the
+   manifesto's own 440px max-width, so lay them out side by side instead;
+   .bento-hive's own animation/positioning is untouched, only its
+   container's own sizing/alignment changes here. */
+@media (min-width:900px){
+  .bureau{ display:flex; align-items:flex-start; justify-content:center; gap:56px; }
+  .bento-hive-scroll{ width:auto; flex:0 0 auto; }
+  .bureau-manifesto{
+    margin:74px 0 0; text-align:left; padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom)) 0;
+  }
+  .bureau-manifesto-rule{ margin:0 0 20px; }
+}
