@@ -273,7 +273,7 @@ function renameFlow(id) {
 }
 
 function rotateFlow(id) {
-  openModal('Rotate identity', `<p style="font-size:12.5px;color:var(--mid)">A fresh keypair will be generated with the same name. The old id (#${id.identityId}) will be marked retired, and connected peers on this namespace will receive an <code>identity_retired</code> message.</p>`, {
+  openModal('Rotate identity', `<p style="font-size:12.5px;color:var(--mid)">A fresh keypair will be generated with the same name and profile. The old id (#${id.identityId}) is retired for good — connected peers on this namespace receive an <code>identity_retired</code> message and will no longer accept anything from it — and search resumes automatically under the fresh id.</p>`, {
     submitLabel: 'Rotate',
     onSubmit: async () => {
       // Research's searchLive is a plain bool, not a Set (see state.js) —
@@ -290,9 +290,13 @@ function rotateFlow(id) {
       // it's transitioned explicitly below instead.
       migrateIdentityState(id.namespace, id.identityId, fresh.identityId);
       state.activeIdentityId[id.namespace] = fresh.identityId;
-      if (wasLive) {
-        await state.handlers.toggleSearchLive(id.namespace, id.identityId); // drop the retired id's room registration
-        await state.handlers.toggleSearchLive(id.namespace, fresh.identityId); // and pick it back up under the fresh one
+      if (liveSet instanceof Set) {
+        if (wasLive) await state.handlers.toggleSearchLive(id.namespace, id.identityId); // drop the retired id's room registration
+        // Always resume under the fresh id, live or not before — the whole
+        // point of keeping the name and profile is that rotating shouldn't
+        // interrupt anything, and this app already treats "has a profile"
+        // as "searching" everywhere else (see renderSearchAndEnrichControls).
+        await state.handlers.toggleSearchLive(id.namespace, fresh.identityId);
       }
       toast(`Rotated to #${fresh.identityId}`);
       state.render.all();
@@ -301,7 +305,7 @@ function rotateFlow(id) {
 }
 
 function retireFlow(id) {
-  openModal('Retire identity', `<p style="font-size:12.5px;color:var(--mid)">This marks #${id.identityId} inactive. It stays visible in your history. This is local only — it can't force other peers to forget a previously seen id.</p>`, {
+  openModal('Retire identity', `<p style="font-size:12.5px;color:var(--mid)">This marks #${id.identityId} inactive for good. It stays visible in your own history, but connected peers on this namespace receive an <code>identity_retired</code> message and will no longer accept anything from it. It can't reach back and erase what a peer already saved locally before this — only stop it being usable going forward.</p>`, {
     submitLabel: 'Retire',
     onSubmit: async () => {
       // Otherwise a retired identity keeps its p2p.js room registration —
@@ -310,9 +314,13 @@ function retireFlow(id) {
       // searchLive is a plain bool, not a Set (see state.js) — guard
       // against it rather than calling .has() on a boolean.
       const liveSet = state.searchLive[id.namespace];
-      if (liveSet instanceof Set && liveSet.has(id.identityId)) {
-        await state.handlers.toggleSearchLive(id.namespace, id.identityId);
-      }
+      const wasLive = liveSet instanceof Set && liveSet.has(id.identityId);
+      // Sent from the retiring id itself (there's no successor to send it
+      // from, unlike rotateFlow) — only meaningful if it was actually live,
+      // since otherwise no peer has ever heard of this id to begin with.
+      const room = p2p.getRoom(id.namespace);
+      if (wasLive && room) room.send('identity_retired', id.identityId, { retiredId: id.identityId, rotatedTo: null });
+      if (wasLive) await state.handlers.toggleSearchLive(id.namespace, id.identityId);
       await identity.retireIdentity(id.identityId);
       state.identitiesByNs[id.namespace] = await identity.listIdentities(id.namespace);
       state.activeIdentityId[id.namespace] = pickActiveIdentityId(state.identitiesByNs[id.namespace]);

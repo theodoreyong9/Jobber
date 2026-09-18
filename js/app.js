@@ -139,6 +139,7 @@ async function boot() {
     state.pendingAttachmentOffers[ns] = new Map();
     state.identityToPeer[ns] = new Map();
     state.peerToIdentity[ns] = new Map();
+    state.retiredRemoteIds[ns] = new Set();
     state.loadedConversations[ns] = new Map();
     state.unreadMessages[ns] = new Map();
     for (const id of state.identitiesByNs[ns]) ensureIdentityState(ns, id.identityId);

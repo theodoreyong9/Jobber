@@ -74,15 +74,24 @@ export async function setProducts(identityId, products) {
   return id;
 }
 
-// Rotation: generate a fresh identity in the same namespace, keep the name,
-// mark the old one retired and point it at the new one. Peers who know the
-// old id can be told via an `identity_retired` protocol message (see p2p.js).
+// Rotation: generate a fresh identity in the same namespace, keep the name
+// and profile, mark the old one retired and point it at the new one. Peers
+// who know the old id are told via an `identity_retired` protocol message
+// (see identity-ui.js's rotateFlow, which sends it and resumes search live
+// under the fresh id) — a receiving peer stops accepting anything claiming
+// to be from the old id from then on (see message-router.js).
 export async function rotateIdentity(identityId) {
   const old = await get('identities', identityId);
   if (!old) throw new Error('Identity not found');
   const fresh = await createIdentity(old.namespace, old.displayName, old.role);
   fresh.products = old.products || []; // carries forward the same way credibility.js's handleRotation carries observed history — rotating shouldn't cost you products you already hold
   await put('identities', fresh);
+  // The profile too — a rotated identity is meant to feel like the same
+  // person under a fresh key, not a blank slate that has to refill every
+  // field and re-run "Enrich with local AI" before it's worth anything to
+  // search against again.
+  const oldProfile = await get('profiles', identityId);
+  if (oldProfile) await put('profiles', { ...oldProfile, identityId: fresh.identityId });
   old.active = false;
   old.retiredAt = Date.now();
   old.rotatedTo = fresh.identityId;

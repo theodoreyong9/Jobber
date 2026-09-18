@@ -24,6 +24,14 @@ const RELATIONSHIP_MESSAGE_TYPES = new Set([
 ]);
 
 export function handleIncomingMessage(ns, msg, peerId) {
+  // Once a browser has told us (via identity_retired) that one of its own
+  // ids is gone, stop acting on anything claiming to be from it — the
+  // closest a serverless P2P network gets to "another browser can no
+  // longer use this identity" (see identity-ui.js's rotateFlow/retireFlow,
+  // the only senders of identity_retired). Checked before the bookkeeping
+  // below so a retired id can't even refresh its own peerId mapping.
+  if (state.retiredRemoteIds[ns]?.has(msg.sender)) return;
+
   // Keep the identity<->live-peer mapping fresh from every message we see,
   // so chat/meetings/documents can be keyed by stable identity while still
   // being able to resolve who to actually send to right now.
@@ -193,11 +201,29 @@ export function handleIncomingMessage(ns, msg, peerId) {
     }
     state.render.workspace();
   } else if (msg.type === 'identity_retired') {
-    // Re-key whatever credibility history *I've* built about them onto
-    // their new id — without this, every rotation would silently reset
-    // to "never seen" from every observer's point of view.
-    credibility.handleRotation(ns, msg.payload.retiredId, msg.payload.rotatedTo);
-    toast(`Peer identity retired: #${msg.payload.retiredId} → #${msg.payload.rotatedTo}`);
+    const { retiredId, rotatedTo } = msg.payload;
+    state.retiredRemoteIds[ns].add(retiredId);
+    // Drop their now-dead discovery entry so it stops showing up as an
+    // interactive search result (see discovery-ui.js's renderClassicWorkspace)
+    // — a rotated identity's own fresh discovery, once it arrives, sets a
+    // brand new entry under the same peerId anyway, so this never loses it.
+    for (const [existingPeerId, meta] of state.discovered[ns]) {
+      if (meta.sender === retiredId) state.discovered[ns].delete(existingPeerId);
+    }
+    for (const [existingPeerId, ident] of state.peerToIdentity[ns]) {
+      if (ident === retiredId) state.peerToIdentity[ns].delete(existingPeerId);
+    }
+    state.identityToPeer[ns].delete(retiredId);
+    if (rotatedTo) {
+      // Re-key whatever credibility history *I've* built about them onto
+      // their new id — without this, every rotation would silently reset
+      // to "never seen" from every observer's point of view.
+      credibility.handleRotation(ns, retiredId, rotatedTo);
+      toast(`Peer identity retired: #${retiredId} → #${rotatedTo}`);
+    } else {
+      toast(`Peer identity retired: #${retiredId}`);
+    }
+    state.render.workspace();
   } else if (msg.type === 'research_sync_request') {
     handleResearchSyncRequest(ns, msg, peerId);
   } else if (msg.type === 'research_sync_response') {

@@ -194,6 +194,12 @@ export const state = {
   pendingAttachmentOffers: {}, // namespace -> Map(myIdentityId -> Map(offerId -> {status, name, size, type, theirIdentityId, file?}))
   identityToPeer: {},       // namespace -> Map(theirIdentityId -> current live peerId)
   peerToIdentity: {},       // namespace -> Map(peerId -> theirIdentityId)
+  // Remote identities I've been explicitly told (via an identity_retired
+  // broadcast) are gone — not a reintroduction of the `blocked` set removed
+  // above: that one gated *my own* willingness to hear from someone;
+  // this one honors *their own* announcement that an id of theirs no
+  // longer exists. See message-router.js's handleIncomingMessage.
+  retiredRemoteIds: {},     // namespace -> Set(identityId)
   loadedConversations: {},  // namespace -> Map(myIdentityId -> Set(theirIdentityId)) already hydrated from IndexedDB
   // Unread chat_message count per relationship — incremented by
   // message-router.js whenever one arrives for a conversation that isn't
