@@ -401,8 +401,16 @@ function pentTransform(slotPx) {
 // the outer element's box (and its clip-path, drawn from that box) is
 // still visually rotated. Content stays upright regardless of which of
 // the 4 tiling orientations a given tile lands in.
+//
+// Set as a --face-rot custom property rather than a `transform` directly,
+// because style.css's own .bento-pent-face rule also adds --block-rot on
+// top (0deg normally, -90deg past the wide-screen breakpoint where
+// .bento-hive-rotate turns the whole hive 90° — see that file): a plain
+// inline `transform` here would just overwrite that entirely, no way for
+// a stylesheet rule to add to a specific inline transform value it
+// doesn't know in advance. Custom properties compose in calc() instead.
 function pentFaceStyle(rot) {
-  return `transform:rotate(${-rot}deg);`;
+  return `--face-rot:${-rot}deg;`;
 }
 
 function wheelToolTile(ns, i, pendingCount) {
@@ -544,7 +552,13 @@ export async function renderDesktop() {
   // (zoneEdgeAcrossLabel/zoneEdgeAcrossLabelFrom — see the comment above
   // ECOSYSTEM_GAP_UNITS for why a naive midpoint, a whole-row bounding
   // box, or even a single center point all get this wrong).
-  const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px);`;
+  // rotate(var(--block-rot)) appended last: 0deg normally, and past the
+  // wide-screen breakpoint the same counter-rotation .bento-pent-face
+  // uses to cancel .bento-hive-rotate's own rotate(90deg) — a rotate()
+  // always turns an element about its own center regardless of where it
+  // sits in the function list, so appending it here doesn't disturb the
+  // positioning translate() before it.
+  const labelTransform = (y) => `transform:translate(-50%,-50%) translate(0px,${Math.round(y + TOP_CLEARANCE)}px) rotate(var(--block-rot, 0deg));`;
   const ecoExtent = zoneEdgeAcrossLabel(0, ECOSYSTEM_COUNT);
   const insightsExtent = zoneEdgeAcrossLabel(ECOSYSTEM_COUNT, TOOL_COUNT);
   const matchesExtent = zoneEdgeAcrossLabelFrom(TOOL_COUNT);

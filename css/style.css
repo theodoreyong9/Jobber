@@ -219,6 +219,12 @@ a{color:var(--agent);}
 .bento-pent-face{
   position:absolute; inset:0;
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2.6px;
+  /* --face-rot (set inline per tile by pentFaceStyle) cancels this tile's
+     own Cairo-tiling orientation; --block-rot (0deg here, -90deg past the
+     wide-screen breakpoint — see .bento-hive-rotate below) additionally
+     cancels the whole-hive rotation, so label/icon/badge stay upright
+     either way without pentFaceStyle needing to know the viewport width. */
+  transform:rotate(calc(var(--face-rot, 0deg) + var(--block-rot, 0deg)));
 }
 /* The emoji as a faint tilted watermark tucked in the bottom-right
    corner — the same treatment as .product-bg-icon's oversized rotated
@@ -650,20 +656,40 @@ dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
    the rotation on another element instead of .bento-hive itself is what
    avoids it fighting with hiveFloat's own transform. Below this
    breakpoint .bento-hive-rotate is just a transparent pass-through: the
-   custom properties are set but never read. */
+   custom properties are set but never read.
+
+   --block-rot is what keeps every tile's icon/label/badge (and the
+   Ecosystem/Insights/Matches section labels) reading horizontally
+   despite living inside that rotated block: it's the one counter-
+   rotation .bento-pent-face's own transform (style.css, above) and each
+   section label's inline transform (desktop-ui.js) both add on top of
+   whatever they already do. Set once here, inherited down to every
+   descendant, 0deg below this breakpoint so nothing changes there.
+
+   Vertical centering: .workspace-bureau is the actual scrollable box
+   (.workspace's own height, set by the app shell — see .app/.main/
+   .workspace above), so centering the content within IT rather than
+   within .bureau's own tight-fitting box is what centers it in the
+   visible page rather than just against itself. padding-bottom carves
+   out the fixed modebar's own height first, so "centered" means centered
+   in the visible area above it, not the raw box including the strip it
+   covers. Only kicks in when content is shorter than that box — taller
+   content still just starts at the top and scrolls, same as always. */
 @media (min-width:900px){
-  .bureau{ display:flex; align-items:flex-start; justify-content:center; gap:56px; }
+  .workspace.workspace-bureau{
+    display:flex; flex-direction:column; justify-content:center;
+    padding-bottom:calc(var(--modebar-h) + env(safe-area-inset-bottom));
+  }
+  .bureau{ display:flex; align-items:center; justify-content:center; gap:56px; }
   .bento-hive-rotate{
     width:var(--hive-h); height:var(--hive-w); flex:0 0 auto;
-    position:relative; margin:74px 0 0;
+    position:relative; margin:0; --block-rot:-90deg;
   }
   .bento-hive-rotate .bento-hive-scroll{
     position:absolute; top:50%; left:50%; width:var(--hive-w); overflow:visible;
     transform:translate(-50%,-50%) rotate(90deg); transform-origin:center center;
   }
   .bento-hive-rotate .bento-hive{ margin:0; }
-  .bureau-manifesto{
-    margin:74px 0 0; text-align:left; padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom)) 0;
-  }
+  .bureau-manifesto{ margin:0; text-align:left; padding:0 24px 0 0; }
   .bureau-manifesto-rule{ margin:0 0 20px; }
 }
