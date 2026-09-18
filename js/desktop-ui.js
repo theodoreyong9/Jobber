@@ -552,9 +552,17 @@ export async function renderDesktop() {
   const insightsLabel = `<span class="bento-section-label" style="${labelTransform((ecoExtent.bottom + insightsExtent.top) / 2)}">Insights</span>`;
   const matchesLabel = `<span class="bento-section-label" style="${labelTransform((insightsExtent.bottom + matchesExtent.top) / 2)}">Matches</span>`;
 
+  // .bento-hive-rotate exists purely to turn the whole tiling 90° as one
+  // rigid block on wide screens (see its CSS) — width/height are handed
+  // over as custom properties, not raw inline width/height, since they
+  // only need to apply post-rotation (swapped) past that breakpoint;
+  // below it the wrapper is just a transparent pass-through and these
+  // never get read at all.
   return `
     <div class="bureau">
-      <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div></div>
+      <div class="bento-hive-rotate" style="--hive-w:${HIVE_WIDTH}px; --hive-h:${hiveHeight}px">
+        <div class="bento-hive-scroll"><div class="bento-hive" style="height:${hiveHeight}px; width:${HIVE_WIDTH}px">${tools}${ecosystemLabel}${insightsLabel}${matchesLabel}${cells.join('')}</div></div>
+      </div>
       ${manifestoHtml}
     </div>`;
 }

@@ -635,14 +635,33 @@ dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
    in particular ends up scrolled well below the fold, past however many
    empty "+" identity slots the tiling pads out to (desktop-ui.js's own
    targetSlots floor). Past this width there's reliably enough room for
-   the hive (a fixed HIVE_WIDTH regardless of identity count — the tiling
-   only ever grows taller, never wider, see desktop-ui.js) alongside the
-   manifesto's own 440px max-width, so lay them out side by side instead;
-   .bento-hive's own animation/positioning is untouched, only its
-   container's own sizing/alignment changes here. */
+   the hive alongside the manifesto's own 440px max-width, so lay them out
+   side by side instead.
+
+   On top of that, the hive itself turns 90° as one single rigid block —
+   not a per-tile change, not a reflow of the tiling geometry, just the
+   whole already-generated tiling rotated the way you'd rotate a printed
+   photo. .bento-hive-rotate is a wrapper sized to the POST-rotation
+   bounding box (width/height swapped from the hive's own natural size,
+   handed over as --hive-w/--hive-h custom properties by desktop-ui.js
+   since only it knows those pixel values) with .bento-hive-scroll
+   absolutely centered and rotated inside it. The float animation stays
+   entirely on the inner .bento-hive, untouched by any of this — nesting
+   the rotation on another element instead of .bento-hive itself is what
+   avoids it fighting with hiveFloat's own transform. Below this
+   breakpoint .bento-hive-rotate is just a transparent pass-through: the
+   custom properties are set but never read. */
 @media (min-width:900px){
   .bureau{ display:flex; align-items:flex-start; justify-content:center; gap:56px; }
-  .bento-hive-scroll{ width:auto; flex:0 0 auto; }
+  .bento-hive-rotate{
+    width:var(--hive-h); height:var(--hive-w); flex:0 0 auto;
+    position:relative; margin:74px 0 0;
+  }
+  .bento-hive-rotate .bento-hive-scroll{
+    position:absolute; top:50%; left:50%; width:var(--hive-w); overflow:visible;
+    transform:translate(-50%,-50%) rotate(90deg); transform-origin:center center;
+  }
+  .bento-hive-rotate .bento-hive{ margin:0; }
   .bureau-manifesto{
     margin:74px 0 0; text-align:left; padding:0 24px calc(24px + var(--modebar-h) + env(safe-area-inset-bottom)) 0;
   }
