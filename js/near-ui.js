@@ -22,6 +22,24 @@ async function hydrateNearPrefs() {
   state.nearRadiusKm = radius?.value ?? 25;
 }
 
+// Every one of my own active identities across every namespace Near
+// aggregates from, each flagged live or not. This is where "Advertise
+// (soon)" belongs — a future way to boost one of *my own* identities'
+// visibility to nearby searchers — not a per-result chip on the peers
+// below, which has nothing to do with my own advertising choices.
+function myIdentitiesForNear() {
+  const out = [];
+  for (const ns of NAMESPACES) {
+    if (NS_CONFIG[ns].kind === 'near' || NS_CONFIG[ns].kind === 'agent' || NS_CONFIG[ns].kind === 'messages') continue;
+    const live = state.searchLive[ns]; // research's is a plain bool, not a Set — never "live" for this list
+    for (const id of state.identitiesByNs[ns] || []) {
+      if (!id.active) continue;
+      out.push({ ns, identityId: id.identityId, displayName: id.displayName, live: live instanceof Set && live.has(id.identityId) });
+    }
+  }
+  return out;
+}
+
 function collectNearbyPeers() {
   if (!state.nearCoords) return [];
   const out = [];
@@ -41,6 +59,7 @@ function collectNearbyPeers() {
 export async function renderNearWorkspace() {
   await hydrateNearPrefs();
   const nearby = collectNearbyPeers();
+  const myIdentities = myIdentitiesForNear();
   const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && NS_CONFIG[ns].kind !== 'messages' && state.searchLive[ns]?.size > 0);
 
   // Scoped the same way credibility.js scores a subject — per
@@ -68,7 +87,6 @@ export async function renderNearWorkspace() {
                       <div class="role">${p.category || 'No category declared'}</div>
                       <div class="meta">
                         <span class="chip">${p.distanceKm.toFixed(1)} km away</span>
-                        <span class="chip">Advertise (soon)</span>
                       </div>
                     </div>
                     ${marks.seenTickHtml(p.ns, p.sender, seenByPeer.get(p))}
@@ -86,6 +104,18 @@ export async function renderNearWorkspace() {
         When on, your real coordinates piggyback on whichever namespace discovery broadcasts you're already sending — nothing new is transmitted just because Near is open.
       </p>
     </div>
+    ${myIdentities.length === 0 ? '' : `
+      <div class="panel" style="margin-top:14px">
+        <div class="k">Your identities <span class="chip">Advertise (soon)</span></div>
+        ${myIdentities.map((id) => `
+          <div class="agree-row">
+            <span class="k2">
+              <span class="online-dot ${id.live ? 'on' : ''}" style="margin-right:6px" title="${id.live ? 'Live' : 'Not searching'}"></span>
+              <span class="role-badge" style="margin-right:6px">${NS_CONFIG[id.ns].label}</span>
+              ${id.displayName}
+            </span>
+          </div>`).join('')}
+      </div>`}
     ${listHtml}
   `;
 }
