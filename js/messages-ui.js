@@ -26,8 +26,10 @@ import { state, NAMESPACES, NS_CONFIG } from './state.js';
 import {
   respondChat, respondMeeting, respondAttachmentOffer,
   listConversations, loadConversation, renderChatPanel, sendChatMessage, proposeAttachment,
-  closeConversation, renderDocumentButtonsHtml, bindDocumentButtons,
+  closeConversation, renderDocumentButtonsHtml, bindDocumentButtons, conversationRoom,
 } from './conversations.js';
+import * as db from './db.js';
+import * as marks from './marks.js';
 
 // Only namespaces where the generic chat/meeting/document/attachment
 // mechanic in conversations.js actually applies — Research has its own
@@ -97,6 +99,17 @@ async function gatherConversations() {
       for (const c of await listConversations(ns, my.identityId)) all.push({ ...c, ns, myId: my.identityId });
     }
   }
+  // Two things listConversations' own preview (c.text) can't answer:
+  // whether this conversation is starred, and whether a search keyword
+  // appears anywhere in it — listConversations only ever returns each
+  // conversation's MOST RECENT message, so a keyword several messages
+  // back wouldn't match against the preview alone. Both read from the
+  // same 'room' index loadConversation itself uses.
+  for (const c of all) {
+    c.favorite = await marks.isFavorite(c.ns, c.myId, c.counterpart);
+    const rows = await db.getAll('messages', 'room', conversationRoom(c.ns, c.myId, c.counterpart));
+    c.searchText = rows.map((r) => r.text || r.name || '').join(' ').toLowerCase();
+  }
   // Unread conversations float to the top as a group (most recent unread
   // first), read ones follow by recency — same "what needs me" priority a
   // real inbox uses, rather than a flat timestamp sort that could bury a
@@ -106,6 +119,24 @@ async function gatherConversations() {
     const aUnread = unreadCountFor(a.ns, a.myId, a.counterpart) > 0 ? 1 : 0;
     return bUnread - aUnread || b.ts - a.ts;
   });
+}
+
+// Ephemeral UI convenience, like discovery-ui.js's own credFilterByNs —
+// survives a re-render within the session, resets on reload.
+let messagesSearchQuery = '';
+let messagesFavoritesOnly = false;
+
+function applyConversationFilter(all) {
+  const q = messagesSearchQuery.trim().toLowerCase();
+  return all.filter((c) => {
+    if (messagesFavoritesOnly && !c.favorite) return false;
+    if (!q) return true;
+    return theirDisplayName(c.ns, c.counterpart).toLowerCase().includes(q) || c.searchText.includes(q);
+  });
+}
+
+function escapeAttr(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 // "as <name>" only actually adds information once there's more than one
@@ -150,7 +181,10 @@ function conversationRowHtml(c) {
         ${theirDisplayName(c.ns, c.counterpart)} — ${preview}
         ${unread ? `<span class="unread-badge">${unread > 9 ? '9+' : unread}</span>` : ''}
       </span>
-      <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-my="${c.myId}" data-their="${c.counterpart}">Open</button>
+      <span style="display:flex;gap:6px;align-items:center">
+        <button type="button" class="fav-star ${c.favorite ? 'on' : ''}" data-fav-ns="${c.ns}" data-fav-my="${c.myId}" data-fav-their="${c.counterpart}" title="${c.favorite ? 'Unfavorite' : 'Favorite'}">★</button>
+        <button class="btn small ghost conv-jump" data-ns="${c.ns}" data-my="${c.myId}" data-their="${c.counterpart}">Open</button>
+      </span>
     </div>`;
 }
 
@@ -211,8 +245,65 @@ export async function renderMessagesWorkspace() {
     <h2 class="section-title">Messages</h2>
     <p class="section-sub">${NS_CONFIG.messages.hint}</p>
     ${pending.length ? `<div class="panel" style="margin-top:14px"><div class="k">Needs your response</div>${pending.map(pendingRowHtml).join('')}</div>` : ''}
-    ${conversations.length ? `<div class="panel" style="margin-top:14px"><div class="k">Conversations</div>${conversations.map(conversationRowHtml).join('')}</div>` : ''}
+    ${conversations.length ? `
+      <div class="panel" style="margin-top:14px">
+        <div class="k">Conversations</div>
+        <div class="filterbar">
+          <input type="text" id="msgSearch" class="filter-input" placeholder="Search by name or message…" value="${escapeAttr(messagesSearchQuery)}">
+          <button type="button" class="btn small ${messagesFavoritesOnly ? 'primary' : 'ghost'}" id="msgFavOnly">★ Favorites</button>
+        </div>
+        <div id="convList">${conversationListHtml(applyConversationFilter(conversations))}</div>
+      </div>` : ''}
   `;
+}
+
+function conversationListHtml(list) {
+  if (!list.length) return `<div class="empty-state" style="margin-top:10px">No conversation matches this search or filter.</div>`;
+  return list.map(conversationRowHtml).join('');
+}
+
+// Re-renders only the conversation rows, leaving the search input and
+// its focus/cursor untouched — a full state.render.workspace() replaces
+// the whole panel's innerHTML (see render.js), which would knock focus
+// out of #msgSearch on every keystroke.
+async function refreshConversationList() {
+  const ws = document.getElementById('workspace');
+  const list = ws.querySelector('#convList');
+  if (!list) return;
+  const conversations = await gatherConversations();
+  list.innerHTML = conversationListHtml(applyConversationFilter(conversations));
+  bindConversationRowEvents(list);
+}
+
+// Shared by bindMessagesEvents (the whole workspace, on first render)
+// and refreshConversationList (just the #convList subtree, after a
+// search/filter change) — the same two behaviors either way: jump into
+// a conversation, or toggle its favorite star in place without a full
+// re-render (favoriting alone never changes list membership unless the
+// favorites-only filter is also active, in which case the caller is
+// already about to refresh the whole list regardless).
+function bindConversationRowEvents(root) {
+  root.querySelectorAll('.conv-jump').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const { ns, my, their } = btn.dataset;
+      state.messagesOpenConversation = { ns, myId: my, theirId: their };
+      state.render.workspace();
+    });
+  });
+  root.querySelectorAll('.fav-star').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const { favNs, favMy, favTheir } = btn.dataset;
+      const next = !btn.classList.contains('on');
+      await marks.setFavorite(favNs, favMy, favTheir, next);
+      if (messagesFavoritesOnly) {
+        refreshConversationList();
+      } else {
+        btn.classList.toggle('on', next);
+        btn.title = next ? 'Unfavorite' : 'Favorite';
+      }
+    });
+  });
 }
 
 export function bindMessagesEvents() {
@@ -246,12 +337,18 @@ export function bindMessagesEvents() {
     });
   });
 
-  ws.querySelectorAll('.conv-jump').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const { ns, my, their } = btn.dataset;
-      state.messagesOpenConversation = { ns, myId: my, theirId: their };
-      state.render.workspace();
-    });
+  bindConversationRowEvents(ws);
+
+  const searchInput = ws.querySelector('#msgSearch');
+  searchInput?.addEventListener('input', (e) => {
+    messagesSearchQuery = e.target.value;
+    refreshConversationList();
+  });
+  ws.querySelector('#msgFavOnly')?.addEventListener('click', (e) => {
+    messagesFavoritesOnly = !messagesFavoritesOnly;
+    e.target.classList.toggle('primary', messagesFavoritesOnly);
+    e.target.classList.toggle('ghost', !messagesFavoritesOnly);
+    refreshConversationList();
   });
 
   if (!state.messagesOpenConversation) return;

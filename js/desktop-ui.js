@@ -51,6 +51,17 @@ document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 // doesn't put it on a wheel tile that doesn't exist.
 const COOKING = ['agent', 'pricing', 'wallet', 'creator', 'research'];
 
+// AIWA/YourMine's own TOP tool-wheel tile (wheelToolTile, below) is
+// just an external link launcher — bindDesktopEvents opens cfg.url
+// directly for it, nothing of Jobber's own runs there, and both sites
+// are real, live products. "Cooking" there was mislabeling the
+// external site itself as unfinished. What genuinely is still
+// untested is JOBBER'S OWN address-matching against those chains
+// (see the comment above COOKING) — which lives on the identity tiles
+// and the mode picker (pentIdTile/pentPickerTile), where the badge
+// correctly stays.
+const TOOL_COOKING = COOKING.filter((ns) => ns !== 'wallet' && ns !== 'creator');
+
 // --- Cairo pentagon tiling geometry -------------------------------------
 // A regular hexagon tiles the plane on its own; a regular pentagon
 // cannot (108°×3=324°, never closes to 360°). The Cairo pentagonal
@@ -396,7 +407,7 @@ function pentFaceStyle(rot) {
 
 function wheelToolTile(ns, i, pendingCount) {
   const cfg = NS_CONFIG[ns];
-  const badge = ns === 'messages' ? pendingCount : (COOKING.includes(ns) ? 'cooking' : 0);
+  const badge = ns === 'messages' ? pendingCount : (TOOL_COOKING.includes(ns) ? 'cooking' : 0);
   const isLabel = typeof badge === 'string';
   const badgeText = isLabel ? badge : (badge > 9 ? '9+' : badge);
   const slotPx = slotPxAt(i);

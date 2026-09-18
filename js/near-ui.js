@@ -9,6 +9,7 @@ import * as db from './db.js';
 import { state, NAMESPACES, NS_CONFIG } from './state.js';
 import { toast } from './ui-kit.js';
 import { haversineDistanceKm, requestGeolocation, isGeolocationAvailable } from './geo.js';
+import * as marks from './marks.js';
 
 async function hydrateNearPrefs() {
   const [enabled, coords, radius] = await Promise.all([
@@ -42,6 +43,12 @@ export async function renderNearWorkspace() {
   const nearby = collectNearbyPeers();
   const anySearching = NAMESPACES.some((ns) => NS_CONFIG[ns].kind !== 'near' && NS_CONFIG[ns].kind !== 'agent' && NS_CONFIG[ns].kind !== 'messages' && state.searchLive[ns]?.size > 0);
 
+  // Scoped the same way credibility.js scores a subject — per
+  // (namespace, sender) — since Near merges peers discovered under
+  // several different namespaces into one list.
+  const seenByPeer = new Map();
+  for (const p of nearby) seenByPeer.set(p, await marks.isSeen(p.ns, p.sender));
+
   const listHtml = !isGeolocationAvailable()
     ? `<div class="empty-state">Geolocation isn't available in this browser.</div>`
     : !state.nearLocationEnabled
@@ -53,14 +60,18 @@ export async function renderNearWorkspace() {
           : nearby.length === 0
             ? `<div class="empty-state">Nobody with location sharing on has been found within ${state.nearRadiusKm} km yet.</div>`
             : `<div class="results">${nearby.map((p) => `
-                <div class="card">
+                <div class="card ${seenByPeer.get(p) ? 'seen' : ''}">
                   <div class="top">
                     <span class="avatar" style="background:${NS_CONFIG[p.ns].color}">📍</span>
                     <div class="info">
                       <div class="name">${NS_CONFIG[p.ns].label} — ${p.displayName || `${p.sender.slice(0, 10)}…`}</div>
                       <div class="role">${p.category || 'No category declared'}</div>
-                      <div class="meta"><span class="chip">${p.distanceKm.toFixed(1)} km away</span></div>
+                      <div class="meta">
+                        <span class="chip">${p.distanceKm.toFixed(1)} km away</span>
+                        <span class="chip">Advertise (soon)</span>
+                      </div>
                     </div>
+                    ${marks.seenTickHtml(p.ns, p.sender, seenByPeer.get(p))}
                   </div>
                 </div>`).join('')}</div>`;
 
@@ -81,6 +92,7 @@ export async function renderNearWorkspace() {
 
 export function bindNearEvents() {
   const ws = document.getElementById('workspace');
+  marks.bindSeenToggles(ws);
 
   ws.querySelector('#nearLocToggle')?.addEventListener('click', async () => {
     if (!state.nearLocationEnabled) {

@@ -9,6 +9,7 @@ import * as db from './db.js';
 import * as discovery from './discovery.js';
 import * as matching from './matching.js';
 import * as credibility from './credibility.js';
+import * as marks from './marks.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 import { state, NAMESPACES, NS_CONFIG, PEER_TTL_MS, roleLabel, complementaryRole, canInitiateChat, setActiveNamespace } from './state.js';
 import { toast } from './ui-kit.js';
@@ -124,6 +125,13 @@ export async function rebroadcastDiscovery(ns, identityId) {
   const payload = await buildDiscoveryPayload(ns, id, profile);
   room.send('discovery', id.identityId, payload); // no target = broadcast to the whole room
 }
+
+// The credibility filter (renderClassicWorkspace) is a display-only
+// convenience, not something worth a persisted preference — kept as
+// plain in-memory state per namespace so it survives a re-render (e.g.
+// a new peer arriving) but resets, like the "why these scores"
+// explanation toggle already does, on reload.
+const credFilterByNs = {};
 
 // A blob's own metadata (offerId) is enough to find which of my live
 // identities it belongs to — offer ids are random per-handshake and only
@@ -415,6 +423,15 @@ export async function renderClassicWorkspace(ns) {
   const credibilityBySender = new Map();
   for (const p of scored) credibilityBySender.set(p.sender, await credibility.computeCredibility(ns, p.sender));
 
+  const seenBySender = new Map();
+  for (const p of scored) seenBySender.set(p.sender, await marks.isSeen(ns, p.sender));
+
+  // A null credibility (never observed) can never satisfy a positive
+  // threshold — "no opinion yet" isn't "at least 30", so it's excluded
+  // the same way a real, low score below the threshold would be.
+  const credMin = credFilterByNs[ns] || 0;
+  const filteredScored = credMin ? scored.filter((p) => (credibilityBySender.get(p.sender)?.score ?? -1) >= credMin) : scored;
+
   // Skips the cascade's own first stage ("Discovered on network") — that
   // count is the same thing the modebar's own "N peers" stat already
   // shows, just rescoped to this namespace, so showing both read as a
@@ -501,8 +518,9 @@ export async function renderClassicWorkspace(ns) {
     const postingPreview = ((previewFromSupplySide ? isSupplySide : !isSupplySide) && p.postingText)
       ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--low)">View ${ns === 'employment' ? 'posting' : ns === 'outdoor' ? 'activity' : ns === 'info' ? 'shared' : (ns === 'wallet' || ns === 'creator') ? 'address' : 'request'} text</summary><div style="font-size:12px;color:var(--mid);white-space:pre-wrap;margin-top:6px">${p.postingText}</div></details>` : '';
 
+    const seen = seenBySender.get(p.sender);
     return `
-        <div class="card" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
+        <div class="card ${seen ? 'seen' : ''}" data-peer="${p.peerId || ''}" data-identity="${p.sender}">
           <div class="top">
             ${p.photoDataUrl ? `<img class="avatar-photo" src="${p.photoDataUrl}" alt="">` : `<span class="avatar">${(p.category || 'PR').slice(0, 2).toUpperCase()}</span>`}
             <div class="info">
@@ -518,6 +536,7 @@ export async function renderClassicWorkspace(ns) {
                 ${cred ? `<b>${cred.score}</b>` : `<span class="cred-none">—</span>`}
               </div>
             </div>
+            ${marks.seenTickHtml(ns, p.sender, seen)}
           </div>
           <div class="expl">
             <div class="k">Match</div>
@@ -547,10 +566,23 @@ export async function renderClassicWorkspace(ns) {
 
   const resultsHtml = scored.length === 0
     ? `<div class="empty-state">No ${theirRoleLabel ? theirRoleLabel.toLowerCase() + ' ' : ''}peers discovered yet on this namespace.<br>Create a complementary identity — in this browser or a real second device — and it'll show up here.</div>`
-    : scored.map((p) => renderCard(p)).join('');
+    : filteredScored.length === 0
+      ? `<div class="empty-state">Nobody discovered here clears a credibility filter of ${credMin} — try lowering it.</div>`
+      : filteredScored.map((p) => renderCard(p)).join('');
+
+  const credFilterHtml = scored.length === 0 ? '' : `
+    <div class="filterbar">
+      <label for="credFilter">Credibility</label>
+      <select id="credFilter" class="filter-select">
+        <option value="0" ${credMin === 0 ? 'selected' : ''}>Any</option>
+        <option value="30" ${credMin === 30 ? 'selected' : ''}>&gt; 30</option>
+        <option value="40" ${credMin === 40 ? 'selected' : ''}>&gt; 40</option>
+      </select>
+    </div>`;
 
   return `
     <div class="funnel">${funnelHtml}</div>
+    ${credFilterHtml}
     <div class="results">${resultsHtml}</div>
   `;
 }
@@ -558,8 +590,14 @@ export async function renderClassicWorkspace(ns) {
 export function bindClassicEvents(ns) {
   const id = state.identitiesByNs[ns].find((i) => i.identityId === state.activeIdentityId[ns]);
   const ws = document.getElementById('workspace');
+  marks.bindSeenToggles(ws);
 
   ws.querySelector('#createHere')?.addEventListener('click', () => createIdentityFlow(ns));
+
+  ws.querySelector('#credFilter')?.addEventListener('change', (e) => {
+    credFilterByNs[ns] = parseInt(e.target.value, 10) || 0;
+    state.render.workspace();
+  });
 
   ws.querySelectorAll('.toggle-expl').forEach((btn) => {
     btn.addEventListener('click', () => {
