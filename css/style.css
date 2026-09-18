@@ -658,13 +658,14 @@ dialog.modal::backdrop{ background:rgba(0,0,0,.55); }
    breakpoint .bento-hive-rotate is just a transparent pass-through: the
    custom properties are set but never read.
 
-   --block-rot is what keeps every tile's icon/label/badge (and the
-   Ecosystem/Insights/Matches section labels) reading horizontally
-   despite living inside that rotated block: it's the one counter-
-   rotation .bento-pent-face's own transform (style.css, above) and each
-   section label's inline transform (desktop-ui.js) both add on top of
-   whatever they already do. Set once here, inherited down to every
-   descendant, 0deg below this breakpoint so nothing changes there.
+   --block-rot is what keeps every tile's own icon/label/badge reading
+   horizontally despite living inside that rotated block: it's the one
+   counter-rotation .bento-pent-face's own transform (above) adds on top
+   of whatever it already does. Deliberately NOT applied to the
+   Ecosystem/Insights/Matches section labels — those turn with the block
+   like everything else outside a tile's own face. Set once here,
+   inherited down to every descendant, 0deg below this breakpoint so
+   nothing changes there.
 
    Vertical centering: .workspace-bureau is the actual scrollable box
    (.workspace's own height, set by the app shell — see .app/.main/
