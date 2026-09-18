@@ -111,8 +111,13 @@ a{color:var(--agent);}
    normal vertical scroll (see the base .workspace rule) — one whole page,
    not a scrollbox per section — .workspace-bureau only turns off its
    usual side/top padding so the tiles can sit truly edge-to-edge; see
-   render.js. ---------- */
-.workspace.workspace-bureau{ padding:0; overflow-x:hidden; }
+   render.js. overflow-x:auto (not hidden) because the tiling itself can
+   still end up wider than the viewport — a narrow window with enough
+   identities below 900px, or the rotated hive above it, since rotation
+   swaps its width for its own unbounded height (more identities, taller
+   before rotation, wider after) — desktop-ui.js's own Left/Right arrow
+   handler pans this exact scroll position when there's no mouse handy. ---------- */
+.workspace.workspace-bureau{ padding:0; overflow-x:auto; }
 /* No selectable text anywhere on the Bureau (it's a home screen, not a
    reading surface) — without this, a long-press meant to open the
    background picker (see background-ui.js's openBackgroundPicker and

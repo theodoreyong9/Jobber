@@ -36,6 +36,30 @@ export function goToDesktop() {
 // into a workspace (there's no separate back button in the topbar).
 document.querySelector('.brand-mini')?.addEventListener('click', goToDesktop);
 
+// Left/Right arrows pan the Bureau horizontally — the one way to reach
+// whatever runs past the viewport edge with no mouse: the rotated hive
+// on a wide screen can end up wider than the window as more identities
+// pad it out (rotation swaps its width for its — unbounded — height),
+// and a narrow window can still outgrow the unrotated tiling below that
+// breakpoint too. Registered once at module load, not inside
+// bindDesktopEvents (called on every re-render) — document itself is
+// never replaced, so re-registering there would stack a fresh listener,
+// and every existing one, on every single render.
+const PAN_STEP_PX = 160;
+document.addEventListener('keydown', (e) => {
+  if (state.view !== 'desktop') return;
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  // A form control elsewhere on the Bureau or in an open modal (the mode
+  // picker's search, a rename field, ...) owns its own arrow-key meaning
+  // — don't steal it.
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const workspace = document.getElementById('workspace');
+  if (!workspace) return;
+  workspace.scrollBy({ left: e.key === 'ArrowLeft' ? -PAN_STEP_PX : PAN_STEP_PX, behavior: 'smooth' });
+  e.preventDefault();
+});
+
 
 // Still being built out — flagged on the Bureau so it's clear these
 // aren't finished features yet. Pricing counts too: only one of its five
@@ -184,7 +208,16 @@ function generatePentagonPatch(rounds) {
 // the on-screen rotations didn't match what that check assumed — caught
 // by rendering two supposedly-adjacent pentagons in isolation and
 // finding they didn't actually touch.)
-const PENT_PATCH = generatePentagonPatch(13).map((p) => ({
+// 13 rounds only ever produced enough ALL_SLOTS (below, after the band
+// filter) for about 20 identities past the 7 tools before slotPxAt ran
+// off the end of the array and crashed the whole Bureau outright — a
+// real, easily-reachable count (several namespaces' worth of active
+// identities, not an extreme edge case). Bumped well past that; the
+// growth itself needed no other change; pentNeighbors' adjacency rule is
+// the same regardless of how far from the origin it's applied, so more
+// rounds is just more of the same already-verified tiling, not new
+// geometry to re-check.
+const PENT_PATCH = generatePentagonPatch(28).map((p) => ({
   cx: -p.cx, cy: -p.cy, rot: (p.rot + 180) % 360,
 }));
 
@@ -219,6 +252,15 @@ const ALL_SLOTS = PENT_PATCH
   .filter((p) => Math.abs(p.cx) <= ALL_BAND && p.cy > -1)
   .sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx));
 const TOOL_COUNT = 7;
+// slotPxAt(TOOL_COUNT + i) reads ALL_SLOTS[TOOL_COUNT + i] directly — past
+// its end that's undefined, and destructuring it crashes the whole
+// Bureau. ALL_SLOTS is finite by construction (PENT_PATCH is a fixed
+// flood-fill radius, not infinite), so however generous that radius is,
+// there's always some identity count past which this would happen
+// without a real ceiling here — renderDesktop clamps every cell-adding
+// loop to this so it degrades (extra identities just don't get a tile)
+// instead of crashing.
+const MAX_IDENTITY_SLOTS = ALL_SLOTS.length - TOOL_COUNT;
 const TOOL_ORDER = ['tribute', 'wallet', 'creator', 'pricing', 'messages', 'agent', 'near'];
 // Tools split into two named groups (matching TOOL_ORDER's own order):
 // Ecosystem is the first ECOSYSTEM_COUNT tools, Insights the rest up to
@@ -491,18 +533,25 @@ const manifestoHtml = `
 export async function renderDesktop() {
   let index = 0;
   const cells = [];
-  for (const ns of CREATABLE) {
-    for (const id of (state.identitiesByNs[ns] || []).filter((i) => i.active)) {
-      // Every identity in a namespace can be live independently now — no
-      // longer tied to whichever one happens to be the currently *viewed*
-      // identity (state.activeIdentityId is a separate, UI-only concern).
-      // Research's searchLive is a plain bool, not a Set (see state.js) —
-      // guard against it the same way resolveLiveIdentity/near-ui.js do,
-      // rather than calling .has() on a boolean.
-      const live = state.searchLive[ns];
-      const isLive = live instanceof Set && live.has(id.identityId);
-      cells.push(pentIdTile(ns, id, isLive, index++));
-    }
+  // Flattened first, then hard-capped at MAX_IDENTITY_SLOTS — real
+  // identities are never hidden in ordinary use (see the comment below),
+  // but a well past-normal count must still degrade to "the rest just
+  // don't get a tile" rather than crash slotPxAt. Ordinary two-loop
+  // iteration can't easily stop early across both loops at once; a flat
+  // list can.
+  const allIdentities = CREATABLE.flatMap((ns) =>
+    (state.identitiesByNs[ns] || []).filter((i) => i.active).map((id) => ({ ns, id }))
+  );
+  for (const { ns, id } of allIdentities.slice(0, MAX_IDENTITY_SLOTS)) {
+    // Every identity in a namespace can be live independently now — no
+    // longer tied to whichever one happens to be the currently *viewed*
+    // identity (state.activeIdentityId is a separate, UI-only concern).
+    // Research's searchLive is a plain bool, not a Set (see state.js) —
+    // guard against it the same way resolveLiveIdentity/near-ui.js do,
+    // rather than calling .has() on a boolean.
+    const live = state.searchLive[ns];
+    const isLive = live instanceof Set && live.has(id.identityId);
+    cells.push(pentIdTile(ns, id, isLive, index++));
   }
   const realCount = index;
 
@@ -516,9 +565,9 @@ export async function renderDesktop() {
   const { score } = await credibility.computeGlobalCredibility();
   const cap = credibility.identityCapFor(score);
   const palier = credibility.nextPalier(score);
-  const plusSlots = Math.max(0, cap - realCount);
+  const plusSlots = Math.max(0, Math.min(cap - realCount, MAX_IDENTITY_SLOTS - index));
   for (let i = 0; i < plusSlots; i++) cells.push(pentNewButton(index++));
-  if (palier != null) cells.push(pentScoreTile(score, palier, index++));
+  if (palier != null && index < MAX_IDENTITY_SLOTS) cells.push(pentScoreTile(score, palier, index++));
 
   // Pad empty slots so the strip never looks like a half-finished band,
   // and reads as "room for more" rather than sparse when there are few or
@@ -526,7 +575,7 @@ export async function renderDesktop() {
   // row of the WHOLE list (tools included, see ALL_ROW_ENDS) that floor
   // lands in, so the strip always stops at one of the tiling's own
   // natural row edges instead of an arbitrary cut partway through one.
-  const targetSlots = roundUpToRow(TOOL_COUNT + Math.max(12, index)) - TOOL_COUNT;
+  const targetSlots = Math.min(roundUpToRow(TOOL_COUNT + Math.max(12, index)) - TOOL_COUNT, MAX_IDENTITY_SLOTS);
   while (index < targetSlots) cells.push(pentFillerDiv(index++));
 
   // Absolutely-positioned children (every .bento-pent) don't contribute to
